@@ -10,7 +10,7 @@ env:
 
 jobs:
   test:
-    name: GUT tests (Godot ${{ env.GODOT_VERSION }})
+    name: GUT tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
