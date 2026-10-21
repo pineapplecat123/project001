@@ -1,0 +1,16 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
+
+[node name="Main" type="Node2D"]
+script = ExtResource("1_main")
+
+[node name="TitleLabel" type="Label" parent="."]
+offset_left = 376.0
+offset_top = 274.0
+offset_right = 776.0
+offset_bottom = 374.0
+theme_override_font_sizes/font_size = 64
+text = "project001"
+horizontal_alignment = 1
+vertical_alignment = 1

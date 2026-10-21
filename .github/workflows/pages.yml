@@ -1,0 +1,82 @@
+name: Deploy Web to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+env:
+  GODOT_VERSION: 4.7.2
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Cache Godot + export templates
+        id: cache-godot
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/godot-bin
+            ~/.local/share/godot/export_templates/${{ env.GODOT_VERSION }}.stable
+          key: godot-web-${{ env.GODOT_VERSION }}-stable
+
+      - name: Download Godot + export templates
+        if: steps.cache-godot.outputs.cache-hit != 'true'
+        run: |
+          base="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable"
+          mkdir -p ~/godot-bin
+          curl -fsSL -o /tmp/godot.zip "$base/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+          unzip -q /tmp/godot.zip -d ~/godot-bin
+          mv ~/godot-bin/Godot_v${GODOT_VERSION}-stable_linux.x86_64 ~/godot-bin/godot
+          curl -fsSL -o /tmp/templates.tpz "$base/Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
+          tdir=~/.local/share/godot/export_templates/${GODOT_VERSION}.stable
+          mkdir -p "$tdir"
+          # Only the Web templates are needed; keep the cache small.
+          unzip -q -j /tmp/templates.tpz 'templates/web_*' 'templates/version.txt' -d "$tdir"
+          rm -f /tmp/templates.tpz
+          ls -la "$tdir"
+
+      - name: Install Godot
+        run: |
+          chmod +x ~/godot-bin/godot
+          sudo ln -sf ~/godot-bin/godot /usr/local/bin/godot
+          godot --version
+
+      - name: Import project
+        run: godot --headless --import
+
+      - name: Export Web
+        run: |
+          mkdir -p build/web
+          godot --headless --export-release "Web" build/web/index.html
+          test -f build/web/index.html
+          ls -la build/web
+
+      - uses: actions/configure-pages@v6
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: build/web
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
