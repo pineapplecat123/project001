@@ -18,67 +18,69 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-theme_override_constants/margin_left = 12
-theme_override_constants/margin_top = 8
-theme_override_constants/margin_right = 12
-theme_override_constants/margin_bottom = 8
+theme_override_constants/margin_left = 14
+theme_override_constants/margin_top = 10
+theme_override_constants/margin_right = 14
+theme_override_constants/margin_bottom = 10
 
 [node name="VBox" type="VBoxContainer" parent="Margin"]
 layout_mode = 2
-theme_override_constants/separation = 6
+theme_override_constants/separation = 8
 
 [node name="TopBar" type="HBoxContainer" parent="Margin/VBox"]
 layout_mode = 2
-theme_override_constants/separation = 12
+theme_override_constants/separation = 16
 
 [node name="PhaseLabel" type="Label" parent="Margin/VBox/TopBar"]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 20
 text = "阶段："
 
 [node name="HpLabel" type="Label" parent="Margin/VBox/TopBar"]
 unique_name_in_owner = true
 layout_mode = 2
+theme_override_font_sizes/font_size = 20
 text = "玩家 HP"
 
 [node name="BagLabel" type="Label" parent="Margin/VBox/TopBar"]
 unique_name_in_owner = true
 layout_mode = 2
-text = "袋/弃"
+theme_override_font_sizes/font_size = 18
+text = "袋 0"
+
+[node name="DiscardLabel" type="Label" parent="Margin/VBox/TopBar"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 18
+text = "弃 0"
 
 [node name="GoldLabel" type="Label" parent="Margin/VBox/TopBar"]
 unique_name_in_owner = true
 layout_mode = 2
+theme_override_font_sizes/font_size = 18
 text = "金币 0"
 
-[node name="BtnBag" type="Button" parent="Margin/VBox/TopBar"]
+[node name="TurnLabel" type="Label" parent="Margin/VBox/TopBar"]
 unique_name_in_owner = true
 layout_mode = 2
-text = "检视弹药袋"
-
-[node name="BtnDev" type="Button" parent="Margin/VBox/TopBar"]
-unique_name_in_owner = true
-layout_mode = 2
-text = "开发者工具"
-
-[node name="BtnMenu" type="Button" parent="Margin/VBox/TopBar"]
-unique_name_in_owner = true
-layout_mode = 2
-text = "返回菜单"
+theme_override_font_sizes/font_size = 18
+text = "回合 1"
 
 [node name="BoardTitle" type="Label" parent="Margin/VBox"]
 layout_mode = 2
-text = "棋盘（左=玩家，右=来敌；黄边=邻接可攻击）"
+theme_override_font_sizes/font_size = 16
+text = "棋盘（左=玩家 · 右=来敌 · 黄边=邻接可攻击 · 大号数字=当前 HP）"
 
 [node name="BoardRow" type="HBoxContainer" parent="Margin/VBox"]
 unique_name_in_owner = true
 layout_mode = 2
-theme_override_constants/separation = 4
+theme_override_constants/separation = 5
 
 [node name="MidRow" type="HBoxContainer" parent="Margin/VBox"]
 layout_mode = 2
-theme_override_constants/separation = 20
+theme_override_constants/separation = 24
 
 [node name="MagCol" type="VBoxContainer" parent="Margin/VBox/MidRow"]
 layout_mode = 2
@@ -86,77 +88,144 @@ theme_override_constants/separation = 4
 
 [node name="MagTitle" type="Label" parent="Margin/VBox/MidRow/MagCol"]
 unique_name_in_owner = true
+custom_minimum_size = Vector2(280, 0)
 layout_mode = 2
+theme_override_font_sizes/font_size = 15
 autowrap_mode = 3
 text = "弹夹转轮"
 
 [node name="MagWheel" type="Control" parent="Margin/VBox/MidRow/MagCol"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(240, 240)
+custom_minimum_size = Vector2(280, 280)
 layout_mode = 2
 
 [node name="FireMarker" type="Label" parent="Margin/VBox/MidRow/MagCol/MagWheel"]
 unique_name_in_owner = true
 layout_mode = 0
-offset_left = 90.0
-offset_top = 0.0
-offset_right = 150.0
-offset_bottom = 22.0
-theme_override_colors/font_color = Color(1, 0.15, 0.15, 1)
-text = "▼击发"
+offset_left = 100.0
+offset_top = -2.0
+offset_right = 180.0
+offset_bottom = 28.0
+theme_override_colors/font_color = Color(1, 0.2, 0.15, 1)
+theme_override_font_sizes/font_size = 22
+text = "▼ 击发"
 horizontal_alignment = 1
 
 [node name="ActionCol" type="VBoxContainer" parent="Margin/VBox/MidRow"]
 layout_mode = 2
 size_flags_vertical = 4
-theme_override_constants/separation = 8
+theme_override_constants/separation = 10
+
+[node name="ActionHeader" type="Label" parent="Margin/VBox/MidRow/ActionCol"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 16
+theme_override_colors/font_color = Color(0.95, 0.85, 0.35, 1)
+text = "—— 战斗操作 ——"
 
 [node name="BtnLoad" type="Button" parent="Margin/VBox/MidRow/ActionCol"]
 unique_name_in_owner = true
+custom_minimum_size = Vector2(200, 44)
 layout_mode = 2
+theme_override_font_sizes/font_size = 18
 text = "装填 LOAD"
 
 [node name="BtnFire" type="Button" parent="Margin/VBox/MidRow/ActionCol"]
 unique_name_in_owner = true
+custom_minimum_size = Vector2(200, 44)
 layout_mode = 2
+theme_override_font_sizes/font_size = 18
 text = "射击 FIRE"
 
 [node name="BtnRoll" type="Button" parent="Margin/VBox/MidRow/ActionCol"]
 unique_name_in_owner = true
+custom_minimum_size = Vector2(200, 44)
 layout_mode = 2
+theme_override_font_sizes/font_size = 18
 text = "重roll ROLL"
 
 [node name="BtnUnload" type="Button" parent="Margin/VBox/MidRow/ActionCol"]
 unique_name_in_owner = true
+custom_minimum_size = Vector2(200, 44)
 layout_mode = 2
+theme_override_font_sizes/font_size = 18
 text = "卸除 UNLOAD"
 
 [node name="HintLabel" type="Label" parent="Margin/VBox/MidRow/ActionCol"]
 custom_minimum_size = Vector2(220, 0)
 layout_mode = 2
+theme_override_font_sizes/font_size = 14
 autowrap_mode = 3
-text = "ROLL：随机转动转轮，击发点不动。FIRE：逐发间隔 0.4 秒。"
+text = "ROLL：随机转动转轮，击发点不动。FIRE：逐发间隔 0.4 秒，击发仓闪一下。"
+
+[node name="UtilCol" type="VBoxContainer" parent="Margin/VBox/MidRow"]
+layout_mode = 2
+size_flags_vertical = 4
+theme_override_constants/separation = 10
+
+[node name="UtilHeader" type="Label" parent="Margin/VBox/MidRow/UtilCol"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 16
+theme_override_colors/font_color = Color(0.55, 0.85, 1, 1)
+text = "—— 检视与工具 ——"
+
+[node name="BtnBag" type="Button" parent="Margin/VBox/MidRow/UtilCol"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(180, 44)
+layout_mode = 2
+theme_override_font_sizes/font_size = 17
+text = "检视弹药袋"
+
+[node name="BtnDev" type="Button" parent="Margin/VBox/MidRow/UtilCol"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(180, 44)
+layout_mode = 2
+theme_override_font_sizes/font_size = 17
+text = "开发者工具"
+
+[node name="BtnMenu" type="Button" parent="Margin/VBox/MidRow/UtilCol"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(180, 44)
+layout_mode = 2
+theme_override_font_sizes/font_size = 17
+text = "返回主菜单"
 
 [node name="ResultLabel" type="Label" parent="Margin/VBox"]
 unique_name_in_owner = true
 visible = false
 layout_mode = 2
-theme_override_font_sizes/font_size = 26
+theme_override_font_sizes/font_size = 28
 theme_override_colors/font_color = Color(1, 0.85, 0.2, 1)
 text = "结果"
 horizontal_alignment = 1
 
 [node name="LogTitle" type="Label" parent="Margin/VBox"]
 layout_mode = 2
+theme_override_font_sizes/font_size = 16
 text = "战斗日志"
 
 [node name="LogBox" type="RichTextLabel" parent="Margin/VBox"]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_vertical = 3
-custom_minimum_size = Vector2(0, 120)
+custom_minimum_size = Vector2(0, 130)
+theme_override_font_sizes/normal_font_size = 15
+theme_override_constants/line_separation = 4
 bbcode_enabled = false
 scroll_following = true
+fit_content = false
+
+[node name="Dimmer" type="ColorRect" parent="."]
+unique_name_in_owner = true
+visible = false
+z_index = 8
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 0
+color = Color(0.02, 0.02, 0.05, 0.62)
 
 [node name="BagPanel" type="PanelContainer" parent="."]
 unique_name_in_owner = true
@@ -168,23 +237,23 @@ anchor_left = 0.5
 anchor_top = 0.5
 anchor_right = 0.5
 anchor_bottom = 0.5
-offset_left = -300.0
-offset_top = -240.0
-offset_right = 300.0
-offset_bottom = 240.0
+offset_left = -340.0
+offset_top = -270.0
+offset_right = 340.0
+offset_bottom = 270.0
 grow_horizontal = 2
 grow_vertical = 2
 
 [node name="BagMargin" type="MarginContainer" parent="BagPanel"]
 layout_mode = 2
-theme_override_constants/margin_left = 12
-theme_override_constants/margin_top = 10
-theme_override_constants/margin_right = 12
-theme_override_constants/margin_bottom = 10
+theme_override_constants/margin_left = 14
+theme_override_constants/margin_top = 12
+theme_override_constants/margin_right = 14
+theme_override_constants/margin_bottom = 12
 
 [node name="BagVBox" type="VBoxContainer" parent="BagPanel/BagMargin"]
 layout_mode = 2
-theme_override_constants/separation = 8
+theme_override_constants/separation = 10
 
 [node name="BagHeader" type="HBoxContainer" parent="BagPanel/BagMargin/BagVBox"]
 layout_mode = 2
@@ -197,12 +266,15 @@ text = "检视弹药袋"
 
 [node name="BtnBagClose" type="Button" parent="BagPanel/BagMargin/BagVBox/BagHeader"]
 unique_name_in_owner = true
+custom_minimum_size = Vector2(110, 42)
 layout_mode = 2
+theme_override_font_sizes/font_size = 18
 text = "关闭"
 
 [node name="BagScroll" type="ScrollContainer" parent="BagPanel/BagMargin/BagVBox"]
 layout_mode = 2
 size_flags_vertical = 3
+horizontal_scroll_mode = 0
 
 [node name="BagList" type="VBoxContainer" parent="BagPanel/BagMargin/BagVBox/BagScroll"]
 unique_name_in_owner = true
@@ -220,22 +292,23 @@ anchor_left = 0.5
 anchor_top = 0.5
 anchor_right = 0.5
 anchor_bottom = 0.5
-offset_left = -300.0
-offset_top = -300.0	offset_right = 300.0
+offset_left = -360.0
+offset_top = -300.0
+offset_right = 360.0
 offset_bottom = 300.0
 grow_horizontal = 2
 grow_vertical = 2
 
 [node name="DevMargin" type="MarginContainer" parent="DevPanel"]
 layout_mode = 2
-theme_override_constants/margin_left = 12
-theme_override_constants/margin_top = 10
-theme_override_constants/margin_right = 12
-theme_override_constants/margin_bottom = 10
+theme_override_constants/margin_left = 14
+theme_override_constants/margin_top = 12
+theme_override_constants/margin_right = 14
+theme_override_constants/margin_bottom = 12
 
 [node name="DevVBox" type="VBoxContainer" parent="DevPanel/DevMargin"]
 layout_mode = 2
-theme_override_constants/separation = 6
+theme_override_constants/separation = 8
 
 [node name="DevHeader" type="HBoxContainer" parent="DevPanel/DevMargin/DevVBox"]
 layout_mode = 2
@@ -243,209 +316,249 @@ layout_mode = 2
 [node name="DevTitle" type="Label" parent="DevPanel/DevMargin/DevVBox/DevHeader"]
 layout_mode = 2
 size_flags_horizontal = 3
-theme_override_font_sizes/font_size = 20
+theme_override_font_sizes/font_size = 22
 text = "开发者工具"
 
 [node name="DevClose" type="Button" parent="DevPanel/DevMargin/DevVBox/DevHeader"]
 unique_name_in_owner = true
+custom_minimum_size = Vector2(110, 42)
 layout_mode = 2
+theme_override_font_sizes/font_size = 18
 text = "关闭"
 
-[node name="DevAddWhite" type="Button" parent="DevPanel/DevMargin/DevVBox"]
+[node name="DevScroll" type="ScrollContainer" parent="DevPanel/DevMargin/DevVBox"]
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="DevInner" type="VBoxContainer" parent="DevPanel/DevMargin/DevVBox/DevScroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="DevAddWhite" type="Button" parent="DevPanel/DevMargin/DevVBox/DevScroll/DevInner"]
 unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 36)
 layout_mode = 2
 text = "袋 +白色子弹"
 
-[node name="DevRemoveWhite" type="Button" parent="DevPanel/DevMargin/DevVBox"]
+[node name="DevRemoveWhite" type="Button" parent="DevPanel/DevMargin/DevVBox/DevScroll/DevInner"]
 unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 36)
 layout_mode = 2
 text = "袋 -白色子弹"
 
-[node name="DevKill" type="Button" parent="DevPanel/DevMargin/DevVBox"]
+[node name="DevKill" type="Button" parent="DevPanel/DevMargin/DevVBox/DevScroll/DevInner"]
 unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 36)
 layout_mode = 2
 text = "一键杀敌"
 
-[node name="DevGold" type="Button" parent="DevPanel/DevMargin/DevVBox"]
+[node name="DevGold" type="Button" parent="DevPanel/DevMargin/DevVBox/DevScroll/DevInner"]
 unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 36)
 layout_mode = 2
 text = "金币 +10（stub）"
 
-[node name="DevHpUp" type="Button" parent="DevPanel/DevMargin/DevVBox"]
+[node name="DevHpUp" type="Button" parent="DevPanel/DevMargin/DevVBox/DevScroll/DevInner"]
 unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 36)
 layout_mode = 2
 text = "玩家 HP +5"
 
-[node name="DevHpDown" type="Button" parent="DevPanel/DevMargin/DevVBox"]
+[node name="DevHpDown" type="Button" parent="DevPanel/DevMargin/DevVBox/DevScroll/DevInner"]
 unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 36)
 layout_mode = 2
 text = "玩家 HP -5"
 
-[node name="DevEnemyHp" type="Button" parent="DevPanel/DevMargin/DevVBox"]
+[node name="DevEnemyHp" type="Button" parent="DevPanel/DevMargin/DevVBox/DevScroll/DevInner"]
 unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 36)
 layout_mode = 2
 text = "前排敌人 HP → 1"
 
-[node name="DevTPAdj" type="Button" parent="DevPanel/DevMargin/DevVBox"]
+[node name="DevTPAdj" type="Button" parent="DevPanel/DevMargin/DevVBox/DevScroll/DevInner"]
 unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 36)
 layout_mode = 2
 text = "敌人瞬移邻接（格1）"
 
-[node name="DevTPFar" type="Button" parent="DevPanel/DevMargin/DevVBox"]
+[node name="DevTPFar" type="Button" parent="DevPanel/DevMargin/DevVBox/DevScroll/DevInner"]
 unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 36)
 layout_mode = 2
 text = "敌人瞬移远端（格9）"
 
-[node name="DevForceLoad" type="Button" parent="DevPanel/DevMargin/DevVBox"]
+[node name="DevForceLoad" type="Button" parent="DevPanel/DevMargin/DevVBox/DevScroll/DevInner"]
 unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 36)
 layout_mode = 2
 text = "强制装填 6 白"
 
-
-[node name="DevAmmoRow" type="HBoxContainer" parent="DevPanel/DevMargin/DevVBox"]
+[node name="DevAmmoRow" type="HBoxContainer" parent="DevPanel/DevMargin/DevVBox/DevScroll/DevInner"]
 layout_mode = 2
 theme_override_constants/separation = 4
 
-[node name="DevAddYellow" type="Button" parent="DevPanel/DevMargin/DevVBox/DevAmmoRow"]
+[node name="DevAddYellow" type="Button" parent="DevPanel/DevMargin/DevVBox/DevScroll/DevInner/DevAmmoRow"]
 unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 36)
 layout_mode = 2
 size_flags_horizontal = 3
 text = "+黄"
 
-[node name="DevAddBlack" type="Button" parent="DevPanel/DevMargin/DevVBox/DevAmmoRow"]
+[node name="DevAddBlack" type="Button" parent="DevPanel/DevMargin/DevVBox/DevScroll/DevInner/DevAmmoRow"]
 unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 36)
 layout_mode = 2
 size_flags_horizontal = 3
 text = "+黑"
 
-[node name="DevAddGreen" type="Button" parent="DevPanel/DevMargin/DevVBox/DevAmmoRow"]
+[node name="DevAddGreen" type="Button" parent="DevPanel/DevMargin/DevVBox/DevScroll/DevInner/DevAmmoRow"]
 unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 36)
 layout_mode = 2
 size_flags_horizontal = 3
 text = "+绿"
 
-[node name="DevAmmoRow2" type="HBoxContainer" parent="DevPanel/DevMargin/DevVBox"]
+[node name="DevAmmoRow2" type="HBoxContainer" parent="DevPanel/DevMargin/DevVBox/DevScroll/DevInner"]
 layout_mode = 2
 theme_override_constants/separation = 4
 
-[node name="DevAddPurple" type="Button" parent="DevPanel/DevMargin/DevVBox/DevAmmoRow2"]
+[node name="DevAddPurple" type="Button" parent="DevPanel/DevMargin/DevVBox/DevScroll/DevInner/DevAmmoRow2"]
 unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 36)
 layout_mode = 2
 size_flags_horizontal = 3
 text = "+紫"
 
-[node name="DevAddRed" type="Button" parent="DevPanel/DevMargin/DevVBox/DevAmmoRow2"]
+[node name="DevAddRed" type="Button" parent="DevPanel/DevMargin/DevVBox/DevScroll/DevInner/DevAmmoRow2"]
 unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 36)
 layout_mode = 2
 size_flags_horizontal = 3
 text = "+红"
 
-[node name="DevAddBlue" type="Button" parent="DevPanel/DevMargin/DevVBox/DevAmmoRow2"]
+[node name="DevAddBlue" type="Button" parent="DevPanel/DevMargin/DevVBox/DevScroll/DevInner/DevAmmoRow2"]
 unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 36)
 layout_mode = 2
 size_flags_horizontal = 3
 text = "+蓝"
 
-[node name="DevAmmoRow3" type="HBoxContainer" parent="DevPanel/DevMargin/DevVBox"]
+[node name="DevAmmoRow3" type="HBoxContainer" parent="DevPanel/DevMargin/DevVBox/DevScroll/DevInner"]
 layout_mode = 2
 theme_override_constants/separation = 4
 
-[node name="DevAddGold" type="Button" parent="DevPanel/DevMargin/DevVBox/DevAmmoRow3"]
+[node name="DevAddGold" type="Button" parent="DevPanel/DevMargin/DevVBox/DevScroll/DevInner/DevAmmoRow3"]
 unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 36)
 layout_mode = 2
 size_flags_horizontal = 3
 text = "+金"
 
-[node name="DevAddPink" type="Button" parent="DevPanel/DevMargin/DevVBox/DevAmmoRow3"]
+[node name="DevAddPink" type="Button" parent="DevPanel/DevMargin/DevVBox/DevScroll/DevInner/DevAmmoRow3"]
 unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 36)
 layout_mode = 2
 size_flags_horizontal = 3
 text = "+粉"
 
-[node name="DevAddBW" type="Button" parent="DevPanel/DevMargin/DevVBox/DevAmmoRow3"]
+[node name="DevAddBW" type="Button" parent="DevPanel/DevMargin/DevVBox/DevScroll/DevInner/DevAmmoRow3"]
 unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 36)
 layout_mode = 2
 size_flags_horizontal = 3
 text = "+黑白"
 
-[node name="DevAmmoRow4" type="HBoxContainer" parent="DevPanel/DevMargin/DevVBox"]
+[node name="DevAmmoRow4" type="HBoxContainer" parent="DevPanel/DevMargin/DevVBox/DevScroll/DevInner"]
 layout_mode = 2
 theme_override_constants/separation = 4
 
-[node name="DevAddPierce" type="Button" parent="DevPanel/DevMargin/DevVBox/DevAmmoRow4"]
+[node name="DevAddPierce" type="Button" parent="DevPanel/DevMargin/DevVBox/DevScroll/DevInner/DevAmmoRow4"]
 unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 36)
 layout_mode = 2
 size_flags_horizontal = 3
 text = "+穿透"
 
-[node name="DevAddGas" type="Button" parent="DevPanel/DevMargin/DevVBox/DevAmmoRow4"]
+[node name="DevAddGas" type="Button" parent="DevPanel/DevMargin/DevVBox/DevScroll/DevInner/DevAmmoRow4"]
 unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 36)
 layout_mode = 2
 size_flags_horizontal = 3
 text = "+汽油"
 
-[node name="DevAddFire" type="Button" parent="DevPanel/DevMargin/DevVBox/DevAmmoRow4"]
+[node name="DevAddFire" type="Button" parent="DevPanel/DevMargin/DevVBox/DevScroll/DevInner/DevAmmoRow4"]
 unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 36)
 layout_mode = 2
 size_flags_horizontal = 3
 text = "+火"
 
-[node name="DevAmmoRow5" type="HBoxContainer" parent="DevPanel/DevMargin/DevVBox"]
+[node name="DevAmmoRow5" type="HBoxContainer" parent="DevPanel/DevMargin/DevVBox/DevScroll/DevInner"]
 layout_mode = 2
 theme_override_constants/separation = 4
 
-[node name="DevAddWater" type="Button" parent="DevPanel/DevMargin/DevVBox/DevAmmoRow5"]
+[node name="DevAddWater" type="Button" parent="DevPanel/DevMargin/DevVBox/DevScroll/DevInner/DevAmmoRow5"]
 unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 36)
 layout_mode = 2
 size_flags_horizontal = 3
 text = "+水"
 
-[node name="DevAddThunder" type="Button" parent="DevPanel/DevMargin/DevVBox/DevAmmoRow5"]
+[node name="DevAddThunder" type="Button" parent="DevPanel/DevMargin/DevVBox/DevScroll/DevInner/DevAmmoRow5"]
 unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 36)
 layout_mode = 2
 size_flags_horizontal = 3
 text = "+雷"
 
-
-[node name="DevEnemyRow" type="HBoxContainer" parent="DevPanel/DevMargin/DevVBox"]
+[node name="DevEnemyRow" type="HBoxContainer" parent="DevPanel/DevMargin/DevVBox/DevScroll/DevInner"]
 layout_mode = 2
 theme_override_constants/separation = 4
 
-[node name="DevSpawnCivilian" type="Button" parent="DevPanel/DevMargin/DevVBox/DevEnemyRow"]
+[node name="DevSpawnCivilian" type="Button" parent="DevPanel/DevMargin/DevVBox/DevScroll/DevInner/DevEnemyRow"]
 unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 36)
 layout_mode = 2
 size_flags_horizontal = 3
 text = "+平民"
 
-[node name="DevSpawnBandit" type="Button" parent="DevPanel/DevMargin/DevVBox/DevEnemyRow"]
+[node name="DevSpawnBandit" type="Button" parent="DevPanel/DevMargin/DevVBox/DevScroll/DevInner/DevEnemyRow"]
 unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 36)
 layout_mode = 2
 size_flags_horizontal = 3
 text = "+强盗"
 
-[node name="DevSpawnBear" type="Button" parent="DevPanel/DevMargin/DevVBox/DevEnemyRow"]
+[node name="DevSpawnBear" type="Button" parent="DevPanel/DevMargin/DevVBox/DevScroll/DevInner/DevEnemyRow"]
 unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 36)
 layout_mode = 2
 size_flags_horizontal = 3
 text = "+熊"
 
-[node name="DevEnemyRow2" type="HBoxContainer" parent="DevPanel/DevMargin/DevVBox"]
+[node name="DevEnemyRow2" type="HBoxContainer" parent="DevPanel/DevMargin/DevVBox/DevScroll/DevInner"]
 layout_mode = 2
 theme_override_constants/separation = 4
 
-[node name="DevSpawnSkeleton" type="Button" parent="DevPanel/DevMargin/DevVBox/DevEnemyRow2"]
+[node name="DevSpawnSkeleton" type="Button" parent="DevPanel/DevMargin/DevVBox/DevScroll/DevInner/DevEnemyRow2"]
 unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 36)
 layout_mode = 2
 size_flags_horizontal = 3
 text = "+骷髅"
 
-[node name="DevSpawnStone" type="Button" parent="DevPanel/DevMargin/DevVBox/DevEnemyRow2"]
+[node name="DevSpawnStone" type="Button" parent="DevPanel/DevMargin/DevVBox/DevScroll/DevInner/DevEnemyRow2"]
 unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 36)
 layout_mode = 2
 size_flags_horizontal = 3
 text = "+石头人"
 
-[node name="DevSkipEnemy" type="Button" parent="DevPanel/DevMargin/DevVBox"]
+[node name="DevSkipEnemy" type="Button" parent="DevPanel/DevMargin/DevVBox/DevScroll/DevInner"]
 unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 36)
 layout_mode = 2
 text = "跳过怪物回合"

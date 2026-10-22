@@ -11,6 +11,16 @@ grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("1_main")
 
+[node name="Bg" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(0.08, 0.09, 0.12, 1)
+
 [node name="Center" type="VBoxContainer" parent="."]
 layout_mode = 1
 anchors_preset = 8
@@ -18,34 +28,54 @@ anchor_left = 0.5
 anchor_top = 0.5
 anchor_right = 0.5
 anchor_bottom = 0.5
-offset_left = -160.0
-offset_top = -120.0
-offset_right = 160.0
-offset_bottom = 120.0
+offset_left = -200.0
+offset_top = -160.0
+offset_right = 200.0
+offset_bottom = 160.0
 grow_horizontal = 2
 grow_vertical = 2
-theme_override_constants/separation = 16
+theme_override_constants/separation = 14
 
 [node name="TitleLabel" type="Label" parent="Center"]
 unique_name_in_owner = true
 layout_mode = 2
-theme_override_font_sizes/font_size = 48
+theme_override_font_sizes/font_size = 52
 text = "project001"
 horizontal_alignment = 1
 
 [node name="Subtitle" type="Label" parent="Center"]
+unique_name_in_owner = true
 layout_mode = 2
-text = "灰盒战斗（无地图）"
+theme_override_font_sizes/font_size = 18
+text = "灰盒战斗预览 · 无地图"
 horizontal_alignment = 1
+
+[node name="HintLabel" type="Label" parent="Center"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 14
+autowrap_mode = 3
+text = "装填 / 射击 / 重roll / 卸除 · 检视弹药袋 · 开发者工具"
+horizontal_alignment = 1
+
+[node name="Spacer" type="Control" parent="Center"]
+custom_minimum_size = Vector2(0, 8)
+layout_mode = 2
 
 [node name="BtnStart" type="Button" parent="Center"]
 unique_name_in_owner = true
+custom_minimum_size = Vector2(220, 48)
 layout_mode = 2
+size_flags_horizontal = 4
+theme_override_font_sizes/font_size = 20
 text = "开始战斗"
 
 [node name="BtnQuit" type="Button" parent="Center"]
 unique_name_in_owner = true
+custom_minimum_size = Vector2(220, 40)
 layout_mode = 2
+size_flags_horizontal = 4
+theme_override_font_sizes/font_size = 17
 text = "退出"
 
 [node name="VersionLabel" type="Label" parent="."]
@@ -62,7 +92,7 @@ offset_right = 80.0
 offset_bottom = -12.0
 grow_horizontal = 2
 grow_vertical = 0
-text = "v0.2.1"
+text = "v0.2.2"
 horizontal_alignment = 1
 
 [connection signal="pressed" from="Center/BtnStart" to="." method="_on_start_pressed"]

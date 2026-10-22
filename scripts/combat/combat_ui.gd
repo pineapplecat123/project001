@@ -1,24 +1,35 @@
 extends Control
 ## 灰盒战斗 UI：棋盘 + 环形转轮 + LOAD/FIRE/ROLL/UNLOAD + 检视袋 + 开发者工具。
-## FIRE：逐发 0.4s 间隔，射击中禁用行动按钮。
+## FIRE：逐发 0.4s 间隔，射击中禁用行动按钮。纯展示打磨，不改战斗规则。
 
-const CELL_W := 88
-const CELL_H := 72
-const WHEEL_SIZE := 240.0
-const CHAMBER_SIZE := 58.0
-const WHEEL_RADIUS := 78.0
+const CELL_W := 96
+const CELL_H := 86
+const WHEEL_SIZE := 280.0
+const CHAMBER_SIZE := 68.0
+const WHEEL_RADIUS := 92.0
 const FIRE_SHOT_DELAY := 0.4
+
+const COL_PHASE := Color(1.0, 0.92, 0.45)
+const COL_HP_OK := Color(0.45, 0.95, 0.55)
+const COL_HP_LOW := Color(1.0, 0.45, 0.4)
+const COL_BAG := Color(0.55, 0.85, 1.0)
+const COL_DISCARD := Color(0.85, 0.7, 1.0)
+const COL_GOLD := Color(1.0, 0.84, 0.3)
+const COL_TURN := Color(0.8, 0.8, 0.85)
 
 var state: CombatState
 var _chamber_panels: Array[Panel] = []
 var _bag_open: bool = false
 var _dev_open: bool = false
 var _firing: bool = false
+var _fire_flash_tween: Tween
 
 @onready var phase_label: Label = %PhaseLabel
 @onready var hp_label: Label = %HpLabel
 @onready var bag_label: Label = %BagLabel
+@onready var discard_label: Label = %DiscardLabel
 @onready var gold_label: Label = %GoldLabel
+@onready var turn_label: Label = %TurnLabel
 @onready var board_row: HBoxContainer = %BoardRow
 @onready var mag_title: Label = %MagTitle
 @onready var mag_wheel: Control = %MagWheel
@@ -36,6 +47,7 @@ var _firing: bool = false
 @onready var bag_list: VBoxContainer = %BagList
 @onready var btn_bag_close: Button = %BtnBagClose
 @onready var dev_panel: PanelContainer = %DevPanel
+@onready var dimmer: ColorRect = %Dimmer
 
 
 func _ready() -> void:
@@ -51,18 +63,45 @@ func _ready() -> void:
 	btn_dev.pressed.connect(_toggle_dev)
 	btn_bag_close.pressed.connect(func(): _set_bag_open(false))
 	btn_menu.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/main.tscn"))
-	mag_title.text = "弹夹转轮（▼红标=固定击发点；数字=击发顺序顺时针；ROLL=随机转动）"
+	dimmer.gui_input.connect(_on_dimmer_input)
+	mag_title.text = "弹夹转轮（▼红标=固定击发点 · 数字=顺时针击发顺序 · ROLL=随机转动 · 红框=下一发）"
+	_style_overlay_panels()
 	_build_board_cells()
 	_build_wheel_chambers()
 	_wire_dev_buttons()
 	bag_panel.visible = false
 	dev_panel.visible = false
+	dimmer.visible = false
 	state.start_graybox()
 	_refresh()
 
 
+func _style_overlay_panels() -> void:
+	for panel in [bag_panel, dev_panel]:
+		var style := StyleBoxFlat.new()
+		style.bg_color = Color(0.12, 0.13, 0.18, 0.96)
+		style.set_border_width_all(2)
+		style.border_color = Color(0.45, 0.55, 0.75, 0.9)
+		style.set_corner_radius_all(10)
+		style.content_margin_left = 4
+		style.content_margin_right = 4
+		style.content_margin_top = 4
+		style.content_margin_bottom = 4
+		panel.add_theme_stylebox_override("panel", style)
+
+
+func _on_dimmer_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		_set_bag_open(false)
+		if _dev_open:
+			_toggle_dev()
+
+
 func _on_log(text: String) -> void:
 	log_box.append_text(text + "\n")
+	# scroll_following=true；再强制滚到底，确保最新行可见
+	await get_tree().process_frame
+	log_box.scroll_to_line(log_box.get_line_count())
 
 
 func _build_board_cells() -> void:
@@ -72,13 +111,26 @@ func _build_board_cells() -> void:
 		var panel := Panel.new()
 		panel.custom_minimum_size = Vector2(CELL_W, CELL_H)
 		panel.name = "Cell%d" % i
-		var label := Label.new()
-		label.name = "Info"
-		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		panel.add_child(label)
+		var vbox := VBoxContainer.new()
+		vbox.name = "VBox"
+		vbox.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		vbox.add_theme_constant_override("separation", 2)
+		var info := Label.new()
+		info.name = "Info"
+		info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		info.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		info.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		vbox.add_child(info)
+		var hp_bar := ProgressBar.new()
+		hp_bar.name = "HpBar"
+		hp_bar.custom_minimum_size = Vector2(0, 10)
+		hp_bar.show_percentage = false
+		hp_bar.max_value = 100
+		hp_bar.value = 0
+		hp_bar.visible = false
+		vbox.add_child(hp_bar)
+		panel.add_child(vbox)
 		board_row.add_child(panel)
 
 
@@ -87,11 +139,12 @@ func _build_wheel_chambers() -> void:
 	for c in mag_wheel.get_children():
 		if c != fire_marker:
 			c.queue_free()
-	fire_marker.text = "▼击发"
+	fire_marker.text = "▼ 击发"
 	fire_marker.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	fire_marker.add_theme_color_override("font_color", Color(1.0, 0.15, 0.15))
-	fire_marker.position = Vector2(WHEEL_SIZE * 0.5 - 30.0, 0.0)
-	fire_marker.size = Vector2(60, 22)
+	fire_marker.add_theme_color_override("font_color", Color(1.0, 0.18, 0.12))
+	fire_marker.add_theme_font_size_override("font_size", 22)
+	fire_marker.position = Vector2(WHEEL_SIZE * 0.5 - 40.0, -4.0)
+	fire_marker.size = Vector2(80, 28)
 	for i in CombatConstants.MAGAZINE_SIZE:
 		var panel := Panel.new()
 		panel.name = "Chamber%d" % i
@@ -102,6 +155,7 @@ func _build_wheel_chambers() -> void:
 		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		label.add_theme_font_size_override("font_size", 15)
 		panel.add_child(label)
 		mag_wheel.add_child(panel)
 		_chamber_panels.append(panel)
@@ -109,7 +163,7 @@ func _build_wheel_chambers() -> void:
 
 
 func _layout_wheel_chambers() -> void:
-	var center := Vector2(WHEEL_SIZE * 0.5, WHEEL_SIZE * 0.5 + 8.0)
+	var center := Vector2(WHEEL_SIZE * 0.5, WHEEL_SIZE * 0.5 + 10.0)
 	var start_i: int = 0
 	if state != null and state.magazine != null:
 		start_i = state.magazine.start_index
@@ -120,6 +174,42 @@ func _layout_wheel_chambers() -> void:
 		var panel: Panel = _chamber_panels[slot_i]
 		panel.position = pos - Vector2(CHAMBER_SIZE, CHAMBER_SIZE) * 0.5
 		panel.size = Vector2(CHAMBER_SIZE, CHAMBER_SIZE)
+
+
+func _ammo_colors(ammo_id: int) -> Dictionary:
+	match ammo_id:
+		FireResolver.ID_WHITE:
+			return {"bg": Color(0.92, 0.92, 0.94), "fg": Color(0.08, 0.08, 0.1)}
+		FireResolver.ID_BLACK:
+			return {"bg": Color(0.18, 0.18, 0.2), "fg": Color(0.95, 0.95, 0.95)}
+		FireResolver.ID_GREEN:
+			return {"bg": Color(0.25, 0.72, 0.35), "fg": Color(0.05, 0.1, 0.05)}
+		FireResolver.ID_YELLOW:
+			return {"bg": Color(0.95, 0.85, 0.2), "fg": Color(0.15, 0.12, 0.02)}
+		FireResolver.ID_PURPLE:
+			return {"bg": Color(0.62, 0.35, 0.85), "fg": Color(0.98, 0.95, 1.0)}
+		FireResolver.ID_RED:
+			return {"bg": Color(0.9, 0.28, 0.28), "fg": Color(1.0, 0.95, 0.95)}
+		FireResolver.ID_BLUE:
+			return {"bg": Color(0.3, 0.55, 0.95), "fg": Color(0.95, 0.97, 1.0)}
+		FireResolver.ID_GOLD:
+			return {"bg": Color(0.95, 0.75, 0.15), "fg": Color(0.2, 0.12, 0.02)}
+		FireResolver.ID_PINK:
+			return {"bg": Color(0.95, 0.55, 0.75), "fg": Color(0.2, 0.05, 0.12)}
+		FireResolver.ID_BW:
+			return {"bg": Color(0.55, 0.55, 0.58), "fg": Color(0.05, 0.05, 0.05)}
+		FireResolver.ID_PIERCE:
+			return {"bg": Color(0.7, 0.85, 0.95), "fg": Color(0.05, 0.1, 0.15)}
+		FireResolver.ID_GAS:
+			return {"bg": Color(0.55, 0.7, 0.25), "fg": Color(0.05, 0.08, 0.02)}
+		FireResolver.ID_FIRE:
+			return {"bg": Color(1.0, 0.45, 0.15), "fg": Color(0.15, 0.05, 0.0)}
+		FireResolver.ID_WATER:
+			return {"bg": Color(0.35, 0.7, 0.95), "fg": Color(0.02, 0.08, 0.15)}
+		FireResolver.ID_THUNDER:
+			return {"bg": Color(0.85, 0.75, 0.2), "fg": Color(0.12, 0.1, 0.0)}
+		_:
+			return {"bg": Color(0.85, 0.85, 0.88), "fg": Color(0.1, 0.1, 0.1)}
 
 
 func _on_load() -> void:
@@ -142,12 +232,29 @@ func _run_fire_sequence() -> void:
 	while state.phase == CombatState.Phase.FIRING:
 		var more: bool = state.fire_next_shot()
 		_refresh()
+		_flash_fire_chamber()
 		if more:
 			await get_tree().create_timer(FIRE_SHOT_DELAY).timeout
 		else:
 			break
 	_firing = false
 	_refresh()
+
+
+func _flash_fire_chamber() -> void:
+	if state == null or state.magazine == null:
+		return
+	var slot_i: int = state.magazine.start_index
+	# 刚击发后 start 可能已前进；高亮当前「下一发」仓（order_k==0）
+	slot_i = state.magazine.start_index
+	if slot_i < 0 or slot_i >= _chamber_panels.size():
+		return
+	var panel: Panel = _chamber_panels[slot_i]
+	if _fire_flash_tween != null and _fire_flash_tween.is_valid():
+		_fire_flash_tween.kill()
+	panel.modulate = Color(1.6, 1.4, 0.7)
+	_fire_flash_tween = create_tween()
+	_fire_flash_tween.tween_property(panel, "modulate", Color.WHITE, 0.28)
 
 
 func _on_roll() -> void:
@@ -173,6 +280,7 @@ func _set_bag_open(open: bool) -> void:
 		_dev_open = false
 		dev_panel.visible = false
 		_refresh_bag_list()
+	_update_dimmer()
 
 
 func _toggle_dev() -> void:
@@ -181,6 +289,11 @@ func _toggle_dev() -> void:
 	if _dev_open:
 		_bag_open = false
 		bag_panel.visible = false
+	_update_dimmer()
+
+
+func _update_dimmer() -> void:
+	dimmer.visible = _bag_open or _dev_open
 
 
 func _refresh_bag_list() -> void:
@@ -191,6 +304,7 @@ func _refresh_bag_list() -> void:
 		state.bag.size(), state.discard.size(), state.gold
 	]
 	title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	title.add_theme_font_size_override("font_size", 16)
 	bag_list.add_child(title)
 	if state.bag.is_empty():
 		var empty := Label.new()
@@ -209,25 +323,37 @@ func _refresh_bag_list() -> void:
 		var def: Dictionary = DataRegistry.get_ammo(ammo_id)
 		var dmg = def.get("base_damage", null)
 		var dmg_text := "变化" if dmg == null else str(dmg)
+		var colors := _ammo_colors(ammo_id)
+		var row := PanelContainer.new()
+		var row_style := StyleBoxFlat.new()
+		row_style.bg_color = colors["bg"]
+		row_style.set_corner_radius_all(6)
+		row_style.content_margin_left = 8
+		row_style.content_margin_right = 8
+		row_style.content_margin_top = 6
+		row_style.content_margin_bottom = 6
+		row.add_theme_stylebox_override("panel", row_style)
 		var block := Label.new()
 		block.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		block.text = "%d. %s ×%d\n   基础伤害：%s\n   特殊机制：%s" % [
+		block.add_theme_color_override("font_color", colors["fg"])
+		block.text = "%d. %s ×%d\n基础伤害：%s\n特殊机制：%s" % [
 			idx,
 			str(def.get("name", "未知#%d" % ammo_id)),
 			int(counts[ammo_id]),
 			dmg_text,
 			str(def.get("special", ""))
 		]
-		bag_list.add_child(block)
+		row.add_child(block)
+		bag_list.add_child(row)
 		idx += 1
 	var seq_title := Label.new()
 	seq_title.text = "—— 袋内顺序（顶部先抽）——"
 	bag_list.add_child(seq_title)
 	for i in state.bag.size():
 		var def2: Dictionary = DataRegistry.get_ammo(state.bag[i])
-		var row := Label.new()
-		row.text = "  [%d] %s" % [i + 1, str(def2.get("name", state.bag[i]))]
-		bag_list.add_child(row)
+		var row2 := Label.new()
+		row2.text = "  [%d] %s" % [i + 1, str(def2.get("name", state.bag[i]))]
+		bag_list.add_child(row2)
 
 
 func _wire_dev_buttons() -> void:
@@ -273,9 +399,18 @@ func _wire_dev_buttons() -> void:
 
 func _refresh() -> void:
 	phase_label.text = "阶段：%s" % state.phase_name()
-	hp_label.text = "玩家 HP %d / %d" % [state.player_hp, state.player_max_hp]
-	bag_label.text = "袋 %d｜弃 %d｜回合 %d" % [state.bag.size(), state.discard.size(), state.turn_index]
+	phase_label.add_theme_color_override("font_color", COL_PHASE)
+	hp_label.text = "HP %d / %d" % [state.player_hp, state.player_max_hp]
+	var hp_ratio := float(state.player_hp) / float(maxi(state.player_max_hp, 1))
+	hp_label.add_theme_color_override("font_color", COL_HP_LOW if hp_ratio <= 0.35 else COL_HP_OK)
+	bag_label.text = "袋 %d" % state.bag.size()
+	bag_label.add_theme_color_override("font_color", COL_BAG)
+	discard_label.text = "弃 %d" % state.discard.size()
+	discard_label.add_theme_color_override("font_color", COL_DISCARD)
 	gold_label.text = "金币 %d" % state.gold
+	gold_label.add_theme_color_override("font_color", COL_GOLD)
+	turn_label.text = "回合 %d" % state.turn_index
+	turn_label.add_theme_color_override("font_color", COL_TURN)
 	var busy := _firing or state.is_busy_firing()
 	btn_load.disabled = busy or not state.can_load()
 	btn_fire.disabled = busy or not state.can_fire()
@@ -305,30 +440,64 @@ func _refresh_board() -> void:
 		by_cell[e.cell] = e
 	for i in CombatConstants.BOARD_SIZE:
 		var panel: Panel = board_row.get_child(i)
-		var info: Label = panel.get_node("Info")
+		var info: Label = panel.get_node("VBox/Info")
+		var hp_bar: ProgressBar = panel.get_node("VBox/HpBar")
 		var style := StyleBoxFlat.new()
 		style.set_border_width_all(2)
-		style.border_color = Color(0.2, 0.2, 0.2)
+		style.set_corner_radius_all(6)
+		style.border_color = Color(0.15, 0.15, 0.18)
 		if i == CombatConstants.PLAYER_CELL:
-			style.bg_color = Color(0.2, 0.45, 0.85)
-			info.text = "玩家\n%d/%d" % [state.player_hp, state.player_max_hp]
+			style.bg_color = Color(0.15, 0.4, 0.85)
+			style.border_color = Color(0.55, 0.8, 1.0)
+			style.set_border_width_all(3)
+			info.text = "玩家\n%d" % state.player_hp
+			info.add_theme_color_override("font_color", Color(1, 1, 1))
+			info.add_theme_font_size_override("font_size", 18)
+			hp_bar.visible = true
+			hp_bar.max_value = state.player_max_hp
+			hp_bar.value = state.player_hp
+			_style_hp_bar(hp_bar, Color(0.35, 0.85, 0.45))
 		elif by_cell.has(i):
 			var e: EnemyInstance = by_cell[i]
-			style.bg_color = Color(0.75, 0.25, 0.25)
+			style.bg_color = Color(0.72, 0.18, 0.2)
 			if state.is_adjacent_to_player(e):
-				style.border_color = Color(1.0, 0.8, 0.1)
-				style.set_border_width_all(3)
+				style.border_color = Color(1.0, 0.85, 0.15)
+				style.set_border_width_all(4)
+			else:
+				style.border_color = Color(0.95, 0.45, 0.45)
+				style.set_border_width_all(2)
 			var st := e.status_text()
 			var tag_s := ",".join(e.tags) if e.tags.size() > 0 else ""
-			info.text = "%s\n%d/%d%s%s" % [
-				e.name_zh, e.hp, e.max_hp,
+			info.text = "%s\n%d%s%s" % [
+				e.name_zh, e.hp,
 				("\n" + tag_s) if tag_s != "" else "",
 				("\n" + st) if st != "" else ""
 			]
+			info.add_theme_color_override("font_color", Color(1, 0.95, 0.95))
+			info.add_theme_font_size_override("font_size", 16)
+			hp_bar.visible = true
+			hp_bar.max_value = maxi(e.max_hp, 1)
+			hp_bar.value = e.hp
+			_style_hp_bar(hp_bar, Color(0.95, 0.35, 0.3))
 		else:
-			style.bg_color = Color(0.35, 0.35, 0.38)
+			style.bg_color = Color(0.22, 0.22, 0.26)
+			style.border_color = Color(0.32, 0.32, 0.36)
 			info.text = str(i)
+			info.add_theme_color_override("font_color", Color(0.55, 0.55, 0.6))
+			info.add_theme_font_size_override("font_size", 14)
+			hp_bar.visible = false
 		panel.add_theme_stylebox_override("panel", style)
+
+
+func _style_hp_bar(bar: ProgressBar, fill: Color) -> void:
+	var bg := StyleBoxFlat.new()
+	bg.bg_color = Color(0.08, 0.08, 0.1, 0.85)
+	bg.set_corner_radius_all(3)
+	var fg := StyleBoxFlat.new()
+	fg.bg_color = fill
+	fg.set_corner_radius_all(3)
+	bar.add_theme_stylebox_override("background", bg)
+	bar.add_theme_stylebox_override("fill", fg)
 
 
 func _refresh_mag() -> void:
@@ -344,20 +513,21 @@ func _refresh_mag() -> void:
 		style.set_corner_radius_all(999)
 		style.set_border_width_all(2)
 		if ammo_id == Magazine.EMPTY:
-			style.bg_color = Color(0.22, 0.22, 0.25)
-			style.border_color = Color(0.45, 0.45, 0.45)
+			style.bg_color = Color(0.18, 0.18, 0.22)
+			style.border_color = Color(0.4, 0.4, 0.45)
 			info.text = "%d\n空" % order_num
-			info.add_theme_color_override("font_color", Color(0.75, 0.75, 0.75))
+			info.add_theme_color_override("font_color", Color(0.7, 0.7, 0.75))
 		else:
 			var def: Dictionary = DataRegistry.get_ammo(ammo_id)
 			var short := str(def.get("name", ammo_id)).replace("子弹", "")
-			style.bg_color = Color(0.9, 0.9, 0.92)
-			style.border_color = Color(0.15, 0.15, 0.15)
+			var colors := _ammo_colors(ammo_id)
+			style.bg_color = colors["bg"]
+			style.border_color = Color(0.12, 0.12, 0.14)
 			info.text = "%d\n%s" % [order_num, short]
-			info.add_theme_color_override("font_color", Color(0.05, 0.05, 0.05))
+			info.add_theme_color_override("font_color", colors["fg"])
 		if order_k == 0:
-			style.border_color = Color(1.0, 0.12, 0.12)
-			style.set_border_width_all(3)
-			if ammo_id != Magazine.EMPTY:
-				style.bg_color = Color(1.0, 0.72, 0.72)
+			style.border_color = Color(1.0, 0.15, 0.12)
+			style.set_border_width_all(4)
+			if _firing:
+				style.bg_color = style.bg_color.lightened(0.25)
 		panel.add_theme_stylebox_override("panel", style)
