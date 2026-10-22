@@ -40,7 +40,7 @@ func test_run_begin_available_are_first_branch() -> void:
 
 
 func test_placeholder_visit_advances_without_reward() -> void:
-	RunState.begin_run(3)
+	RunState.begin_run(3, "休息")
 	# 必须先打完一条战斗支线才能到占位；直接伪造位置测 visit API：
 	# 从起点只能到 1/2。先完成节点 1。
 	assert_true(RunState.enter_combat_node(1))
@@ -107,8 +107,8 @@ func test_export_run_payload_merges_discard() -> void:
 
 
 func test_finale_victory_finishes_run() -> void:
-	RunState.begin_run(11)
-	# 路径：0 → 1(战斗) → 3(占位) → 4(战斗) → 5(终战)
+	RunState.begin_run(11, "特殊事件")
+	# 路径：0 → 1(战斗) → 3(占位·非商店) → 4(战斗) → 5(终战)
 	assert_true(RunState.enter_combat_node(1))
 	RunState.apply_combat_result(_snap(10), true)
 	assert_eq(RunState.current_node_id, 1)

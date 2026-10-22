@@ -17,6 +17,8 @@ var current_node_id: int = 0
 var completed_ids: Array[int] = []
 ## 进入战斗前写入；胜利回地图后清零。
 var pending_combat_node_id: int = -1
+## 商店打开中写入；离开商店后清零并完成节点。
+var pending_shop_node_id: int = -1
 var run_finished: bool = false
 var last_message: String = ""
 
@@ -25,7 +27,7 @@ func is_in_map_run() -> bool:
 	return active
 
 
-func begin_run(seed_value: int = 0) -> void:
+func begin_run(seed_value: int = 0, force_placeholder_kind: String = "") -> void:
 	active = true
 	run_finished = false
 	last_message = ""
@@ -40,15 +42,17 @@ func begin_run(seed_value: int = 0) -> void:
 	player_max_hp = CombatConstants.PLAYER_MAX_HP
 	player_hp = player_max_hp
 	pink_bonus = 0
-	graph = MapGraph.build_mini(run_seed)
+	graph = MapGraph.build_mini(run_seed, force_placeholder_kind)
 	current_node_id = 0
 	completed_ids = [0]
 	pending_combat_node_id = -1
+	pending_shop_node_id = -1
 
 
 func end_run() -> void:
 	active = false
 	pending_combat_node_id = -1
+	pending_shop_node_id = -1
 	run_finished = false
 	last_message = ""
 	graph = {}
@@ -85,7 +89,39 @@ func enter_combat_node(node_id: int) -> bool:
 	return true
 
 
-## 访问占位节点：灰盒不开放内容，直接标完成并前进。
+## 进入商店节点：不立刻完成；离开后再标完成。
+func enter_shop_node(node_id: int) -> bool:
+	if not active or run_finished:
+		return false
+	if pending_shop_node_id >= 0:
+		return false
+	if not available_node_ids().has(node_id):
+		return false
+	var n: Dictionary = MapGraph.node_by_id(graph, node_id)
+	if not MapGraph.is_shop_node(n):
+		return false
+	pending_shop_node_id = node_id
+	return true
+
+
+## 离开商店：写回金币/袋，完成节点，清除 pending（移除费用由 ShopState 会话重置）。
+func leave_shop(payload: Dictionary) -> String:
+	if not active:
+		return "局未开始"
+	var node_id: int = pending_shop_node_id
+	if node_id < 0:
+		return "未在商店中"
+	if payload.has("gold"):
+		gold = int(payload["gold"])
+	if payload.has("bag"):
+		bag = _copy_int_array(payload["bag"])
+	pending_shop_node_id = -1
+	_complete_node(node_id)
+	last_message = "离开商店，可选择下一节点。"
+	return last_message
+
+
+## 访问非商店占位（休息/事件）：灰盒未开放，路过。商店请走 enter_shop_node。
 func visit_placeholder(node_id: int) -> String:
 	if not active or run_finished:
 		return "局未开始"
@@ -94,6 +130,8 @@ func visit_placeholder(node_id: int) -> String:
 	var n: Dictionary = MapGraph.node_by_id(graph, node_id)
 	if int(n.get("type", -1)) != MapGraph.NodeType.PLACEHOLDER:
 		return "不是占位节点"
+	if MapGraph.is_shop_node(n):
+		return "商店节点请进入商店"
 	var kind: String = str(n.get("kind", n.get("label", "非战斗")))
 	_complete_node(node_id)
 	last_message = "【%s】灰盒未开放：已路过，无奖励。" % kind

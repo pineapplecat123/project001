@@ -128,7 +128,7 @@ offset_top = -36.0
 offset_right = 60.0
 offset_bottom = -8.0
 grow_horizontal = 2
-text = "v0.2.5"
+text = "v0.2.6"
 horizontal_alignment = 1
 
 [node name="Dimmer" type="ColorRect" parent="."]
@@ -185,3 +185,102 @@ unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 44)
 layout_mode = 2
 text = "关闭"
+
+[node name="ShopPanel" type="PanelContainer" parent="."]
+unique_name_in_owner = true
+visible = false
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -420.0
+offset_top = -300.0
+offset_right = 420.0
+offset_bottom = 300.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="ShopMargin" type="MarginContainer" parent="ShopPanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 14
+theme_override_constants/margin_top = 12
+theme_override_constants/margin_right = 14
+theme_override_constants/margin_bottom = 12
+
+[node name="ShopVBox" type="VBoxContainer" parent="ShopPanel/ShopMargin"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="ShopTitle" type="Label" parent="ShopPanel/ShopMargin/ShopVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 22
+text = "商店"
+
+[node name="ShopGoldLabel" type="Label" parent="ShopPanel/ShopMargin/ShopVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "金币"
+
+[node name="ShopHint" type="Label" parent="ShopPanel/ShopMargin/ShopVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+autowrap_mode = 3
+theme_override_font_sizes/font_size = 13
+text = "购买 / 移除 / 重随"
+
+[node name="ShopColumns" type="HBoxContainer" parent="ShopPanel/ShopMargin/ShopVBox"]
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_constants/separation = 16
+
+[node name="StockScroll" type="ScrollContainer" parent="ShopPanel/ShopMargin/ShopVBox/ShopColumns"]
+custom_minimum_size = Vector2(360, 280)
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="ShopStock" type="VBoxContainer" parent="ShopPanel/ShopMargin/ShopVBox/ShopColumns/StockScroll"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="BagScroll" type="ScrollContainer" parent="ShopPanel/ShopMargin/ShopVBox/ShopColumns"]
+custom_minimum_size = Vector2(360, 280)
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="ShopBagList" type="VBoxContainer" parent="ShopPanel/ShopMargin/ShopVBox/ShopColumns/BagScroll"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="ShopMsg" type="Label" parent="ShopPanel/ShopMargin/ShopVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+autowrap_mode = 3
+text = ""
+
+[node name="ShopButtons" type="HBoxContainer" parent="ShopPanel/ShopMargin/ShopVBox"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="BtnShopReroll" type="Button" parent="ShopPanel/ShopMargin/ShopVBox/ShopButtons"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(220, 44)
+layout_mode = 2
+size_flags_horizontal = 3
+text = "重随库存"
+
+[node name="BtnShopLeave" type="Button" parent="ShopPanel/ShopMargin/ShopVBox/ShopButtons"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(220, 44)
+layout_mode = 2
+size_flags_horizontal = 3
+text = "离开商店"
+

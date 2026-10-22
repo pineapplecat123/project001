@@ -1,6 +1,7 @@
 class_name MapGraph
 ## 灰盒缩小版地图：短分叉 + 合流，数个战斗节点 + 1 个非战斗占位。
 ## 拓扑固定；占位类型（商店/休息/事件）按种子随机三选一。
+## 商店已实现灰盒 UI；休息/事件仍占位路过。
 
 enum NodeType {
 	START = 0,
@@ -10,17 +11,23 @@ enum NodeType {
 }
 
 const PLACEHOLDER_KINDS: Array[String] = ["商店", "休息", "特殊事件"]
+const KIND_SHOP := "商店"
 
 
 ## 生成迷你图。返回 { nodes: Array[Dictionary], edges: Array[Array] }。
 ## 节点字段：id, type, label, layer, slot, kind(可选)
-static func build_mini(seed_value: int = 0) -> Dictionary:
+## force_kind 非空且合法时固定占位种类（测试用）。
+static func build_mini(seed_value: int = 0, force_kind: String = "") -> Dictionary:
 	var rng := RandomNumberGenerator.new()
 	if seed_value != 0:
 		rng.seed = seed_value
 	else:
 		rng.randomize()
-	var kind: String = PLACEHOLDER_KINDS[rng.randi_range(0, PLACEHOLDER_KINDS.size() - 1)]
+	var kind: String
+	if force_kind != "" and PLACEHOLDER_KINDS.has(force_kind):
+		kind = force_kind
+	else:
+		kind = PLACEHOLDER_KINDS[rng.randi_range(0, PLACEHOLDER_KINDS.size() - 1)]
 	var nodes: Array = [
 		{"id": 0, "type": NodeType.START, "label": "起点", "layer": 0, "slot": 0},
 		{"id": 1, "type": NodeType.COMBAT, "label": "战斗", "layer": 1, "slot": 0},
@@ -51,6 +58,14 @@ static func neighbors(graph: Dictionary, from_id: int) -> Array[int]:
 		if int(e[0]) == from_id:
 			out.append(int(e[1]))
 	return out
+
+
+static func is_shop_node(n: Dictionary) -> bool:
+	if n.is_empty():
+		return false
+	if int(n.get("type", -1)) != NodeType.PLACEHOLDER:
+		return false
+	return str(n.get("kind", "")) == KIND_SHOP
 
 
 static func type_name(t: int) -> String:
