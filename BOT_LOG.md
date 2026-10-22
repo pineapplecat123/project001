@@ -26,3 +26,5 @@
 ## 2026-10-23（字体）
 
 - Web 中文乱码：嵌入子集字体 `assets/fonts/NotoSansSC-UI.ttf`，全局 Theme `themes/ui_theme.tres`。
+
+- 2026-10-23：Pages 资源按 SHA 改名防缓存；版本 0.1.2。
