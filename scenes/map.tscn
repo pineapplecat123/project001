@@ -128,7 +128,7 @@ offset_top = -36.0
 offset_right = 60.0
 offset_bottom = -8.0
 grow_horizontal = 2
-text = "v0.2.7"
+text = "v0.2.9"
 horizontal_alignment = 1
 
 [node name="Dimmer" type="ColorRect" parent="."]

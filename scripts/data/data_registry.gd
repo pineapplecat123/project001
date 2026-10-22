@@ -68,3 +68,27 @@ func is_ammo_enabled(ammo_id: int) -> bool:
 
 func is_enemy_enabled(enemy_id: int) -> bool:
 	return bool(get_enemy(enemy_id).get("enabled_in_combat", false))
+
+
+## 袋内点击详情：名称 / 基础伤害 / 效果（无效弹用本地常量）。
+func format_ammo_detail_text(ammo_id: int) -> String:
+	if ammo_id == CombatConstants.INVALID_AMMO_ID:
+		return "名称：%s\n基础伤害：0\n效果：\n%s" % [
+			CombatConstants.INVALID_AMMO_NAME,
+			CombatConstants.INVALID_AMMO_SPECIAL,
+		]
+	var def: Dictionary = get_ammo(ammo_id)
+	if def.is_empty():
+		return "未知弹药 #%d" % ammo_id
+	var nm := str(def.get("name", "未知"))
+	var mode := str(def.get("base_damage_mode", ""))
+	var dmg = def.get("base_damage", null)
+	var dmg_s: String
+	if dmg == null:
+		dmg_s = "（公式/%s，见表效果）" % mode
+	else:
+		dmg_s = "%s（%s）" % [str(dmg), mode if mode != "" else "fixed"]
+	var special := str(def.get("special", "无"))
+	var tags = def.get("tags", [])
+	var tag_s := "、".join(tags) if tags is Array and tags.size() > 0 else "无"
+	return "名称：%s\n基础伤害：%s\n标签：%s\n效果：\n%s" % [nm, dmg_s, tag_s, special]

@@ -37,6 +37,12 @@ func clear() -> void:
 	start_index = 0
 
 
+## 写入单个仓位（逐步装填用）。
+func set_slot(index: int, ammo_id: int) -> void:
+	assert(index >= 0 and index < slots.size())
+	slots[index] = ammo_id
+
+
 ## 按顺序填入 ammo_ids（从槽 0 起）；返回实际装入数量。
 func load_sequence(ammo_ids: Array[int]) -> int:
 	clear()

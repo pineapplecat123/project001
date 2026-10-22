@@ -40,3 +40,6 @@ const BOSS_ATTACK_RANGE := 2
 const BOSS_INVALID_ON_START := 2
 const BOSS_INVALID_PER_ENEMY_TURN := 1
 const REWARD_BOSS_BASE_GOLD := 25
+
+## 无效弹药说明（袋内详情用）
+const INVALID_AMMO_SPECIAL := "击发伤害为 0。由 Boss 等效果塞入弹药袋，占用抽弹名额。"

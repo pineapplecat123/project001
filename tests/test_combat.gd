@@ -405,3 +405,70 @@ func test_reward_next_wave_keeps_bag_and_gold() -> void:
 	assert_eq(cs.bag, bag_after)
 	assert_false(cs.reward_pending)
 	assert_false(cs.reward_resolved)
+
+
+func test_stepwise_load_api() -> void:
+	var cs := CombatState.new(42)
+	cs.start_graybox(42)
+	assert_eq(cs.phase, CombatState.Phase.AWAIT_LOAD)
+	assert_true(cs.begin_load())
+	assert_true(cs.is_busy_loading())
+	var n := 0
+	while cs.is_busy_loading():
+		var r: Dictionary = cs.load_next_chamber()
+		assert_true(bool(r.get("ok", false)))
+		n += 1
+		assert_lte(n, CombatConstants.MAGAZINE_SIZE + 1)
+		if bool(r.get("done", false)):
+			break
+	assert_eq(n, CombatConstants.MAGAZINE_SIZE)
+	assert_false(cs.is_busy_loading())
+	assert_eq(cs.magazine.loaded_count(), CombatConstants.MAGAZINE_SIZE)
+	assert_eq(cs.magazine.start_index, 0)
+	assert_eq(cs.phase, CombatState.Phase.AWAIT_ACTION)
+	assert_eq(cs.bag.size(), CombatConstants.STARTER_WHITE_COUNT - CombatConstants.MAGAZINE_SIZE)
+
+
+func test_stepwise_load_partial_when_bag_small() -> void:
+	var cs := CombatState.new(5)
+	cs.start_graybox(5)
+	cs.bag.clear()
+	for _i in 3:
+		cs.bag.append(CombatConstants.WHITE_AMMO_ID)
+	assert_true(cs.begin_load())
+	var n := 0
+	while cs.is_busy_loading():
+		var r: Dictionary = cs.load_next_chamber()
+		assert_true(bool(r.get("ok", false)))
+		n += 1
+		if bool(r.get("done", false)):
+			break
+	assert_eq(n, 3)
+	assert_eq(cs.magazine.loaded_count(), 3)
+	assert_eq(cs.phase, CombatState.Phase.AWAIT_ACTION)
+
+
+func test_ammo_detail_text_from_table() -> void:
+	var text := DataRegistry.format_ammo_detail_text(1)
+	assert_true(text.contains("白色子弹"))
+	assert_true(text.contains("3"))
+	assert_true(text.contains("常规子弹") or text.contains("无"))
+
+
+func test_ammo_detail_text_invalid() -> void:
+	var text := DataRegistry.format_ammo_detail_text(CombatConstants.INVALID_AMMO_ID)
+	assert_true(text.contains(CombatConstants.INVALID_AMMO_NAME))
+	assert_true(text.contains("0"))
+
+
+func test_ammo_inventory_bag_and_mag() -> void:
+	var cs := CombatState.new(42)
+	cs.start_graybox(42)
+	var before_bag: int = cs.bag.size()
+	assert_true(cs.do_load())
+	var inv: Dictionary = cs.ammo_inventory_by_id()
+	assert_true(inv.has(CombatConstants.WHITE_AMMO_ID))
+	var e: Dictionary = inv[CombatConstants.WHITE_AMMO_ID]
+	assert_eq(int(e["mag"]), CombatConstants.MAGAZINE_SIZE)
+	assert_eq(int(e["bag"]), before_bag - CombatConstants.MAGAZINE_SIZE)
+	assert_eq(int(e["total"]), before_bag)

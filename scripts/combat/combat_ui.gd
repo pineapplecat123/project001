@@ -1,19 +1,22 @@
 extends Control
-## 灰盒战斗 UI：棋盘 + 环形转轮 + LOAD/FIRE/ROLL/UNLOAD + 检视袋网格 + 胜利奖励 + 开发者工具。
-## FIRE 逐发 0.4s；ROLL 转轮旋转动画；清场后奖励三选一。地图 run 领奖后回地图；练习战可下一波。
+## 灰盒战斗 UI：棋盘 + 大圆转轮（带六小圆）+ LOAD/FIRE/ROLL/UNLOAD + 检视袋网格/详情 + 胜利奖励 + 开发者工具。
+## 转轮：大盘带着仓位整盘旋转（每次 60°）；LOAD 逐步上弹；FIRE 逐发 0.4s；ROLL 旋转到目标仓。
 
 const CELL_W := 96
 const CELL_H := 86
 const WHEEL_SIZE := 280.0
 const CHAMBER_SIZE := 68.0
 const WHEEL_RADIUS := 92.0
+const DISK_BG_SIZE := 248.0
 const FIRE_SHOT_DELAY := 0.4
+const STEP_ROT_DURATION := 0.18
 const ROLL_ANIM_BASE := 0.32
-const ROLL_ANIM_PER_STEP := 0.04
-const ROLL_ANIM_MAX := 0.55
+const ROLL_ANIM_PER_STEP := 0.05
+const ROLL_ANIM_MAX := 0.6
+const LOAD_INSERT_PAUSE := 0.06
 const BAG_GRID_COLS := 4
-const BAG_CELL_MIN := Vector2(140, 72)
-const VERSION := "0.2.8"
+const BAG_CELL_MIN := Vector2(140, 88)
+const VERSION := "0.2.9"
 
 const COL_PHASE := Color(1.0, 0.92, 0.45)
 const COL_HP_OK := Color(0.45, 0.95, 0.55)
@@ -25,15 +28,22 @@ const COL_TURN := Color(0.8, 0.8, 0.85)
 
 var state: CombatState
 var _chamber_panels: Array[Panel] = []
+var _disk: Control = null
+var _disk_bg: Panel = null
 var _bag_open: bool = false
 var _dev_open: bool = false
+var _detail_open: bool = false
 var _firing: bool = false
 var _rolling: bool = false
+var _loading: bool = false
 var _wheel_animating: bool = false
-var _wheel_anim_start: float = 0.0
+## 盘面视觉步数（整数格的浮点，供 Tween；每步 = 60°）
+var _wheel_visual_steps: float = 0.0
 var _fire_flash_tween: Tween
-var _roll_tween: Tween
+var _disk_tween: Tween
 var _reward_open: bool = false
+var _ammo_detail_panel: PanelContainer = null
+var _ammo_detail_body: RichTextLabel = null
 
 @onready var phase_label: Label = %PhaseLabel
 @onready var hp_label: Label = %HpLabel
@@ -88,10 +98,11 @@ func _ready() -> void:
 	btn_reward_next.pressed.connect(_on_reward_continue)
 	dimmer.gui_input.connect(_on_dimmer_input)
 	version_label.text = "v%s" % VERSION
-	mag_title.text = "弹夹转轮（▼红标=固定击发点 · 数字=顺时针击发顺序 · ROLL=旋转动画 · 红框=下一发）"
+	mag_title.text = "弹夹转轮（大圆带着六仓转 · ▼击发点固定不转 · LOAD 逐发上弹 · 红框=击发仓）"
 	_style_overlay_panels()
 	_build_board_cells()
 	_build_wheel_chambers()
+	_build_ammo_detail_panel()
 	_wire_dev_buttons()
 	bag_panel.visible = false
 	dev_panel.visible = false
@@ -125,6 +136,9 @@ func _on_dimmer_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 		# 奖励面板必须选完，点遮罩不关闭
 		if _reward_open:
+			return
+		if _detail_open:
+			_set_detail_open(false)
 			return
 		_set_bag_open(false)
 		if _dev_open:
@@ -173,44 +187,111 @@ func _build_wheel_chambers() -> void:
 	for c in mag_wheel.get_children():
 		if c != fire_marker:
 			c.queue_free()
-	fire_marker.text = "▼ 击发"
-	fire_marker.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	fire_marker.add_theme_color_override("font_color", Color(1.0, 0.18, 0.12))
-	fire_marker.add_theme_font_size_override("font_size", 22)
-	fire_marker.position = Vector2(WHEEL_SIZE * 0.5 - 40.0, -4.0)
-	fire_marker.size = Vector2(80, 28)
+	# 可旋转大盘：带着六个小圆仓一起转；击发标是 MagWheel 子节点且不在盘上，屏幕固定。
+	_disk = Control.new()
+	_disk.name = "Disk"
+	_disk.position = Vector2.ZERO
+	_disk.size = Vector2(WHEEL_SIZE, WHEEL_SIZE)
+	_disk.custom_minimum_size = Vector2(WHEEL_SIZE, WHEEL_SIZE)
+	_disk.pivot_offset = Vector2(WHEEL_SIZE, WHEEL_SIZE) * 0.5
+	_disk.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	mag_wheel.add_child(_disk)
+	mag_wheel.move_child(_disk, 0)
+
+	_disk_bg = Panel.new()
+	_disk_bg.name = "DiskBg"
+	_disk_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var bg_pad := (WHEEL_SIZE - DISK_BG_SIZE) * 0.5
+	_disk_bg.position = Vector2(bg_pad, bg_pad)
+	_disk_bg.size = Vector2(DISK_BG_SIZE, DISK_BG_SIZE)
+	var bg_style := StyleBoxFlat.new()
+	bg_style.bg_color = Color(0.16, 0.17, 0.22, 0.95)
+	bg_style.set_border_width_all(4)
+	bg_style.border_color = Color(0.45, 0.48, 0.55)
+	bg_style.set_corner_radius_all(999)
+	_disk_bg.add_theme_stylebox_override("panel", bg_style)
+	_disk.add_child(_disk_bg)
+
+	var hub := Panel.new()
+	hub.name = "Hub"
+	hub.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var hub_sz := 36.0
+	hub.position = Vector2(WHEEL_SIZE, WHEEL_SIZE) * 0.5 - Vector2(hub_sz, hub_sz) * 0.5
+	hub.size = Vector2(hub_sz, hub_sz)
+	var hub_style := StyleBoxFlat.new()
+	hub_style.bg_color = Color(0.28, 0.3, 0.36)
+	hub_style.set_border_width_all(2)
+	hub_style.border_color = Color(0.55, 0.58, 0.65)
+	hub_style.set_corner_radius_all(999)
+	hub.add_theme_stylebox_override("panel", hub_style)
+	_disk.add_child(hub)
+
+	var center := Vector2(WHEEL_SIZE, WHEEL_SIZE) * 0.5
+	var n := float(CombatConstants.MAGAZINE_SIZE)
 	for i in CombatConstants.MAGAZINE_SIZE:
 		var panel := Panel.new()
 		panel.name = "Chamber%d" % i
 		panel.custom_minimum_size = Vector2(CHAMBER_SIZE, CHAMBER_SIZE)
+		panel.size = Vector2(CHAMBER_SIZE, CHAMBER_SIZE)
 		panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var angle: float = -PI / 2.0 + float(i) * TAU / n
+		var pos := center + Vector2(cos(angle), sin(angle)) * WHEEL_RADIUS
+		panel.position = pos - Vector2(CHAMBER_SIZE, CHAMBER_SIZE) * 0.5
+		panel.pivot_offset = Vector2(CHAMBER_SIZE, CHAMBER_SIZE) * 0.5
 		var label := Label.new()
 		label.name = "Info"
 		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		label.add_theme_font_size_override("font_size", 15)
 		panel.add_child(label)
-		mag_wheel.add_child(panel)
+		_disk.add_child(panel)
 		_chamber_panels.append(panel)
-	_layout_wheel_chambers()
+
+	fire_marker.text = "▼ 击发"
+	fire_marker.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	fire_marker.add_theme_color_override("font_color", Color(1.0, 0.18, 0.12))
+	fire_marker.add_theme_font_size_override("font_size", 22)
+	fire_marker.position = Vector2(WHEEL_SIZE * 0.5 - 40.0, -8.0)
+	fire_marker.size = Vector2(80, 28)
+	fire_marker.z_index = 5
+	fire_marker.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	mag_wheel.move_child(fire_marker, mag_wheel.get_child_count() - 1)
+	_wheel_visual_steps = 0.0
+	_apply_disk_rotation(0.0)
 
 
-func _layout_wheel_chambers() -> void:
-	var center := Vector2(WHEEL_SIZE * 0.5, WHEEL_SIZE * 0.5 + 10.0)
-	var start_f: float = 0.0
-	if _wheel_animating:
-		start_f = _wheel_anim_start
-	elif state != null and state.magazine != null:
-		start_f = float(state.magazine.start_index)
-	var n := float(CombatConstants.MAGAZINE_SIZE)
-	for slot_i in CombatConstants.MAGAZINE_SIZE:
-		var order_k: float = fposmod(float(slot_i) - start_f, n)
-		var angle: float = -PI / 2.0 + order_k * TAU / n
-		var pos := center + Vector2(cos(angle), sin(angle)) * WHEEL_RADIUS
-		var panel: Panel = _chamber_panels[slot_i]
-		panel.position = pos - Vector2(CHAMBER_SIZE, CHAMBER_SIZE) * 0.5
-		panel.size = Vector2(CHAMBER_SIZE, CHAMBER_SIZE)
+func _apply_disk_rotation(steps: float) -> void:
+	_wheel_visual_steps = steps
+	if _disk == null:
+		return
+	_disk.rotation = -steps * TAU / float(CombatConstants.MAGAZINE_SIZE)
+	# 文字保持正向，避免整盘转时难读
+	for panel in _chamber_panels:
+		var info: Label = panel.get_node("Info")
+		info.rotation = -_disk.rotation
+		info.pivot_offset = panel.size * 0.5
+
+
+## 顺时针转到目标仓位步数（可跨圈，to 可 > 6）。
+func _animate_disk_to(target_steps: float, duration: float) -> void:
+	var from_s: float = _wheel_visual_steps
+	var to_s: float = target_steps
+	# 装填/射击默认顺时针：目标不小于当前（可 +6k）
+	while to_s + 0.001 < from_s:
+		to_s += float(CombatConstants.MAGAZINE_SIZE)
+	if absf(to_s - from_s) < 0.001:
+		_apply_disk_rotation(fposmod(to_s, float(CombatConstants.MAGAZINE_SIZE)))
+		return
+	_wheel_animating = true
+	if _disk_tween != null and _disk_tween.is_valid():
+		_disk_tween.kill()
+	_disk_tween = create_tween()
+	_disk_tween.tween_method(_apply_disk_rotation, from_s, to_s, duration).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	await _disk_tween.finished
+	_apply_disk_rotation(fposmod(to_s, float(CombatConstants.MAGAZINE_SIZE)))
+	_wheel_animating = false
 
 
 func _ammo_colors(ammo_id: int) -> Dictionary:
@@ -251,14 +332,63 @@ func _ammo_colors(ammo_id: int) -> Dictionary:
 			return {"bg": Color(0.85, 0.85, 0.88), "fg": Color(0.1, 0.1, 0.1)}
 
 
+func _busy() -> bool:
+	return _firing or _rolling or _loading or _wheel_animating
+
+
 func _on_load() -> void:
-	if _firing or _rolling:
+	if _busy():
 		return
-	state.do_load()
+	_run_load_sequence()
+
+
+func _run_load_sequence() -> void:
+	if not state.begin_load():
+		return
+	_loading = true
+	_refresh()
+	# 空袋已在 begin_load 内收尾
+	if not state.is_busy_loading():
+		_loading = false
+		_apply_disk_rotation(float(state.magazine.start_index))
+		_refresh()
+		return
+	while state.is_busy_loading():
+		var before_steps: float = _wheel_visual_steps
+		var result: Dictionary = state.load_next_chamber()
+		if not bool(result.get("ok", false)):
+			break
+		_refresh_mag()
+		_refresh()
+		if LOAD_INSERT_PAUSE > 0.0:
+			await get_tree().create_timer(LOAD_INSERT_PAUSE).timeout
+		var rotate_to: float = float(result.get("rotate_to", state.magazine.start_index))
+		# 顺时针转到目标（跨圈用 +6）
+		var target: float = rotate_to
+		while target + 0.001 < before_steps:
+			target += float(CombatConstants.MAGAZINE_SIZE)
+		# 若目标相对当前不足一格且未结束，仍转一格
+		if not bool(result.get("done", false)) and absf(target - before_steps) < 0.001:
+			target = before_steps + 1.0
+		if absf(target - before_steps) >= 0.001:
+			await _animate_disk_to(target, STEP_ROT_DURATION)
+		if bool(result.get("done", false)):
+			break
+	# 收尾对齐逻辑 start_index（通常 0）
+	var final_i: float = float(state.magazine.start_index)
+	var align: float = final_i
+	while align + 0.001 < _wheel_visual_steps:
+		align += float(CombatConstants.MAGAZINE_SIZE)
+	if absf(align - _wheel_visual_steps) >= 0.001:
+		await _animate_disk_to(align, STEP_ROT_DURATION)
+	else:
+		_apply_disk_rotation(fposmod(final_i, float(CombatConstants.MAGAZINE_SIZE)))
+	_loading = false
+	_refresh()
 
 
 func _on_fire() -> void:
-	if _firing or _rolling:
+	if _busy():
 		return
 	_run_fire_sequence()
 
@@ -269,13 +399,19 @@ func _run_fire_sequence() -> void:
 	_firing = true
 	_refresh()
 	while state.phase == CombatState.Phase.FIRING:
+		var start_before: int = state.magazine.start_index
 		var more: bool = state.fire_next_shot()
 		_refresh()
 		_flash_fire_chamber()
+		var start_after: int = state.magazine.start_index
 		if more:
+			var delta: int = (start_after - start_before + CombatConstants.MAGAZINE_SIZE) % CombatConstants.MAGAZINE_SIZE
+			if delta > 0:
+				await _animate_disk_to(_wheel_visual_steps + float(delta), STEP_ROT_DURATION)
 			await get_tree().create_timer(FIRE_SHOT_DELAY).timeout
 		else:
 			break
+	_apply_disk_rotation(0.0)
 	_firing = false
 	_refresh()
 
@@ -284,8 +420,6 @@ func _flash_fire_chamber() -> void:
 	if state == null or state.magazine == null:
 		return
 	var slot_i: int = state.magazine.start_index
-	# 刚击发后 start 可能已前进；高亮当前「下一发」仓（order_k==0）
-	slot_i = state.magazine.start_index
 	if slot_i < 0 or slot_i >= _chamber_panels.size():
 		return
 	var panel: Panel = _chamber_panels[slot_i]
@@ -297,44 +431,33 @@ func _flash_fire_chamber() -> void:
 
 
 func _on_roll() -> void:
-	if _firing or _rolling:
+	if _busy():
 		return
 	if not state.can_start_roll():
 		return
 	_rolling = true
 	var before: int = state.magazine.start_index
-	_wheel_animating = true
-	_wheel_anim_start = float(before)
 	_refresh()
 	var steps: int = state.apply_roll()
 	if steps < 0:
-		_wheel_animating = false
 		_rolling = false
 		_refresh()
 		return
 	if steps > 0:
 		var dur: float = clampf(ROLL_ANIM_BASE + float(steps) * ROLL_ANIM_PER_STEP, ROLL_ANIM_BASE, ROLL_ANIM_MAX)
-		if _roll_tween != null and _roll_tween.is_valid():
-			_roll_tween.kill()
-		_roll_tween = create_tween()
-		_roll_tween.tween_method(_set_wheel_visual_start, float(before), float(before + steps), dur).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
-		await _roll_tween.finished
-	_wheel_animating = false
-	_wheel_anim_start = float(state.magazine.start_index)
+		await _animate_disk_to(_wheel_visual_steps + float(steps), dur)
+	else:
+		_apply_disk_rotation(float(state.magazine.start_index))
 	state.resolve_after_player_action()
 	_rolling = false
 	_refresh()
 
 
-func _set_wheel_visual_start(v: float) -> void:
-	_wheel_anim_start = v
-	_layout_wheel_chambers()
-
-
 func _on_unload() -> void:
-	if _firing or _rolling:
+	if _busy():
 		return
 	state.do_unload()
+	_apply_disk_rotation(0.0)
 
 
 func _on_menu_pressed() -> void:
@@ -362,7 +485,7 @@ func _return_to_map(victory: bool) -> void:
 
 
 func _on_next_wave() -> void:
-	if _firing or _rolling:
+	if _busy():
 		return
 	# 地图 run 战败：用下一波按钮返回地图并结束本局
 	if state.from_map_run and state.phase == CombatState.Phase.LOST:
@@ -387,7 +510,10 @@ func _set_bag_open(open: bool) -> void:
 	if open:
 		_dev_open = false
 		dev_panel.visible = false
+		_set_detail_open(false)
 		_refresh_bag_list()
+	else:
+		_set_detail_open(false)
 	_update_dimmer()
 
 
@@ -403,7 +529,7 @@ func _toggle_dev() -> void:
 
 
 func _update_dimmer() -> void:
-	dimmer.visible = _bag_open or _dev_open or _reward_open
+	dimmer.visible = _bag_open or _dev_open or _reward_open or _detail_open
 
 
 func _set_reward_open(open: bool) -> void:
@@ -485,25 +611,31 @@ func _on_reward_skip() -> void:
 func _refresh_bag_list() -> void:
 	for c in bag_list.get_children():
 		c.queue_free()
+	var inv: Dictionary = state.ammo_inventory_by_id()
+	var bag_n: int = state.bag.size()
+	var mag_n: int = state.magazine.loaded_count() if state.magazine != null else 0
+	var total_n: int = bag_n + mag_n
 	var title := Label.new()
-	title.text = "弹药袋库存（只读 · 共 %d 发 · 抽弹纯随机无顺序）｜弃牌 %d｜金币 %d" % [
-		state.bag.size(), state.discard.size(), state.gold
+	title.text = "完整库存（袋+膛 · 共 %d 发：袋 %d / 膛 %d）｜弃牌 %d｜金币 %d" % [
+		total_n, bag_n, mag_n, state.discard.size(), state.gold
 	]
 	title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	title.add_theme_font_size_override("font_size", 16)
 	bag_list.add_child(title)
-	if state.bag.is_empty():
+	if inv.is_empty():
 		var empty := Label.new()
-		empty.text = "（袋内为空）"
+		empty.text = "（袋与弹夹皆空）"
 		bag_list.add_child(empty)
+		var tip0 := Label.new()
+		tip0.text = "亮=仍在袋可抽；暗=已上膛。点击格子查看弹药数据与效果。"
+		tip0.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		tip0.add_theme_font_size_override("font_size", 13)
+		tip0.add_theme_color_override("font_color", Color(0.7, 0.75, 0.85))
+		bag_list.add_child(tip0)
 		return
-	var counts: Dictionary = {}
 	var order_ids: Array[int] = []
-	for ammo_id in state.bag:
-		if not counts.has(ammo_id):
-			counts[ammo_id] = 0
-			order_ids.append(ammo_id)
-		counts[ammo_id] = int(counts[ammo_id]) + 1
+	for k in inv.keys():
+		order_ids.append(int(k))
 	order_ids.sort()
 	var grid := GridContainer.new()
 	grid.columns = BAG_GRID_COLS
@@ -512,6 +644,10 @@ func _refresh_bag_list() -> void:
 	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	bag_list.add_child(grid)
 	for ammo_id in order_ids:
+		var entry: Dictionary = inv[ammo_id]
+		var in_bag: int = int(entry.get("bag", 0))
+		var in_mag: int = int(entry.get("mag", 0))
+		var total: int = int(entry.get("total", in_bag + in_mag))
 		var def: Dictionary = DataRegistry.get_ammo(ammo_id)
 		var colors := _ammo_colors(ammo_id)
 		var cell := PanelContainer.new()
@@ -524,11 +660,22 @@ func _refresh_bag_list() -> void:
 		if ammo_id == CombatConstants.INVALID_AMMO_ID:
 			cell_style.border_color = Color(0.95, 0.35, 0.35)
 			cell_style.set_border_width_all(3)
+		elif in_mag > 0 and in_bag > 0:
+			# 部分上膛：琥珀色描边提示
+			cell_style.border_color = Color(0.95, 0.75, 0.25)
+			cell_style.set_border_width_all(3)
+		elif in_bag == 0 and in_mag > 0:
+			cell_style.border_color = Color(0.35, 0.35, 0.4)
 		cell_style.content_margin_left = 8
 		cell_style.content_margin_right = 8
 		cell_style.content_margin_top = 8
 		cell_style.content_margin_bottom = 8
 		cell.add_theme_stylebox_override("panel", cell_style)
+		# 全数已上膛 → 整格变暗；仍有在袋 → 正常亮度
+		if in_bag == 0 and in_mag > 0:
+			cell.modulate = Color(0.55, 0.55, 0.58, 1.0)
+		else:
+			cell.modulate = Color.WHITE
 		var v := VBoxContainer.new()
 		v.add_theme_constant_override("separation", 2)
 		var name_l := Label.new()
@@ -543,20 +690,100 @@ func _refresh_bag_list() -> void:
 		name_l.add_theme_color_override("font_color", colors["fg"])
 		name_l.add_theme_font_size_override("font_size", 16)
 		var cnt_l := Label.new()
-		cnt_l.text = "×%d" % int(counts[ammo_id])
+		cnt_l.text = "共×%d" % total
 		cnt_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		cnt_l.add_theme_color_override("font_color", colors["fg"])
-		cnt_l.add_theme_font_size_override("font_size", 22)
+		cnt_l.add_theme_font_size_override("font_size", 20)
+		var split_l := Label.new()
+		split_l.text = "袋%d · 膛%d" % [in_bag, in_mag]
+		split_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		split_l.add_theme_font_size_override("font_size", 13)
+		if in_mag > 0:
+			split_l.add_theme_color_override("font_color", Color(0.35, 0.35, 0.4) if in_bag == 0 else Color(0.45, 0.35, 0.1))
+		else:
+			split_l.add_theme_color_override("font_color", colors["fg"].darkened(0.15))
 		v.add_child(name_l)
 		v.add_child(cnt_l)
+		v.add_child(split_l)
 		cell.add_child(v)
+		cell.mouse_filter = Control.MOUSE_FILTER_STOP
+		cell.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+		var aid: int = ammo_id
+		cell.gui_input.connect(func(ev: InputEvent): _on_bag_cell_input(ev, aid))
 		grid.add_child(cell)
 	var tip := Label.new()
-	tip.text = "格子=弹种库存；装填时从袋内随机抽取，网格不表示抽弹顺序。"
+	tip.text = "亮格=仍有在袋可抽；暗格=该种已全部上膛；黄边=部分上膛。数字「袋/膛」按弹种汇总。点击查看数据与效果。网格不表示抽弹顺序。"
 	tip.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	tip.add_theme_font_size_override("font_size", 13)
 	tip.add_theme_color_override("font_color", Color(0.7, 0.75, 0.85))
 	bag_list.add_child(tip)
+
+
+func _on_bag_cell_input(event: InputEvent, ammo_id: int) -> void:
+	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		_show_ammo_detail(ammo_id)
+
+
+func _build_ammo_detail_panel() -> void:
+	_ammo_detail_panel = PanelContainer.new()
+	_ammo_detail_panel.name = "AmmoDetailPanel"
+	_ammo_detail_panel.visible = false
+	_ammo_detail_panel.z_index = 14
+	_ammo_detail_panel.set_anchors_preset(Control.PRESET_CENTER)
+	_ammo_detail_panel.offset_left = -300.0
+	_ammo_detail_panel.offset_top = -220.0
+	_ammo_detail_panel.offset_right = 300.0
+	_ammo_detail_panel.offset_bottom = 220.0
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.11, 0.12, 0.17, 0.98)
+	style.set_border_width_all(2)
+	style.border_color = Color(0.55, 0.7, 0.95, 0.95)
+	style.set_corner_radius_all(10)
+	style.content_margin_left = 16
+	style.content_margin_right = 16
+	style.content_margin_top = 14
+	style.content_margin_bottom = 14
+	_ammo_detail_panel.add_theme_stylebox_override("panel", style)
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 10)
+	var header := HBoxContainer.new()
+	var title := Label.new()
+	title.name = "DetailTitle"
+	title.text = "弹药详情"
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title.add_theme_font_size_override("font_size", 22)
+	var btn_close := Button.new()
+	btn_close.text = "关闭"
+	btn_close.custom_minimum_size = Vector2(100, 40)
+	btn_close.add_theme_font_size_override("font_size", 18)
+	btn_close.pressed.connect(func(): _set_detail_open(false))
+	header.add_child(title)
+	header.add_child(btn_close)
+	_ammo_detail_body = RichTextLabel.new()
+	_ammo_detail_body.name = "DetailBody"
+	_ammo_detail_body.bbcode_enabled = false
+	_ammo_detail_body.fit_content = false
+	_ammo_detail_body.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_ammo_detail_body.custom_minimum_size = Vector2(0, 280)
+	_ammo_detail_body.add_theme_font_size_override("normal_font_size", 16)
+	vbox.add_child(header)
+	vbox.add_child(_ammo_detail_body)
+	_ammo_detail_panel.add_child(vbox)
+	add_child(_ammo_detail_panel)
+
+
+func _set_detail_open(open: bool) -> void:
+	_detail_open = open
+	if _ammo_detail_panel != null:
+		_ammo_detail_panel.visible = open
+	_update_dimmer()
+
+
+func _show_ammo_detail(ammo_id: int) -> void:
+	if _ammo_detail_body == null:
+		return
+	_ammo_detail_body.text = DataRegistry.format_ammo_detail_text(ammo_id)
+	_set_detail_open(true)
 
 
 func _wire_dev_buttons() -> void:
@@ -614,7 +841,7 @@ func _refresh() -> void:
 	gold_label.add_theme_color_override("font_color", COL_GOLD)
 	turn_label.text = "回合 %d · 第 %d 波 · %s" % [state.turn_index, state.wave_index, state.encounter_label()]
 	turn_label.add_theme_color_override("font_color", COL_TURN)
-	var busy := _firing or _rolling or state.is_busy_firing()
+	var busy := _busy() or state.is_busy_firing() or state.is_busy_loading()
 	btn_load.disabled = busy or not state.can_load()
 	btn_fire.disabled = busy or not state.can_fire()
 	btn_roll.disabled = busy or not state.can_start_roll()
@@ -733,8 +960,12 @@ func _style_hp_bar(bar: ProgressBar, fill: Color) -> void:
 
 
 func _refresh_mag() -> void:
-	_layout_wheel_chambers()
 	var start_i: int = state.magazine.start_index
+	if not _wheel_animating:
+		# 非动画时盘面对齐逻辑起点（保持文字正向）
+		var want := float(start_i)
+		if absf(fposmod(_wheel_visual_steps, float(CombatConstants.MAGAZINE_SIZE)) - want) > 0.01:
+			_apply_disk_rotation(want)
 	for slot_i in CombatConstants.MAGAZINE_SIZE:
 		var panel: Panel = _chamber_panels[slot_i]
 		var info: Label = panel.get_node("Info")

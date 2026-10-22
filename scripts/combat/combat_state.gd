@@ -1,5 +1,5 @@
 class_name CombatState
-## 战斗状态机。清场后奖励三选一，结算后再下一波；ROLL 可拆成 apply_roll + resolve。
+## 战斗状态机。清场后奖励三选一，结算后再下一波；ROLL 可拆成 apply_roll + resolve；LOAD 可逐步装填。
 
 enum Phase {
 	AWAIT_LOAD,
@@ -72,6 +72,12 @@ var _carry_water: bool = false
 var _carry_thunder: bool = false
 var _pending_gold_autofires: int = 0
 
+## 逐步装填会话（UI：装一发→转 60°→再装；do_load 仍可一次装满）
+var _load_session_active: bool = false
+var _load_next_slot: int = 0
+var _load_raw_ids: Array[int] = []
+var _load_resolved_ids: Array[int] = []
+
 
 func _init(seed_value: int = 0) -> void:
 	if seed_value != 0:
@@ -104,6 +110,7 @@ func start_graybox(seed_value: int = 0) -> void:
 	last_load_ids.clear()
 	_reset_fire_session()
 	_pending_gold_autofires = 0
+	_reset_load_session()
 	_clear_reward_state()
 	wave_took_damage = false
 	wave_player_turns = 0
@@ -149,6 +156,7 @@ func start_from_run(payload: Dictionary, seed_value: int = 0) -> void:
 	last_load_ids.clear()
 	_reset_fire_session()
 	_pending_gold_autofires = 0
+	_reset_load_session()
 	_clear_reward_state()
 	wave_took_damage = false
 	wave_player_turns = 0
@@ -221,6 +229,27 @@ func _shuffle(arr: Array[int]) -> void:
 		arr[j] = tmp
 
 
+## 检视用：按弹种汇总袋内 + 已上膛数量（不含弃牌）。
+func ammo_inventory_by_id() -> Dictionary:
+	var out: Dictionary = {}
+	for ammo_id in bag:
+		var id: int = int(ammo_id)
+		if not out.has(id):
+			out[id] = {"bag": 0, "mag": 0, "total": 0}
+		out[id]["bag"] = int(out[id]["bag"]) + 1
+		out[id]["total"] = int(out[id]["total"]) + 1
+	if magazine != null:
+		for ammo_id in magazine.slots:
+			var id2: int = int(ammo_id)
+			if id2 == Magazine.EMPTY:
+				continue
+			if not out.has(id2):
+				out[id2] = {"bag": 0, "mag": 0, "total": 0}
+			out[id2]["mag"] = int(out[id2]["mag"]) + 1
+			out[id2]["total"] = int(out[id2]["total"]) + 1
+	return out
+
+
 ## 弹药袋无顺序：每次从现存弹药中均匀随机抽取（数量加权=逐发随机下标），不按数组 FIFO。
 func _draw_random_from_bag(count: int) -> Array[int]:
 	var drawn: Array[int] = []
@@ -273,8 +302,19 @@ func can_attack_player(e: EnemyInstance) -> bool:
 	return dist >= 1 and dist <= e.attack_range
 
 
+func _reset_load_session() -> void:
+	_load_session_active = false
+	_load_next_slot = 0
+	_load_raw_ids.clear()
+	_load_resolved_ids.clear()
+
+
+func is_busy_loading() -> bool:
+	return _load_session_active
+
+
 func can_load() -> bool:
-	return phase == Phase.AWAIT_LOAD
+	return phase == Phase.AWAIT_LOAD and not _load_session_active
 
 
 func can_fire() -> bool:
@@ -293,35 +333,125 @@ func is_busy_firing() -> bool:
 	return phase == Phase.FIRING
 
 
+## 一次装满（测试 / 金色额外轮 / 无动画路径）。UI 请用 begin_load + load_next_chamber。
 func do_load() -> bool:
+	if not begin_load():
+		return false
+	while _load_session_active:
+		load_next_chamber()
+	return true
+
+
+## 开始逐步装填会话。成功后反复调用 load_next_chamber 直到返回 done。
+func begin_load() -> bool:
 	if not can_load():
 		return false
 	if needs_reshuffle_next_load:
 		_reshuffle_discard_into_bag()
 		needs_reshuffle_next_load = false
-	var draw_n: int = mini(CombatConstants.MAGAZINE_SIZE, bag.size())
-	var drawn: Array[int] = _draw_random_from_bag(draw_n)
-	var prev_load: Array[int] = last_load_ids.duplicate()
-	var resolved: Array[int] = _resolve_black_white_with_prev(drawn, prev_load)
-	last_load_ids = drawn.duplicate()
-	magazine.load_sequence(resolved)
-	if bag.is_empty():
-		needs_reshuffle_next_load = true
+	magazine.clear()
+	_load_session_active = true
+	_load_next_slot = 0
+	_load_raw_ids.clear()
+	_load_resolved_ids.clear()
 	turn_index += 1
 	wave_player_turns += 1
-	_log("第 %d 回合：装填 %d 发。" % [turn_index, resolved.size()])
-	for i in resolved.size():
-		if drawn[i] == FireResolver.ID_BW and resolved[i] != FireResolver.ID_BW:
-			_log("黑白子弹变形为 %s。" % DataRegistry.get_ammo(resolved[i]).get("name", resolved[i]))
-	if resolved.is_empty():
+	_log("第 %d 回合：开始装填…" % turn_index)
+	_emit()
+	# 袋已空：立刻收尾（弹药耗尽）
+	if bag.is_empty():
+		return _finish_load_session_empty()
+	return true
+
+
+## 装入下一仓。返回字典：ok/done/ammo_id/slot/rotate_to/exhausted
+## rotate_to = 装完本发后盘面应对准的 start_index（供 UI 转 60° 整数倍）。
+func load_next_chamber() -> Dictionary:
+	var fail := {
+		"ok": false,
+		"done": true,
+		"ammo_id": Magazine.EMPTY,
+		"slot": -1,
+		"rotate_to": 0,
+		"exhausted": false,
+	}
+	if not _load_session_active:
+		return fail
+	if _load_next_slot >= CombatConstants.MAGAZINE_SIZE or bag.is_empty():
+		return _complete_load_session()
+	var drawn: Array[int] = _draw_random_from_bag(1)
+	var raw_id: int = drawn[0]
+	_load_raw_ids.append(raw_id)
+	var resolved_arr: Array[int] = _resolve_black_white_with_prev([raw_id], last_load_ids)
+	var resolved: int = resolved_arr[0]
+	_load_resolved_ids.append(resolved)
+	var slot: int = _load_next_slot
+	magazine.set_slot(slot, resolved)
+	if raw_id == FireResolver.ID_BW and resolved != FireResolver.ID_BW:
+		_log("黑白子弹变形为 %s。" % _ammo_name(resolved))
+	_log("装填仓 %d：%s。" % [slot + 1, _ammo_name(resolved)])
+	_load_next_slot += 1
+	if bag.is_empty():
+		needs_reshuffle_next_load = true
+	var more: bool = _load_next_slot < CombatConstants.MAGAZINE_SIZE and not bag.is_empty()
+	if more:
+		# 下一空仓转到击发/上弹位
+		magazine.start_index = _load_next_slot
+		_emit()
+		return {
+			"ok": true,
+			"done": false,
+			"ammo_id": resolved,
+			"slot": slot,
+			"rotate_to": _load_next_slot,
+			"exhausted": false,
+		}
+	return _complete_load_session_after_shot(resolved, slot)
+
+
+func _complete_load_session_after_shot(resolved: int, slot: int) -> Dictionary:
+	var result := _complete_load_session()
+	result["ammo_id"] = resolved
+	result["slot"] = slot
+	result["ok"] = true
+	return result
+
+
+func _complete_load_session() -> Dictionary:
+	last_load_ids = _load_raw_ids.duplicate()
+	magazine.start_index = 0
+	var n: int = _load_resolved_ids.size()
+	_log("装填完成：共 %d 发。" % n)
+	_reset_load_session()
+	if magazine.is_empty():
 		_log("弹药袋与弹夹皆空，无法行动。")
-		if discard.is_empty() and magazine.is_empty():
+		if discard.is_empty():
 			_lose_ammo_exhausted()
 			_emit()
-			return true
+			return {
+				"ok": true,
+				"done": true,
+				"ammo_id": Magazine.EMPTY,
+				"slot": -1,
+				"rotate_to": 0,
+				"exhausted": true,
+			}
 	_set_phase(Phase.AWAIT_ACTION)
 	_emit()
+	return {
+		"ok": true,
+		"done": true,
+		"ammo_id": Magazine.EMPTY,
+		"slot": -1,
+		"rotate_to": 0,
+		"exhausted": false,
+	}
+
+
+func _finish_load_session_empty() -> bool:
+	_complete_load_session()
 	return true
+
 
 
 func _resolve_black_white_with_prev(drawn: Array[int], prev_load: Array[int]) -> Array[int]:
@@ -914,6 +1044,7 @@ func start_next_wave() -> bool:
 	lose_reason = LoseReason.NONE
 	_reset_fire_session()
 	_pending_gold_autofires = 0
+	_reset_load_session()
 	_clear_reward_state()
 	wave_took_damage = false
 	wave_player_turns = 0
