@@ -28,3 +28,12 @@
 - Web 中文乱码：嵌入子集字体 `assets/fonts/NotoSansSC-UI.ttf`，全局 Theme `themes/ui_theme.tres`。
 
 - 2026-10-23：Pages 资源按 SHA 改名防缓存；版本 0.1.2。
+
+## 2026-10-23（Push A · v0.1.3）
+
+- 弹夹改为左轮环形 UI；ROLL=随机转轮，击发点（红标）固定顶部，不再点选起点。
+- FIRE：`begin_fire` / `fire_next_shot`；UI 每发间隔 0.4s，射击中禁用行动按钮。
+- 修复：袋与弃牌皆空时失败原因为「弹药耗尽」，不再把 `player_hp` 置 0 伪装被杀。
+- 怪物仅邻接（格 1）才攻击；远处多回合不掉血（GUT 覆盖）。
+- 检视弹药袋只读面板；开发者工具骨架。
+- 字体：自 Noto Sans CJK SC 重新 subset，`allow_system_fallback=false`。

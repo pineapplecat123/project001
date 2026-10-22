@@ -1,13 +1,20 @@
 class_name CombatState
 ## 战斗状态机：装填 → FIRE/ROLL/UNLOAD → 怪回合 → 胜负。
+## FIRE 支持逐步击发（UI 控制节奏）；ROLL 为随机转轮。
 
 enum Phase {
 	AWAIT_LOAD,
 	AWAIT_ACTION,
-	AWAIT_ROLL_PICK,
+	FIRING,
 	ENEMY_TURN,
 	WON,
 	LOST,
+}
+
+enum LoseReason {
+	NONE,
+	HP,
+	AMMO_EXHAUSTED,
 }
 
 signal phase_changed(phase: int)
@@ -25,6 +32,12 @@ var turn_index: int = 0
 var needs_reshuffle_next_load: bool = false
 var rng: RandomNumberGenerator = RandomNumberGenerator.new()
 var last_log: PackedStringArray = PackedStringArray()
+var lose_reason: int = LoseReason.NONE
+var gold: int = 0  ## 经济 stub，供开发者工具
+
+## 逐步射击会话
+var _fire_queue: Array[int] = []
+var _fire_total_damage: int = 0
 
 
 func _init(seed_value: int = 0) -> void:
@@ -52,6 +65,10 @@ func start_graybox(seed_value: int = 0) -> void:
 	turn_index = 0
 	needs_reshuffle_next_load = false
 	last_log.clear()
+	lose_reason = LoseReason.NONE
+	gold = 0
+	_fire_queue.clear()
+	_fire_total_damage = 0
 	_set_phase(Phase.AWAIT_LOAD)
 	_log("战斗开始：白色子弹 ×%d vs 平民。" % CombatConstants.STARTER_WHITE_COUNT)
 	_emit()
@@ -102,6 +119,10 @@ func occupied_cells() -> Dictionary:
 	return occ
 
 
+func is_adjacent_to_player(e: EnemyInstance) -> bool:
+	return e != null and e.is_alive() and e.cell == CombatConstants.PLAYER_CELL + 1
+
+
 func can_load() -> bool:
 	return phase == Phase.AWAIT_LOAD
 
@@ -116,6 +137,10 @@ func can_unload() -> bool:
 
 func can_start_roll() -> bool:
 	return phase == Phase.AWAIT_ACTION and magazine.loaded_count() >= 1
+
+
+func is_busy_firing() -> bool:
+	return phase == Phase.FIRING
 
 
 func do_load() -> bool:
@@ -135,15 +160,26 @@ func do_load() -> bool:
 	_log("第 %d 回合：装填 %d 发。" % [turn_index, drawn.size()])
 	if drawn.is_empty():
 		_log("弹药袋与弹夹皆空，无法行动。")
-		# 仍进入行动相位，但只能空等——实际灰盒袋不会空到无弃牌；若空则直接判负防卡死
-		if discard.is_empty():
-			player_hp = 0
-			_check_end_after_player()
+		if discard.is_empty() and magazine.is_empty():
+			# 弹药耗尽：失败，但不伪装成被怪打死（不清零 HP）
+			_lose_ammo_exhausted()
 			_emit()
 			return true
 	_set_phase(Phase.AWAIT_ACTION)
 	_emit()
 	return true
+
+
+func _lose_ammo_exhausted() -> void:
+	lose_reason = LoseReason.AMMO_EXHAUSTED
+	_set_phase(Phase.LOST)
+	_log("失败：弹药耗尽（并非被怪物击杀）。")
+
+
+func _lose_hp() -> void:
+	lose_reason = LoseReason.HP
+	_set_phase(Phase.LOST)
+	_log("失败：玩家血量归零，整局结束。")
 
 
 func _reshuffle_discard_into_bag() -> void:
@@ -154,63 +190,113 @@ func _reshuffle_discard_into_bag() -> void:
 	_log("弃牌堆洗回弹药袋（%d 发）。" % bag.size())
 
 
-func do_fire() -> bool:
+## 开始逐步射击；之后由 UI 反复调用 fire_next_shot()。
+func begin_fire() -> bool:
 	if not can_fire():
 		return false
-	var order: Array[int] = magazine.fire_order()
-	var total := 0
-	for ammo_id in order:
-		var dmg: int = BulletEffectRegistry.compute_damage(ammo_id, {})
-		var target: EnemyInstance = front_enemy()
-		if target == null:
-			_log("无可击中目标，余弹未造成伤害。")
-			break
-		var dealt: int = target.apply_hit(dmg)
-		total += dealt
-		_log("击发[%s] → %s 格%d 伤害%d（HP %d/%d）" % [
-			DataRegistry.get_ammo(ammo_id).get("name", str(ammo_id)),
-			target.name_zh, target.cell, dealt, target.hp, target.max_hp
-		])
-	for id in order:
-		discard.append(id)
-	magazine.clear()
-	_log("射击结算完毕，总伤害 %d。" % total)
-	if _check_end_after_player():
-		_emit()
-		return true
-	_run_enemy_turn()
+	_fire_queue = magazine.fire_order()
+	_fire_total_damage = 0
+	# 弹夹视觉：击发过程中逐发清空对准锤位的槽
+	_set_phase(Phase.FIRING)
+	_log("开始射击（共 %d 发）…" % _fire_queue.size())
 	_emit()
 	return true
 
 
+## 结算下一发；返回 true 表示还有后续发次。全部打完后自动收尾并进入怪回合（或胜负）。
+func fire_next_shot() -> bool:
+	if phase != Phase.FIRING:
+		return false
+	if _fire_queue.is_empty():
+		_finish_fire()
+		return false
+	var ammo_id: int = _fire_queue.pop_front()
+	# 从转轮锤位卸掉当前发（保持环形相对顺序的视觉：推进 start）
+	_consume_hammer_chamber(ammo_id)
+	var dmg: int = BulletEffectRegistry.compute_damage(ammo_id, {})
+	var target: EnemyInstance = front_enemy()
+	if target == null:
+		_log("击发[%s] → 无可击中目标。" % DataRegistry.get_ammo(ammo_id).get("name", str(ammo_id)))
+		discard.append(ammo_id)
+		_emit()
+		if _fire_queue.is_empty():
+			_finish_fire()
+			return false
+		return true
+	var dealt: int = target.apply_hit(dmg)
+	_fire_total_damage += dealt
+	_log("击发[%s] → %s 格%d 伤害%d（HP %d/%d）" % [
+		DataRegistry.get_ammo(ammo_id).get("name", str(ammo_id)),
+		target.name_zh, target.cell, dealt, target.hp, target.max_hp
+	])
+	discard.append(ammo_id)
+	_remove_dead()
+	_emit()
+	if _fire_queue.is_empty():
+		_finish_fire()
+		return false
+	return true
+
+
+func _consume_hammer_chamber(expected_id: int) -> void:
+	## 锤位（start_index）应对准本发；打完后该槽变空，start 转到下一非空（若还有）。
+	if magazine.is_empty():
+		return
+	var i := magazine.start_index
+	# 找到 expected（通常就是 start）
+	var seen := 0
+	while seen < magazine.size():
+		if magazine.slots[i] == expected_id:
+			magazine.slots[i] = Magazine.EMPTY
+			break
+		i = (i + 1) % magazine.size()
+		seen += 1
+	# 将 start 挪到下一个仍装填的槽（保持击发顺序视觉）
+	if magazine.is_empty():
+		magazine.start_index = 0
+		return
+	var j := (magazine.start_index) % magazine.size()
+	seen = 0
+	while seen < magazine.size():
+		if magazine.slots[j] != Magazine.EMPTY:
+			magazine.start_index = j
+			return
+		j = (j + 1) % magazine.size()
+		seen += 1
+
+
+func _finish_fire() -> void:
+	magazine.clear()
+	_log("射击结算完毕，总伤害 %d。" % _fire_total_damage)
+	_fire_queue.clear()
+	if _check_end_after_player():
+		_emit()
+		return
+	_run_enemy_turn()
+	_emit()
+
+
+## 同步一键打完（测试用，无延迟）。
+func do_fire() -> bool:
+	if not begin_fire():
+		return false
+	while phase == Phase.FIRING:
+		fire_next_shot()
+	return true
+
+
+## ROLL：随机转动转轮（击发点固定），耗玩家回合后进入怪回合。
 func begin_roll() -> bool:
 	if not can_start_roll():
 		return false
+	var before := magazine.start_index
+	var steps: int = magazine.random_roll(rng)
 	if magazine.loaded_count() <= 1:
-		# 单发无需挑选，直接结束回合
-		_log("重 roll：仅 1 发，起点不变，结束回合。")
-		_set_phase(Phase.AWAIT_ACTION)
-		if _check_end_after_player():
-			_emit()
-			return true
-		_run_enemy_turn()
-		_emit()
-		return true
-	_set_phase(Phase.AWAIT_ROLL_PICK)
-	_log("重 roll：点击弹夹一格作为新起点。")
-	_emit()
-	return true
-
-
-func confirm_roll_start(slot_index: int) -> bool:
-	if phase != Phase.AWAIT_ROLL_PICK:
-		return false
-	if slot_index < 0 or slot_index >= magazine.size():
-		return false
-	if magazine.slots[slot_index] == Magazine.EMPTY:
-		return false
-	magazine.set_start(slot_index)
-	_log("重 roll：新起点 = 槽 %d。" % slot_index)
+		_log("重 roll：仅 %d 发，转轮不转（步数 0）。" % magazine.loaded_count())
+	else:
+		_log("重 roll：转轮转动 %d 步（击发点固定）。起点槽 %d → %d。" % [
+			steps, before, magazine.start_index
+		])
 	if _check_end_after_player():
 		_emit()
 		return true
@@ -241,8 +327,7 @@ func _check_end_after_player() -> bool:
 		_log("胜利：敌人全灭。")
 		return true
 	if player_hp <= 0:
-		_set_phase(Phase.LOST)
-		_log("失败：玩家血量归零，整局结束。")
+		_lose_hp()
 		return true
 	return false
 
@@ -260,18 +345,17 @@ func _remove_dead() -> void:
 func _run_enemy_turn() -> void:
 	_set_phase(Phase.ENEMY_TURN)
 	_log("--- 怪物回合 ---")
-	# 按离玩家从近到远移动，避免互相卡住时顺序不稳
 	var order: Array = alive_enemies()
 	order.sort_custom(func(a, b): return a.cell < b.cell)
 	for e in order:
 		_move_enemy(e)
-		if e.cell == CombatConstants.PLAYER_CELL + 1:
+		if is_adjacent_to_player(e):
 			player_hp = maxi(0, player_hp - e.atk)
 			_log("%s 攻击玩家，造成 %d（玩家 HP %d/%d）" % [e.name_zh, e.atk, player_hp, player_max_hp])
-	# 流血 stub：不扣血，仅保留 stacks
+		else:
+			_log("%s 未邻接，不攻击（格 %d）。" % [e.name_zh, e.cell])
 	if player_hp <= 0:
-		_set_phase(Phase.LOST)
-		_log("失败：玩家血量归零，整局结束。")
+		_lose_hp()
 		return
 	if alive_enemies().is_empty():
 		_set_phase(Phase.WON)
@@ -302,8 +386,8 @@ func phase_name() -> String:
 			return "等待装填"
 		Phase.AWAIT_ACTION:
 			return "选择行动"
-		Phase.AWAIT_ROLL_PICK:
-			return "选择 ROLL 起点"
+		Phase.FIRING:
+			return "射击中"
 		Phase.ENEMY_TURN:
 			return "怪物回合"
 		Phase.WON:
@@ -312,3 +396,97 @@ func phase_name() -> String:
 			return "失败"
 		_:
 			return "未知"
+
+
+# ——— 开发者工具（骨架） ———
+
+func dev_add_ammo(ammo_id: int, count: int = 1) -> void:
+	for _i in count:
+		bag.append(ammo_id)
+	_log("[开发] 弹药袋 +%d × id=%d（现 %d）" % [count, ammo_id, bag.size()])
+	_emit()
+
+
+func dev_remove_ammo(ammo_id: int, count: int = 1) -> void:
+	var left := count
+	var i := 0
+	while i < bag.size() and left > 0:
+		if bag[i] == ammo_id:
+			bag.remove_at(i)
+			left -= 1
+		else:
+			i += 1
+	_log("[开发] 弹药袋移除 id=%d（剩余请求 %d）现 %d" % [ammo_id, left, bag.size()])
+	_emit()
+
+
+func dev_kill_all_enemies() -> void:
+	for e in enemies:
+		e.hp = 0
+	_remove_dead()
+	_log("[开发] 一键杀敌")
+	if alive_enemies().is_empty():
+		_set_phase(Phase.WON)
+		_log("胜利：敌人全灭。")
+	_emit()
+
+
+func dev_add_gold(amount: int = 10) -> void:
+	gold += amount
+	_log("[开发] 金币 %+d → %d（经济 stub）" % [amount, gold])
+	_emit()
+
+
+func dev_set_player_hp(v: int) -> void:
+	player_hp = clampi(v, 0, player_max_hp)
+	_log("[开发] 玩家 HP → %d" % player_hp)
+	if player_hp <= 0:
+		_lose_hp()
+	_emit()
+
+
+func dev_set_front_enemy_hp(v: int) -> void:
+	var e := front_enemy()
+	if e == null:
+		_log("[开发] 无敌人")
+		return
+	e.hp = clampi(v, 0, e.max_hp)
+	_log("[开发] %s HP → %d" % [e.name_zh, e.hp])
+	_remove_dead()
+	_emit()
+
+
+func dev_teleport_front_enemy(cell: int) -> void:
+	var e := front_enemy()
+	if e == null:
+		_log("[开发] 无敌人")
+		return
+	var c := clampi(cell, CombatConstants.PLAYER_CELL + 1, CombatConstants.BOARD_SIZE - 1)
+	var occ := occupied_cells()
+	occ.erase(e.cell)
+	if occ.has(c):
+		_log("[开发] 格 %d 已占用" % c)
+		return
+	e.cell = c
+	_log("[开发] %s 瞬移至格 %d" % [e.name_zh, e.cell])
+	_emit()
+
+
+func dev_force_load(ids: Array[int]) -> void:
+	if phase != Phase.AWAIT_LOAD and phase != Phase.AWAIT_ACTION:
+		_log("[开发] 当前阶段无法强制装填")
+		return
+	magazine.load_sequence(ids)
+	turn_index += 1
+	_set_phase(Phase.AWAIT_ACTION)
+	_log("[开发] 强制装填 %s" % str(ids))
+	_emit()
+
+
+func dev_skip_enemy_turn() -> void:
+	if phase == Phase.FIRING:
+		_log("[开发] 射击中不可跳过")
+		return
+	_set_phase(Phase.AWAIT_LOAD)
+	_log("[开发] 跳过怪物回合 → 请装填")
+	_emit()
