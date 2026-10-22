@@ -250,6 +250,20 @@ func _wire_dev_buttons() -> void:
 	)
 	%DevSkipEnemy.pressed.connect(func(): state.dev_skip_enemy_turn())
 	%DevClose.pressed.connect(func(): _toggle_dev())
+	%DevAddYellow.pressed.connect(func(): state.dev_add_ammo(FireResolver.ID_YELLOW, 1))
+	%DevAddBlack.pressed.connect(func(): state.dev_add_ammo(FireResolver.ID_BLACK, 1))
+	%DevAddGreen.pressed.connect(func(): state.dev_add_ammo(FireResolver.ID_GREEN, 1))
+	%DevAddPurple.pressed.connect(func(): state.dev_add_ammo(FireResolver.ID_PURPLE, 1))
+	%DevAddRed.pressed.connect(func(): state.dev_add_ammo(FireResolver.ID_RED, 1))
+	%DevAddBlue.pressed.connect(func(): state.dev_add_ammo(FireResolver.ID_BLUE, 1))
+	%DevAddGold.pressed.connect(func(): state.dev_add_ammo(FireResolver.ID_GOLD, 1))
+	%DevAddPink.pressed.connect(func(): state.dev_add_ammo(FireResolver.ID_PINK, 1))
+	%DevAddBW.pressed.connect(func(): state.dev_add_ammo(FireResolver.ID_BW, 1))
+	%DevAddPierce.pressed.connect(func(): state.dev_add_ammo(FireResolver.ID_PIERCE, 1))
+	%DevAddGas.pressed.connect(func(): state.dev_add_ammo(FireResolver.ID_GAS, 1))
+	%DevAddFire.pressed.connect(func(): state.dev_add_ammo(FireResolver.ID_FIRE, 1))
+	%DevAddWater.pressed.connect(func(): state.dev_add_ammo(FireResolver.ID_WATER, 1))
+	%DevAddThunder.pressed.connect(func(): state.dev_add_ammo(FireResolver.ID_THUNDER, 1))
 
 
 func _refresh() -> void:
@@ -299,7 +313,8 @@ func _refresh_board() -> void:
 			if state.is_adjacent_to_player(e):
 				style.border_color = Color(1.0, 0.8, 0.1)
 				style.set_border_width_all(3)
-			info.text = "%s\n%d/%d" % [e.name_zh, e.hp, e.max_hp]
+			var st := e.status_text()
+			info.text = "%s\n%d/%d%s" % [e.name_zh, e.hp, e.max_hp, ("\n" + st) if st != "" else ""]
 		else:
 			style.bg_color = Color(0.35, 0.35, 0.38)
 			info.text = str(i)

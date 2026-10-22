@@ -220,10 +220,9 @@ anchor_left = 0.5
 anchor_top = 0.5
 anchor_right = 0.5
 anchor_bottom = 0.5
-offset_left = -260.0
-offset_top = -250.0
-offset_right = 260.0
-offset_bottom = 250.0
+offset_left = -300.0
+offset_top = -300.0	offset_right = 300.0
+offset_bottom = 300.0
 grow_horizontal = 2
 grow_vertical = 2
 
@@ -301,6 +300,111 @@ text = "敌人瞬移远端（格9）"
 unique_name_in_owner = true
 layout_mode = 2
 text = "强制装填 6 白"
+
+
+[node name="DevAmmoRow" type="HBoxContainer" parent="DevPanel/DevMargin/DevVBox"]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="DevAddYellow" type="Button" parent="DevPanel/DevMargin/DevVBox/DevAmmoRow"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+text = "+黄"
+
+[node name="DevAddBlack" type="Button" parent="DevPanel/DevMargin/DevVBox/DevAmmoRow"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+text = "+黑"
+
+[node name="DevAddGreen" type="Button" parent="DevPanel/DevMargin/DevVBox/DevAmmoRow"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+text = "+绿"
+
+[node name="DevAmmoRow2" type="HBoxContainer" parent="DevPanel/DevMargin/DevVBox"]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="DevAddPurple" type="Button" parent="DevPanel/DevMargin/DevVBox/DevAmmoRow2"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+text = "+紫"
+
+[node name="DevAddRed" type="Button" parent="DevPanel/DevMargin/DevVBox/DevAmmoRow2"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+text = "+红"
+
+[node name="DevAddBlue" type="Button" parent="DevPanel/DevMargin/DevVBox/DevAmmoRow2"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+text = "+蓝"
+
+[node name="DevAmmoRow3" type="HBoxContainer" parent="DevPanel/DevMargin/DevVBox"]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="DevAddGold" type="Button" parent="DevPanel/DevMargin/DevVBox/DevAmmoRow3"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+text = "+金"
+
+[node name="DevAddPink" type="Button" parent="DevPanel/DevMargin/DevVBox/DevAmmoRow3"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+text = "+粉"
+
+[node name="DevAddBW" type="Button" parent="DevPanel/DevMargin/DevVBox/DevAmmoRow3"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+text = "+黑白"
+
+[node name="DevAmmoRow4" type="HBoxContainer" parent="DevPanel/DevMargin/DevVBox"]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="DevAddPierce" type="Button" parent="DevPanel/DevMargin/DevVBox/DevAmmoRow4"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+text = "+穿透"
+
+[node name="DevAddGas" type="Button" parent="DevPanel/DevMargin/DevVBox/DevAmmoRow4"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+text = "+汽油"
+
+[node name="DevAddFire" type="Button" parent="DevPanel/DevMargin/DevVBox/DevAmmoRow4"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+text = "+火"
+
+[node name="DevAmmoRow5" type="HBoxContainer" parent="DevPanel/DevMargin/DevVBox"]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="DevAddWater" type="Button" parent="DevPanel/DevMargin/DevVBox/DevAmmoRow5"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+text = "+水"
+
+[node name="DevAddThunder" type="Button" parent="DevPanel/DevMargin/DevVBox/DevAmmoRow5"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+text = "+雷"
 
 [node name="DevSkipEnemy" type="Button" parent="DevPanel/DevMargin/DevVBox"]
 unique_name_in_owner = true

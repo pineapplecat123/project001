@@ -1,6 +1,5 @@
 class_name CombatState
-## 战斗状态机：装填 → FIRE/ROLL/UNLOAD → 怪回合 → 胜负。
-## FIRE 支持逐步击发（UI 控制节奏）；ROLL 为随机转轮。
+## 战斗状态机。Push B：全弹药效果接入；敌人仍以平民为主。
 
 enum Phase {
 	AWAIT_LOAD,
@@ -27,17 +26,29 @@ var player_max_hp: int = CombatConstants.PLAYER_MAX_HP
 var bag: Array[int] = []
 var discard: Array[int] = []
 var magazine: Magazine = Magazine.new()
-var enemies: Array = []  ## Array[EnemyInstance]
+var enemies: Array = []
 var turn_index: int = 0
 var needs_reshuffle_next_load: bool = false
 var rng: RandomNumberGenerator = RandomNumberGenerator.new()
 var last_log: PackedStringArray = PackedStringArray()
 var lose_reason: int = LoseReason.NONE
-var gold: int = 0  ## 经济 stub，供开发者工具
+var gold: int = 0
+
+## 弹药跨回合状态
+var pink_bonus: int = 0
+var last_load_ids: Array[int] = []  ## 上次装填原始序列（变形前），供黑白弹药
 
 ## 逐步射击会话
 var _fire_queue: Array[int] = []
+var _fire_damages: Array[int] = []
+var _fire_index: int = 0
 var _fire_total_damage: int = 0
+var _carry_pierce: bool = false
+var _carry_gas: bool = false
+var _carry_fire: bool = false
+var _carry_water: bool = false
+var _carry_thunder: bool = false
+var _pending_gold_autofires: int = 0
 
 
 func _init(seed_value: int = 0) -> void:
@@ -67,11 +78,25 @@ func start_graybox(seed_value: int = 0) -> void:
 	last_log.clear()
 	lose_reason = LoseReason.NONE
 	gold = 0
-	_fire_queue.clear()
-	_fire_total_damage = 0
+	pink_bonus = 0
+	last_load_ids.clear()
+	_reset_fire_session()
+	_pending_gold_autofires = 0
 	_set_phase(Phase.AWAIT_LOAD)
-	_log("战斗开始：白色子弹 ×%d vs 平民。" % CombatConstants.STARTER_WHITE_COUNT)
+	_log("战斗开始：白色子弹 ×%d vs 平民。（可用开发者工具加入其它弹药）" % CombatConstants.STARTER_WHITE_COUNT)
 	_emit()
+
+
+func _reset_fire_session() -> void:
+	_fire_queue.clear()
+	_fire_damages.clear()
+	_fire_index = 0
+	_fire_total_damage = 0
+	_carry_pierce = false
+	_carry_gas = false
+	_carry_fire = false
+	_carry_water = false
+	_carry_thunder = false
 
 
 func _set_phase(p: int) -> void:
@@ -110,6 +135,12 @@ func front_enemy() -> EnemyInstance:
 		if best == null or e.cell < best.cell:
 			best = e
 	return best
+
+
+func enemies_sorted_by_cell() -> Array:
+	var out: Array = alive_enemies()
+	out.sort_custom(func(a, b): return a.cell < b.cell)
+	return out
 
 
 func occupied_cells() -> Dictionary:
@@ -153,21 +184,44 @@ func do_load() -> bool:
 	var drawn: Array[int] = []
 	for _i in draw_n:
 		drawn.append(bag.pop_front())
-	magazine.load_sequence(drawn)
+	var prev_load: Array[int] = last_load_ids.duplicate()
+	var resolved: Array[int] = _resolve_black_white_with_prev(drawn, prev_load)
+	last_load_ids = drawn.duplicate()
+	magazine.load_sequence(resolved)
 	if bag.is_empty():
 		needs_reshuffle_next_load = true
 	turn_index += 1
-	_log("第 %d 回合：装填 %d 发。" % [turn_index, drawn.size()])
-	if drawn.is_empty():
+	_log("第 %d 回合：装填 %d 发。" % [turn_index, resolved.size()])
+	for i in resolved.size():
+		if drawn[i] == FireResolver.ID_BW and resolved[i] != FireResolver.ID_BW:
+			_log("黑白子弹变形为 %s。" % DataRegistry.get_ammo(resolved[i]).get("name", resolved[i]))
+	if resolved.is_empty():
 		_log("弹药袋与弹夹皆空，无法行动。")
 		if discard.is_empty() and magazine.is_empty():
-			# 弹药耗尽：失败，但不伪装成被怪打死（不清零 HP）
 			_lose_ammo_exhausted()
 			_emit()
 			return true
 	_set_phase(Phase.AWAIT_ACTION)
 	_emit()
 	return true
+
+
+func _resolve_black_white_with_prev(drawn: Array[int], prev_load: Array[int]) -> Array[int]:
+	var out: Array[int] = []
+	for id in drawn:
+		if id != FireResolver.ID_BW:
+			out.append(id)
+			continue
+		if prev_load.is_empty():
+			out.append(id)  # 不生效
+			_log("黑白子弹：无上次装填，不变形。")
+		else:
+			var choice: int = FireResolver.most_common_ids(prev_load, rng)
+			if choice < 0 or choice == FireResolver.ID_BW:
+				out.append(id)
+			else:
+				out.append(choice)
+	return out
 
 
 func _lose_ammo_exhausted() -> void:
@@ -190,60 +244,184 @@ func _reshuffle_discard_into_bag() -> void:
 	_log("弃牌堆洗回弹药袋（%d 发）。" % bag.size())
 
 
-## 开始逐步射击；之后由 UI 反复调用 fire_next_shot()。
 func begin_fire() -> bool:
 	if not can_fire():
 		return false
+	_reset_fire_session()
 	_fire_queue = magazine.fire_order()
-	_fire_total_damage = 0
-	# 弹夹视觉：击发过程中逐发清空对准锤位的槽
+	_fire_damages = FireResolver.compute_shot_damages(_fire_queue, pink_bonus)
+	_fire_index = 0
 	_set_phase(Phase.FIRING)
 	_log("开始射击（共 %d 发）…" % _fire_queue.size())
+	if FireResolver.black_triggers(_fire_queue):
+		_log("黑色弹药触发：本匣全伤害 ×3。")
+	if FireResolver.blue_doubles_all(_fire_queue):
+		_log("蓝色弹药触发：6 种不同 → 本匣全伤害 ×2。")
 	_emit()
 	return true
 
 
-## 结算下一发；返回 true 表示还有后续发次。全部打完后自动收尾并进入怪回合（或胜负）。
 func fire_next_shot() -> bool:
 	if phase != Phase.FIRING:
 		return false
-	if _fire_queue.is_empty():
+	if _fire_index >= _fire_queue.size():
 		_finish_fire()
 		return false
-	var ammo_id: int = _fire_queue.pop_front()
-	# 从转轮锤位卸掉当前发（保持环形相对顺序的视觉：推进 start）
+	var ammo_id: int = _fire_queue[_fire_index]
+	var base_dmg: int = _fire_damages[_fire_index]
 	_consume_hammer_chamber(ammo_id)
-	var dmg: int = BulletEffectRegistry.compute_damage(ammo_id, {})
-	var target: EnemyInstance = front_enemy()
-	if target == null:
-		_log("击发[%s] → 无可击中目标。" % DataRegistry.get_ammo(ammo_id).get("name", str(ammo_id)))
-		discard.append(ammo_id)
-		_emit()
-		if _fire_queue.is_empty():
-			_finish_fire()
-			return false
-		return true
-	var dealt: int = target.apply_hit(dmg)
-	_fire_total_damage += dealt
-	_log("击发[%s] → %s 格%d 伤害%d（HP %d/%d）" % [
-		DataRegistry.get_ammo(ammo_id).get("name", str(ammo_id)),
-		target.name_zh, target.cell, dealt, target.hp, target.max_hp
-	])
+
+	var flags := FireResolver.inherits_from(ammo_id)
+	var pierce := _carry_pierce or bool(flags["pierce"])
+	var gas := _carry_gas or bool(flags["gas"])
+	var fire := _carry_fire or bool(flags["fire"])
+	var water := _carry_water or bool(flags["water"])
+	var thunder := _carry_thunder or bool(flags["thunder"])
+
+	var dealt_total := _apply_shot_to_enemies(ammo_id, base_dmg, pierce, gas, fire, water, thunder)
+	_fire_total_damage += dealt_total
 	discard.append(ammo_id)
+
+	# 传给下一发：本发自带的效果
+	_carry_pierce = bool(flags["pierce"])
+	_carry_gas = bool(flags["gas"])
+	_carry_fire = bool(flags["fire"])
+	_carry_water = bool(flags["water"])
+	_carry_thunder = bool(flags["thunder"])
+
+	if ammo_id == FireResolver.ID_GOLD:
+		_pending_gold_autofires += 1
+
+	_fire_index += 1
 	_remove_dead()
 	_emit()
-	if _fire_queue.is_empty():
+	if _fire_index >= _fire_queue.size():
 		_finish_fire()
 		return false
 	return true
 
 
+func _apply_shot_to_enemies(
+	ammo_id: int, base_dmg: int, pierce: bool, gas: bool, fire: bool, water: bool, thunder: bool
+) -> int:
+	var targets: Array = enemies_sorted_by_cell()
+	if targets.is_empty():
+		_log("击发[%s] → 无可击中目标。" % _ammo_name(ammo_id))
+		return 0
+	var total := 0
+	if pierce:
+		var dmg := base_dmg
+		for e in targets:
+			if dmg <= 0:
+				break
+			total += _hit_enemy_with_elements(e, dmg, ammo_id, gas, fire, water, thunder)
+			dmg -= 1
+	else:
+		var e: EnemyInstance = targets[0]
+		total += _hit_enemy_with_elements(e, base_dmg, ammo_id, gas, fire, water, thunder)
+		if thunder and e.wet_stacks > 0:
+			total += _thunder_chain(e, base_dmg, gas, fire, water)
+	return total
+
+
+func _hit_enemy_with_elements(
+	e: EnemyInstance, dmg: int, ammo_id: int, gas: bool, fire: bool, water: bool, thunder: bool
+) -> int:
+	var dealt: int = e.apply_hit(dmg)
+	_log("击发[%s] → %s 格%d 伤害%d（HP %d/%d）%s" % [
+		_ammo_name(ammo_id), e.name_zh, e.cell, dealt, e.hp, e.max_hp,
+		(" " + e.status_text()) if e.status_text() != "" else ""
+	])
+	if not e.is_alive():
+		return dealt
+	# 水：湿，覆盖燃烧
+	if water:
+		e.wet_stacks = maxi(e.wet_stacks, dealt if dealt > 0 else dmg)
+		e.burn_stacks = 0
+		_log("  → 施加湿 %d（燃烧被覆盖）" % e.wet_stacks)
+	# 汽油
+	if gas:
+		if e.burn_stacks > 0:
+			var bonus := e.gas_stacks + (dealt if dealt > 0 else dmg)
+			# 已燃烧时，本应施加的汽油直接转化为伤害
+			var convert := dealt if dealt > 0 else dmg
+			var extra: int = e.apply_hit(convert)
+			dealt += extra
+			_log("  → 已燃烧，汽油转化为伤害 %d" % extra)
+		else:
+			var add := dealt if dealt > 0 else dmg
+			e.gas_stacks += add
+			_log("  → 汽油 +%d（现 %d）" % [add, e.gas_stacks])
+	# 火：点燃汽油链 + 燃烧
+	if fire:
+		if e.gas_stacks > 0 or _any_gas_adjacent_cluster(e):
+			_ignite_gas_cluster(e)
+		var burn_add := dealt if dealt > 0 else dmg
+		e.burn_stacks += burn_add
+		_log("  → 燃烧 +%d（现 %d）" % [burn_add, e.burn_stacks])
+	return dealt
+
+
+func _any_gas_adjacent_cluster(start: EnemyInstance) -> bool:
+	return start.gas_stacks > 0
+
+
+func _ignite_gas_cluster(start: EnemyInstance) -> void:
+	## 所有与 start 通过相邻格子连在一起的带汽油敌人同时点燃。
+	var by_cell := occupied_cells()
+	var stack: Array = [start]
+	var seen := {}
+	while not stack.is_empty():
+		var e: EnemyInstance = stack.pop_back()
+		if seen.has(e):
+			continue
+		seen[e] = true
+		if e.gas_stacks <= 0:
+			continue
+		var g := e.gas_stacks
+		var boom: int = e.apply_hit(g)
+		e.burn_stacks += g
+		e.gas_stacks = 0
+		_log("  → %s 汽油引爆伤害%d，燃烧%d" % [e.name_zh, boom, e.burn_stacks])
+		for dc in [-1, 1]:
+			var nc: int = e.cell + dc
+			if by_cell.has(nc):
+				var other: EnemyInstance = by_cell[nc]
+				if other.gas_stacks > 0 and not seen.has(other):
+					stack.append(other)
+
+
+func _thunder_chain(origin: EnemyInstance, dmg: int, gas: bool, fire: bool, water: bool) -> int:
+	var by_cell := occupied_cells()
+	var visited := {}
+	visited[origin] = true
+	var total := 0
+	var queue: Array = [origin]
+	while not queue.is_empty():
+		var cur: EnemyInstance = queue.pop_front()
+		for dc in [-1, 1]:
+			var nc: int = cur.cell + dc
+			if not by_cell.has(nc):
+				continue
+			var other: EnemyInstance = by_cell[nc]
+			if visited.has(other):
+				continue
+			if other.wet_stacks <= 0:
+				continue
+			visited[other] = true
+			total += _hit_enemy_with_elements(other, dmg, FireResolver.ID_THUNDER, gas, fire, water, false)
+			queue.append(other)
+	return total
+
+
+func _ammo_name(ammo_id: int) -> String:
+	return str(DataRegistry.get_ammo(ammo_id).get("name", str(ammo_id)))
+
+
 func _consume_hammer_chamber(expected_id: int) -> void:
-	## 锤位（start_index）应对准本发；打完后该槽变空，start 转到下一非空（若还有）。
 	if magazine.is_empty():
 		return
 	var i := magazine.start_index
-	# 找到 expected（通常就是 start）
 	var seen := 0
 	while seen < magazine.size():
 		if magazine.slots[i] == expected_id:
@@ -251,11 +429,10 @@ func _consume_hammer_chamber(expected_id: int) -> void:
 			break
 		i = (i + 1) % magazine.size()
 		seen += 1
-	# 将 start 挪到下一个仍装填的槽（保持击发顺序视觉）
 	if magazine.is_empty():
 		magazine.start_index = 0
 		return
-	var j := (magazine.start_index) % magazine.size()
+	var j := magazine.start_index % magazine.size()
 	seen = 0
 	while seen < magazine.size():
 		if magazine.slots[j] != Magazine.EMPTY:
@@ -268,7 +445,14 @@ func _consume_hammer_chamber(expected_id: int) -> void:
 func _finish_fire() -> void:
 	magazine.clear()
 	_log("射击结算完毕，总伤害 %d。" % _fire_total_damage)
-	_fire_queue.clear()
+	_reset_fire_session()
+	# 金色：当前玩家回合内额外装填并自动射击（不跳过怪回合）
+	while _pending_gold_autofires > 0 and not _check_end_after_player():
+		_pending_gold_autofires -= 1
+		_log("金色弹药：额外自动装填射击（剩余 %d）" % _pending_gold_autofires)
+		if not _auto_load_and_fire_once():
+			break
+	_pending_gold_autofires = 0
 	if _check_end_after_player():
 		_emit()
 		return
@@ -276,7 +460,58 @@ func _finish_fire() -> void:
 	_emit()
 
 
-## 同步一键打完（测试用，无延迟）。
+func _auto_load_and_fire_once() -> bool:
+	## 金色额外轮：从袋抽满匣并立刻同步打完（无 UI 延迟）。
+	if needs_reshuffle_next_load:
+		_reshuffle_discard_into_bag()
+		needs_reshuffle_next_load = false
+	if bag.is_empty() and not discard.is_empty():
+		_reshuffle_discard_into_bag()
+	var draw_n: int = mini(CombatConstants.MAGAZINE_SIZE, bag.size())
+	if draw_n <= 0:
+		_log("金色额外轮：无弹药可装。")
+		return false
+	var drawn: Array[int] = []
+	for _i in draw_n:
+		drawn.append(bag.pop_front())
+	var prev := last_load_ids.duplicate()
+	last_load_ids = drawn.duplicate()
+	var resolved := _resolve_black_white_with_prev(drawn, prev)
+	magazine.load_sequence(resolved)
+	if bag.is_empty():
+		needs_reshuffle_next_load = true
+	_reset_fire_session()
+	_fire_queue = magazine.fire_order()
+	_fire_damages = FireResolver.compute_shot_damages(_fire_queue, pink_bonus)
+	_set_phase(Phase.FIRING)
+	while _fire_index < _fire_queue.size():
+		# 同步打完；金色嵌套再累加 pending
+		var ammo_id: int = _fire_queue[_fire_index]
+		var base_dmg: int = _fire_damages[_fire_index]
+		_consume_hammer_chamber(ammo_id)
+		var flags := FireResolver.inherits_from(ammo_id)
+		var pierce := _carry_pierce or bool(flags["pierce"])
+		var gas := _carry_gas or bool(flags["gas"])
+		var fire := _carry_fire or bool(flags["fire"])
+		var water := _carry_water or bool(flags["water"])
+		var thunder := _carry_thunder or bool(flags["thunder"])
+		_fire_total_damage += _apply_shot_to_enemies(ammo_id, base_dmg, pierce, gas, fire, water, thunder)
+		discard.append(ammo_id)
+		_carry_pierce = bool(flags["pierce"])
+		_carry_gas = bool(flags["gas"])
+		_carry_fire = bool(flags["fire"])
+		_carry_water = bool(flags["water"])
+		_carry_thunder = bool(flags["thunder"])
+		if ammo_id == FireResolver.ID_GOLD:
+			_pending_gold_autofires += 1
+		_fire_index += 1
+		_remove_dead()
+	magazine.clear()
+	_log("金色额外轮射击完毕。")
+	_reset_fire_session()
+	return true
+
+
 func do_fire() -> bool:
 	if not begin_fire():
 		return false
@@ -285,7 +520,6 @@ func do_fire() -> bool:
 	return true
 
 
-## ROLL：随机转动转轮（击发点固定），耗玩家回合后进入怪回合。
 func begin_roll() -> bool:
 	if not can_start_roll():
 		return false
@@ -309,8 +543,14 @@ func do_unload() -> bool:
 	if not can_unload():
 		return false
 	var removed: Array[int] = magazine.unload_all()
+	var had_pink := false
 	for id in removed:
 		discard.append(id)
+		if id == FireResolver.ID_PINK:
+			had_pink = true
+	if had_pink:
+		pink_bonus += 1
+		_log("粉色弹药卸除：本局粉色伤害永久 +1（现 +%d）。" % pink_bonus)
 	_log("卸除 %d 发进入弃牌堆。" % removed.size())
 	if _check_end_after_player():
 		_emit()
@@ -345,8 +585,19 @@ func _remove_dead() -> void:
 func _run_enemy_turn() -> void:
 	_set_phase(Phase.ENEMY_TURN)
 	_log("--- 怪物回合 ---")
-	var order: Array = alive_enemies()
-	order.sort_custom(func(a, b): return a.cell < b.cell)
+	# 燃烧跳伤
+	for e in alive_enemies():
+		if e.burn_stacks > 0:
+			var b: int = e.burn_stacks
+			var dealt: int = e.apply_hit(b)
+			e.burn_stacks = maxi(0, e.burn_stacks - 1)
+			_log("%s 燃烧结算伤害%d，燃烧剩余%d" % [e.name_zh, dealt, e.burn_stacks])
+	_remove_dead()
+	if alive_enemies().is_empty():
+		_set_phase(Phase.WON)
+		_log("胜利：敌人全灭。")
+		return
+	var order: Array = enemies_sorted_by_cell()
 	for e in order:
 		_move_enemy(e)
 		if is_adjacent_to_player(e):
@@ -398,12 +649,12 @@ func phase_name() -> String:
 			return "未知"
 
 
-# ——— 开发者工具（骨架） ———
+# ——— 开发者工具 ———
 
 func dev_add_ammo(ammo_id: int, count: int = 1) -> void:
 	for _i in count:
 		bag.append(ammo_id)
-	_log("[开发] 弹药袋 +%d × id=%d（现 %d）" % [count, ammo_id, bag.size()])
+	_log("[开发] 弹药袋 +%d × %s（现 %d）" % [count, _ammo_name(ammo_id), bag.size()])
 	_emit()
 
 
@@ -416,7 +667,7 @@ func dev_remove_ammo(ammo_id: int, count: int = 1) -> void:
 			left -= 1
 		else:
 			i += 1
-	_log("[开发] 弹药袋移除 id=%d（剩余请求 %d）现 %d" % [ammo_id, left, bag.size()])
+	_log("[开发] 移除 %s 后袋内 %d" % [_ammo_name(ammo_id), bag.size()])
 	_emit()
 
 
@@ -433,7 +684,7 @@ func dev_kill_all_enemies() -> void:
 
 func dev_add_gold(amount: int = 10) -> void:
 	gold += amount
-	_log("[开发] 金币 %+d → %d（经济 stub）" % [amount, gold])
+	_log("[开发] 金币 %+d → %d" % [amount, gold])
 	_emit()
 
 
@@ -476,10 +727,13 @@ func dev_force_load(ids: Array[int]) -> void:
 	if phase != Phase.AWAIT_LOAD and phase != Phase.AWAIT_ACTION:
 		_log("[开发] 当前阶段无法强制装填")
 		return
-	magazine.load_sequence(ids)
+	var prev := last_load_ids.duplicate()
+	last_load_ids = ids.duplicate()
+	var resolved := _resolve_black_white_with_prev(ids, prev)
+	magazine.load_sequence(resolved)
 	turn_index += 1
 	_set_phase(Phase.AWAIT_ACTION)
-	_log("[开发] 强制装填 %s" % str(ids))
+	_log("[开发] 强制装填 %s" % str(resolved))
 	_emit()
 
 
@@ -489,4 +743,22 @@ func dev_skip_enemy_turn() -> void:
 		return
 	_set_phase(Phase.AWAIT_LOAD)
 	_log("[开发] 跳过怪物回合 → 请装填")
+	_emit()
+
+
+func dev_spawn_enemy(enemy_id: int, cell: int = -1) -> void:
+	var def: Dictionary = DataRegistry.get_enemy(enemy_id)
+	if def.is_empty():
+		_log("[开发] 未知敌人 id=%d" % enemy_id)
+		return
+	var c := cell
+	if c < 0:
+		c = CombatConstants.BOARD_SIZE - 1
+		while occupied_cells().has(c) and c > CombatConstants.PLAYER_CELL + 1:
+			c -= 1
+	if occupied_cells().has(c) or c <= CombatConstants.PLAYER_CELL:
+		_log("[开发] 无法在格 %d 生成" % c)
+		return
+	enemies.append(EnemyInstance.new(def, c))
+	_log("[开发] 生成 %s 于格 %d" % [def.get("name", enemy_id), c])
 	_emit()

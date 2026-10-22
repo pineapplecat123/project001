@@ -185,3 +185,60 @@ func test_unload_discards_and_enemy_turn() -> void:
 
 func test_white_bullet_damage_value() -> void:
 	assert_eq(BulletEffectRegistry.compute_damage(CombatConstants.WHITE_AMMO_ID), 3)
+
+
+func test_yellow_damage_by_count() -> void:
+	var order: Array[int] = [4, 4, 4]
+	var dmgs: Array[int] = FireResolver.compute_shot_damages(order, 0)
+	assert_eq(dmgs, [3, 3, 3])
+
+
+func test_black_strict_majority_triples() -> void:
+	var order: Array[int] = [2, 2, 2, 1]
+	assert_true(FireResolver.black_triggers(order))
+	var dmgs: Array[int] = FireResolver.compute_shot_damages(order, 0)
+	assert_eq(dmgs[3], 9)  # white 3*3
+	# 并列最多不触发
+	var tied: Array[int] = [2, 2, 1, 1]
+	assert_false(FireResolver.black_triggers(tied))
+
+
+func test_purple_run_damage() -> void:
+	var order: Array[int] = [5, 5, 1]
+	var dmgs: Array[int] = FireResolver.compute_shot_damages(order, 0)
+	assert_eq(dmgs[0], 3)
+	assert_eq(dmgs[1], 3)
+	assert_eq(dmgs[2], 3)
+
+
+func test_green_trailing_multiplier() -> void:
+	var order: Array[int] = [1, 3, 3]
+	var dmgs: Array[int] = FireResolver.compute_shot_damages(order, 0)
+	# last green 2*2=4, second-last green 2*3=6
+	assert_eq(dmgs[2], 4)
+	assert_eq(dmgs[1], 6)
+	var allg: Array[int] = [3, 3, 3]
+	var z: Array[int] = FireResolver.compute_shot_damages(allg, 0)
+	assert_eq(z, [0, 0, 0])
+
+
+func test_pink_bonus_on_unload() -> void:
+	var cs := CombatState.new(8)
+	cs.start_graybox(8)
+	cs.enemies[0].hp = 100
+	cs.dev_force_load([9, 9, 1, 1, 1, 1] as Array[int])
+	assert_eq(cs.pink_bonus, 0)
+	assert_true(cs.do_unload())
+	assert_eq(cs.pink_bonus, 1)
+
+
+func test_force_load_yellow_and_fire() -> void:
+	var cs := CombatState.new(8)
+	cs.start_graybox(8)
+	cs.enemies[0].hp = 100
+	cs.enemies[0].max_hp = 100
+	cs.dev_force_load([4, 4, 4, 4, 4, 4] as Array[int])
+	assert_true(cs.do_fire())
+	# 6 黄每发 5 → 30
+	assert_eq(cs.enemies[0].hp, 70)
+	assert_eq(cs.phase, CombatState.Phase.AWAIT_LOAD)

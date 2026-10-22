@@ -1,5 +1,5 @@
 class_name EnemyInstance
-## 场上敌人运行时实例。
+## 场上敌人运行时实例（含汽油/燃烧/湿，供弹药状态连锁）。
 
 var def_id: int = 0
 var name_zh: String = ""
@@ -9,7 +9,10 @@ var atk: int = 0
 var mobility: int = 1
 var tags: Array[String] = []
 var cell: int = CombatConstants.BOARD_SIZE - 1
-var bleed_stacks: int = 0  ## stub：本模块不结算
+var bleed_stacks: int = 0
+var gas_stacks: int = 0
+var burn_stacks: int = 0
+var wet_stacks: int = 0
 
 
 func _init(def: Dictionary = {}, spawn_cell: int = CombatConstants.BOARD_SIZE - 1) -> void:
@@ -26,6 +29,9 @@ func _init(def: Dictionary = {}, spawn_cell: int = CombatConstants.BOARD_SIZE - 
 		tags.append(str(t))
 	cell = spawn_cell
 	bleed_stacks = 0
+	gas_stacks = 0
+	burn_stacks = 0
+	wet_stacks = 0
 
 
 func is_alive() -> bool:
@@ -36,7 +42,6 @@ func has_tag(tag: String) -> bool:
 	return tag in tags
 
 
-## 应用命中；返回实际扣血。石头 <4 无视。生物流血本模块仅 +stack 不结算。
 func apply_hit(raw_damage: int) -> int:
 	if not is_alive():
 		return 0
@@ -49,3 +54,16 @@ func apply_hit(raw_damage: int) -> int:
 	if has_tag("生物") and not has_tag("骷髅"):
 		bleed_stacks += 1
 	return dmg
+
+
+func status_text() -> String:
+	var parts: PackedStringArray = PackedStringArray()
+	if gas_stacks > 0:
+		parts.append("油%d" % gas_stacks)
+	if burn_stacks > 0:
+		parts.append("燃%d" % burn_stacks)
+	if wet_stacks > 0:
+		parts.append("湿%d" % wet_stacks)
+	if bleed_stacks > 0:
+		parts.append("血%d" % bleed_stacks)
+	return " ".join(parts)
