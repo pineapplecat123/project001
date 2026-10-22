@@ -63,7 +63,17 @@ jobs:
           mkdir -p build/web
           godot --headless --export-release "Web" build/web/index.html
           test -f build/web/index.html
-          ls -la build/web
+          # Cache-bust: rename Godot assets with short SHA so browsers cannot keep old pck/wasm
+          HASH="${GITHUB_SHA:0:7}"
+          cd build/web
+          mv index.js "index.${HASH}.js"
+          mv index.wasm "index.${HASH}.wasm"
+          mv index.pck "index.${HASH}.pck"
+          sed -i "s/index\.wasm/index.${HASH}.wasm/g; s/index\.pck/index.${HASH}.pck/g" "index.${HASH}.js"
+          sed -i "s/index\.js/index.${HASH}.js/g; s/\"executable\":\"index\"/\"executable\":\"index.${HASH}\"/g; s/index\.pck/index.${HASH}.pck/g; s/index\.wasm/index.${HASH}.wasm/g" index.html
+          # Short no-cache note page tip
+          printf '%s\n' "build=${HASH}" > version.txt
+          ls -la
 
       - uses: actions/configure-pages@v6
 
