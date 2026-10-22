@@ -1,0 +1,7 @@
+[gd_resource type="Theme" load_steps=2 format=3 uid="uid://bq8ui_theme_cjk001"]
+
+[ext_resource type="FontFile" uid="uid://d0k3k3u37jtqo" path="res://assets/fonts/NotoSansSC-UI.ttf" id="1_font"]
+
+[resource]
+default_font = ExtResource("1_font")
+default_font_size = 18
