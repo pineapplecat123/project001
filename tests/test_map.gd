@@ -40,7 +40,7 @@ func test_run_begin_available_are_first_branch() -> void:
 
 
 func test_placeholder_visit_advances_without_reward() -> void:
-	RunState.begin_run(3, "休息")
+	RunState.begin_run(3, "特殊事件")
 	# 必须先打完一条战斗支线才能到占位；直接伪造位置测 visit API：
 	# 从起点只能到 1/2。先完成节点 1。
 	assert_true(RunState.enter_combat_node(1))

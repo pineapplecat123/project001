@@ -1,7 +1,7 @@
 class_name MapGraph
 ## 灰盒缩小版地图：短分叉 + 合流，数个战斗节点 + 1 个非战斗占位。
 ## 拓扑固定；占位类型（商店/休息/事件）按种子随机三选一。
-## 商店已实现灰盒 UI；休息/事件仍占位路过。
+## 商店、休息已实现灰盒 UI；特殊事件仍占位路过。
 
 enum NodeType {
 	START = 0,
@@ -12,6 +12,7 @@ enum NodeType {
 
 const PLACEHOLDER_KINDS: Array[String] = ["商店", "休息", "特殊事件"]
 const KIND_SHOP := "商店"
+const KIND_REST := "休息"
 
 
 ## 生成迷你图。返回 { nodes: Array[Dictionary], edges: Array[Array] }。
@@ -66,6 +67,14 @@ static func is_shop_node(n: Dictionary) -> bool:
 	if int(n.get("type", -1)) != NodeType.PLACEHOLDER:
 		return false
 	return str(n.get("kind", "")) == KIND_SHOP
+
+
+static func is_rest_node(n: Dictionary) -> bool:
+	if n.is_empty():
+		return false
+	if int(n.get("type", -1)) != NodeType.PLACEHOLDER:
+		return false
+	return str(n.get("kind", "")) == KIND_REST
 
 
 static func type_name(t: int) -> String:

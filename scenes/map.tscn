@@ -128,7 +128,7 @@ offset_top = -36.0
 offset_right = 60.0
 offset_bottom = -8.0
 grow_horizontal = 2
-text = "v0.2.6"
+text = "v0.2.7"
 horizontal_alignment = 1
 
 [node name="Dimmer" type="ColorRect" parent="."]
@@ -284,3 +284,71 @@ layout_mode = 2
 size_flags_horizontal = 3
 text = "离开商店"
 
+[node name="RestPanel" type="PanelContainer" parent="."]
+unique_name_in_owner = true
+visible = false
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -320.0
+offset_top = -200.0
+offset_right = 320.0
+offset_bottom = 200.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="RestMargin" type="MarginContainer" parent="RestPanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 16
+theme_override_constants/margin_top = 14
+theme_override_constants/margin_right = 16
+theme_override_constants/margin_bottom = 14
+
+[node name="RestVBox" type="VBoxContainer" parent="RestPanel/RestMargin"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="RestTitle" type="Label" parent="RestPanel/RestMargin/RestVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 22
+text = "休息"
+
+[node name="RestHpLabel" type="Label" parent="RestPanel/RestMargin/RestVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "HP"
+
+[node name="RestHint" type="Label" parent="RestPanel/RestMargin/RestVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+autowrap_mode = 3
+theme_override_font_sizes/font_size = 14
+text = "休息回血"
+
+[node name="RestMsg" type="Label" parent="RestPanel/RestMargin/RestVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+autowrap_mode = 3
+text = ""
+
+[node name="RestButtons" type="HBoxContainer" parent="RestPanel/RestMargin/RestVBox"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="BtnRestHeal" type="Button" parent="RestPanel/RestMargin/RestVBox/RestButtons"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(220, 48)
+layout_mode = 2
+size_flags_horizontal = 3
+text = "确认回血"
+
+[node name="BtnRestLeave" type="Button" parent="RestPanel/RestMargin/RestVBox/RestButtons"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(220, 48)
+layout_mode = 2
+size_flags_horizontal = 3
+text = "离开（不回血）"

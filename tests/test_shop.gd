@@ -105,7 +105,7 @@ func test_map_shop_enter_leave_writes_back() -> void:
 
 
 func test_non_shop_placeholder_still_pass_through() -> void:
-	RunState.begin_run(5, "休息")
+	RunState.begin_run(5, "特殊事件")
 	assert_true(RunState.enter_combat_node(1))
 	RunState.apply_combat_result({
 		"gold": 10,

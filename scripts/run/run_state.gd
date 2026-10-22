@@ -1,6 +1,7 @@
 extends Node
 
 const MapGraph = preload("res://scripts/map/map_graph.gd")
+const RestConstants = preload("res://scripts/rest/rest_constants.gd")
 ## 局内 Run 状态：地图 ↔ 战斗之间保持金币 / 弹药袋 / HP / 粉弹成长。
 ## 非地图练习战不启用本对象（active=false）。
 
@@ -19,6 +20,8 @@ var completed_ids: Array[int] = []
 var pending_combat_node_id: int = -1
 ## 商店打开中写入；离开商店后清零并完成节点。
 var pending_shop_node_id: int = -1
+## 休息打开中写入；确认回血或离开后清零并完成节点。
+var pending_rest_node_id: int = -1
 var run_finished: bool = false
 var last_message: String = ""
 
@@ -47,12 +50,14 @@ func begin_run(seed_value: int = 0, force_placeholder_kind: String = "") -> void
 	completed_ids = [0]
 	pending_combat_node_id = -1
 	pending_shop_node_id = -1
+	pending_rest_node_id = -1
 
 
 func end_run() -> void:
 	active = false
 	pending_combat_node_id = -1
 	pending_shop_node_id = -1
+	pending_rest_node_id = -1
 	run_finished = false
 	last_message = ""
 	graph = {}
@@ -121,7 +126,54 @@ func leave_shop(payload: Dictionary) -> String:
 	return last_message
 
 
-## 访问非商店占位（休息/事件）：灰盒未开放，路过。商店请走 enter_shop_node。
+## 进入休息节点：不立刻完成；确认回血或离开后再标完成。
+func enter_rest_node(node_id: int) -> bool:
+	if not active or run_finished:
+		return false
+	if pending_rest_node_id >= 0:
+		return false
+	if not available_node_ids().has(node_id):
+		return false
+	var n: Dictionary = MapGraph.node_by_id(graph, node_id)
+	if not MapGraph.is_rest_node(n):
+		return false
+	pending_rest_node_id = node_id
+	return true
+
+
+## 确认回血：按灰盒比例恢复 HP（不超 max），袋/金不变，完成节点。
+func confirm_rest_heal() -> String:
+	if not active:
+		return "局未开始"
+	var node_id: int = pending_rest_node_id
+	if node_id < 0:
+		return "未在休息中"
+	var amount: int = RestConstants.heal_amount(player_max_hp)
+	var before: int = player_hp
+	player_hp = mini(player_max_hp, player_hp + amount)
+	var gained: int = player_hp - before
+	pending_rest_node_id = -1
+	_complete_node(node_id)
+	last_message = "休息恢复 %d HP（%d→%d / %d）。袋与金币不变。" % [
+		gained, before, player_hp, player_max_hp
+	]
+	return last_message
+
+
+## 离开休息（不回血）：完成节点，袋/金/HP 不变。
+func leave_rest() -> String:
+	if not active:
+		return "局未开始"
+	var node_id: int = pending_rest_node_id
+	if node_id < 0:
+		return "未在休息中"
+	pending_rest_node_id = -1
+	_complete_node(node_id)
+	last_message = "离开休息点（未回血），可选择下一节点。"
+	return last_message
+
+
+## 访问非商店/非休息占位（特殊事件）：灰盒未开放，路过。
 func visit_placeholder(node_id: int) -> String:
 	if not active or run_finished:
 		return "局未开始"
@@ -132,6 +184,8 @@ func visit_placeholder(node_id: int) -> String:
 		return "不是占位节点"
 	if MapGraph.is_shop_node(n):
 		return "商店节点请进入商店"
+	if MapGraph.is_rest_node(n):
+		return "休息节点请进入休息"
 	var kind: String = str(n.get("kind", n.get("label", "非战斗")))
 	_complete_node(node_id)
 	last_message = "【%s】灰盒未开放：已路过，无奖励。" % kind

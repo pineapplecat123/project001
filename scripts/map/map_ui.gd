@@ -3,9 +3,10 @@ extends Control
 const MapGraph = preload("res://scripts/map/map_graph.gd")
 const ShopState = preload("res://scripts/shop/shop_state.gd")
 const ShopConstants = preload("res://scripts/shop/shop_constants.gd")
-## 灰盒缩小版地图：选可达节点 → 战斗 / 商店 / 占位路过 → 回地图。
+const RestConstants = preload("res://scripts/rest/rest_constants.gd")
+## 灰盒缩小版地图：选可达节点 → 战斗 / 商店 / 休息 / 占位路过 → 回地图。
 
-const VERSION := "0.2.6"
+const VERSION := "0.2.7"
 const NODE_W := 120.0
 const NODE_H := 72.0
 const LAYER_GAP_X := 180.0
@@ -19,6 +20,7 @@ const COL_BAG := Color(0.55, 0.85, 1.0)
 var _node_buttons: Dictionary = {}  # id -> Button
 var _bag_open: bool = false
 var _shop: ShopState = ShopState.new()
+var _rest_open: bool = false
 var _toast_tween: Tween
 
 @onready var status_label: Label = %StatusLabel
@@ -46,6 +48,13 @@ var _toast_tween: Tween
 @onready var btn_shop_reroll: Button = %BtnShopReroll
 @onready var btn_shop_leave: Button = %BtnShopLeave
 @onready var shop_msg: Label = %ShopMsg
+@onready var rest_panel: PanelContainer = %RestPanel
+@onready var rest_title: Label = %RestTitle
+@onready var rest_hp_label: Label = %RestHpLabel
+@onready var rest_hint: Label = %RestHint
+@onready var rest_msg: Label = %RestMsg
+@onready var btn_rest_heal: Button = %BtnRestHeal
+@onready var btn_rest_leave: Button = %BtnRestLeave
 
 
 func _ready() -> void:
@@ -55,9 +64,12 @@ func _ready() -> void:
 	btn_menu.pressed.connect(_on_menu)
 	btn_shop_reroll.pressed.connect(_on_shop_reroll)
 	btn_shop_leave.pressed.connect(_on_shop_leave)
+	btn_rest_heal.pressed.connect(_on_rest_heal)
+	btn_rest_leave.pressed.connect(_on_rest_leave)
 	dimmer.gui_input.connect(_on_dimmer)
 	bag_panel.visible = false
 	shop_panel.visible = false
+	rest_panel.visible = false
 	dimmer.visible = false
 	toast_label.visible = false
 	if not RunState.active:
@@ -75,6 +87,11 @@ func _on_menu() -> void:
 		# 未离开商店就回菜单：丢弃未写回的会话，直接结束局
 		_shop.end_session()
 		shop_panel.visible = false
+	if _rest_open:
+		# 未确认就回菜单：放弃休息会话，直接结束局
+		_rest_open = false
+		rest_panel.visible = false
+		RunState.pending_rest_node_id = -1
 	RunState.end_run()
 	get_tree().change_scene_to_file("res://scenes/main.tscn")
 
@@ -83,12 +100,17 @@ func _on_dimmer(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 		if _shop.open:
 			return  # 商店须点「离开商店」
+		if _rest_open:
+			return  # 休息须点确认或离开
 		_set_bag_open(false)
 
 
 func _toggle_bag() -> void:
 	if _shop.open:
 		_show_toast("商店内请用下方袋内列表移除弹药。")
+		return
+	if _rest_open:
+		_show_toast("休息中请先确认回血或离开。")
 		return
 	_set_bag_open(not _bag_open)
 
@@ -102,7 +124,7 @@ func _set_bag_open(open: bool) -> void:
 
 
 func _sync_dimmer() -> void:
-	dimmer.visible = _bag_open or _shop.open
+	dimmer.visible = _bag_open or _shop.open or _rest_open
 
 
 func _refresh_header() -> void:
@@ -117,7 +139,7 @@ func _refresh_header() -> void:
 	else:
 		status_label.text = "地图 · 选择下一节点（当前：%s）" % _node_title(RunState.current_node_id)
 	if not RunState.run_finished:
-		hint_label.text = "高亮节点可点击。战斗进入现有战斗；商店进入购买/移除；休息/事件灰盒占位路过。地图上只能检视弹药袋。"
+		hint_label.text = "高亮节点可点击。战斗进入现有战斗；商店购买/移除；休息可回血；特殊事件灰盒占位路过。地图上只能检视弹药袋。"
 
 
 func _node_title(node_id: int) -> String:
@@ -180,6 +202,8 @@ func _button_text(n: Dictionary) -> String:
 		MapGraph.NodeType.PLACEHOLDER:
 			if MapGraph.is_shop_node(n):
 				return "商店"
+			if MapGraph.is_rest_node(n):
+				return "休息"
 			return "%s\n(占位)" % label
 		MapGraph.NodeType.FINALE:
 			return "终战"
@@ -210,7 +234,7 @@ func _refresh_node_states() -> void:
 		var btn: Button = _node_buttons[id]
 		var n: Dictionary = MapGraph.node_by_id(RunState.graph, id)
 		var done: bool = RunState.is_completed(id)
-		var can: bool = avail.has(id) and not RunState.run_finished and not _shop.open
+		var can: bool = avail.has(id) and not RunState.run_finished and not _shop.open and not _rest_open
 		btn.disabled = not can
 		var style := StyleBoxFlat.new()
 		style.set_corner_radius_all(8)
@@ -238,6 +262,8 @@ func _refresh_node_states() -> void:
 		var t: int = int(n.get("type", 0))
 		if MapGraph.is_shop_node(n) and can:
 			style.bg_color = Color(0.4, 0.32, 0.12)
+		elif MapGraph.is_rest_node(n) and can:
+			style.bg_color = Color(0.18, 0.38, 0.32)
 		elif t == MapGraph.NodeType.PLACEHOLDER and can:
 			style.bg_color = Color(0.35, 0.28, 0.18)
 		if t == MapGraph.NodeType.FINALE and can:
@@ -252,7 +278,7 @@ func _on_node_pressed(node_id: int) -> void:
 	if RunState.run_finished:
 		_show_toast("本局已结束，请返回主菜单。")
 		return
-	if _shop.open:
+	if _shop.open or _rest_open:
 		return
 	if not RunState.available_node_ids().has(node_id):
 		return
@@ -268,6 +294,11 @@ func _on_node_pressed(node_id: int) -> void:
 					_open_shop()
 				else:
 					_show_toast("无法进入商店")
+			elif MapGraph.is_rest_node(n):
+				if RunState.enter_rest_node(node_id):
+					_open_rest()
+				else:
+					_show_toast("无法进入休息")
 			else:
 				var msg := RunState.visit_placeholder(node_id)
 				_show_toast(msg)
@@ -404,6 +435,58 @@ func _on_shop_leave() -> void:
 	var payload: Dictionary = _shop.end_session()
 	var msg := RunState.leave_shop(payload)
 	shop_panel.visible = false
+	_sync_dimmer()
+	_show_toast(msg)
+	_refresh_header()
+	_refresh_node_states()
+
+
+
+func _open_rest() -> void:
+	_set_bag_open(false)
+	_rest_open = true
+	rest_panel.visible = true
+	_sync_dimmer()
+	_refresh_rest_panel()
+	_refresh_node_states()
+
+
+func _refresh_rest_panel() -> void:
+	rest_title.text = "休息 · 灰盒"
+	rest_hp_label.text = "当前 HP %d / %d" % [RunState.player_hp, RunState.player_max_hp]
+	rest_hp_label.add_theme_color_override("font_color", COL_HP)
+	var amount: int = RestConstants.heal_amount(RunState.player_max_hp)
+	var after: int = mini(RunState.player_max_hp, RunState.player_hp + amount)
+	var gained: int = after - RunState.player_hp
+	rest_hint.text = "确认回血：恢复最大生命的 %d%%（灰盒暂定，约 +%d，结果 %d/%d）。袋与金币不变。也可离开不回血并完成节点。" % [
+		RestConstants.HEAL_PERCENT, amount, after, RunState.player_max_hp
+	]
+	if gained <= 0:
+		rest_msg.text = "已满血，确认回血不会增加 HP，但仍会完成节点。"
+		btn_rest_heal.text = "确认回血（已满）"
+	else:
+		rest_msg.text = "预计恢复 +%d HP。" % gained
+		btn_rest_heal.text = "确认回血（+%d）" % amount
+
+
+func _on_rest_heal() -> void:
+	if not _rest_open:
+		return
+	var msg := RunState.confirm_rest_heal()
+	_rest_open = false
+	rest_panel.visible = false
+	_sync_dimmer()
+	_show_toast(msg)
+	_refresh_header()
+	_refresh_node_states()
+
+
+func _on_rest_leave() -> void:
+	if not _rest_open:
+		return
+	var msg := RunState.leave_rest()
+	_rest_open = false
+	rest_panel.visible = false
 	_sync_dimmer()
 	_show_toast(msg)
 	_refresh_header()
