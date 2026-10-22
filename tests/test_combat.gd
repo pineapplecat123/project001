@@ -293,3 +293,53 @@ func test_dev_spawn_bandit() -> void:
 	cs.dev_spawn_enemy(2, 8)
 	assert_eq(cs.alive_enemies().size(), 1)
 	assert_eq(cs.front_enemy().name_zh, "强盗")
+
+
+func test_start_next_wave_after_win() -> void:
+	var cs := CombatState.new(21)
+	cs.start_graybox(21)
+	assert_eq(cs.wave_index, 1)
+	cs.dev_kill_all_enemies()
+	assert_eq(cs.phase, CombatState.Phase.WON)
+	assert_true(cs.can_start_next_wave())
+	assert_true(cs.start_next_wave())
+	assert_eq(cs.wave_index, 2)
+	assert_eq(cs.phase, CombatState.Phase.AWAIT_LOAD)
+	assert_gt(cs.alive_enemies().size(), 0)
+	assert_false(cs.can_start_next_wave())
+
+
+func test_bag_draw_is_random_not_fifo() -> void:
+	## 袋无顺序：同种子多次装填，不应稳定等于「始终 pop 前端」的 FIFO 序列。
+	## 用固定袋 [1,2,3,4,5,6] 不洗牌，若 FIFO 则永远先抽到 1；随机下标则多数情况首发不是 1。
+	var firsts: Dictionary = {}
+	for seed_v in range(100, 140):
+		var cs := CombatState.new(seed_v)
+		cs.start_graybox(seed_v)
+		cs.bag.clear()
+		for id in [1, 2, 3, 4, 5, 6]:
+			cs.bag.append(id)
+		cs.enemies[0].hp = 100
+		cs.enemies[0].max_hp = 100
+		assert_true(cs.do_load())
+		var order: Array[int] = cs.magazine.fire_order()
+		assert_eq(order.size(), 6)
+		var key := str(order[0])
+		firsts[key] = int(firsts.get(key, 0)) + 1
+	assert_gt(firsts.size(), 1, "random draw should vary first chamber across seeds")
+
+
+func test_apply_roll_without_enemy_turn() -> void:
+	var cs := CombatState.new(33)
+	cs.start_graybox(33)
+	cs.enemies[0].hp = 100
+	cs.enemies[0].max_hp = 100
+	var cell_before: int = cs.enemies[0].cell
+	cs.do_load()
+	var steps: int = cs.apply_roll()
+	assert_gte(steps, 0)
+	assert_eq(cs.phase, CombatState.Phase.AWAIT_ACTION)
+	assert_eq(cs.enemies[0].cell, cell_before)
+	cs.resolve_after_player_action()
+	assert_eq(cs.enemies[0].cell, cell_before - 1)
+	assert_eq(cs.phase, CombatState.Phase.AWAIT_LOAD)

@@ -1,6 +1,6 @@
 extends Control
-## 灰盒战斗 UI：棋盘 + 环形转轮 + LOAD/FIRE/ROLL/UNLOAD + 检视袋 + 开发者工具。
-## FIRE：逐发 0.4s 间隔，射击中禁用行动按钮。纯展示打磨，不改战斗规则。
+## 灰盒战斗 UI：棋盘 + 环形转轮 + LOAD/FIRE/ROLL/UNLOAD + 检视袋网格 + 下一波 + 开发者工具。
+## FIRE 逐发 0.4s；ROLL 转轮旋转动画；清场后可下一波。
 
 const CELL_W := 96
 const CELL_H := 86
@@ -8,6 +8,12 @@ const WHEEL_SIZE := 280.0
 const CHAMBER_SIZE := 68.0
 const WHEEL_RADIUS := 92.0
 const FIRE_SHOT_DELAY := 0.4
+const ROLL_ANIM_BASE := 0.32
+const ROLL_ANIM_PER_STEP := 0.04
+const ROLL_ANIM_MAX := 0.55
+const BAG_GRID_COLS := 4
+const BAG_CELL_MIN := Vector2(140, 72)
+const VERSION := "0.2.3"
 
 const COL_PHASE := Color(1.0, 0.92, 0.45)
 const COL_HP_OK := Color(0.45, 0.95, 0.55)
@@ -22,7 +28,11 @@ var _chamber_panels: Array[Panel] = []
 var _bag_open: bool = false
 var _dev_open: bool = false
 var _firing: bool = false
+var _rolling: bool = false
+var _wheel_animating: bool = false
+var _wheel_anim_start: float = 0.0
 var _fire_flash_tween: Tween
+var _roll_tween: Tween
 
 @onready var phase_label: Label = %PhaseLabel
 @onready var hp_label: Label = %HpLabel
@@ -43,11 +53,13 @@ var _fire_flash_tween: Tween
 @onready var btn_dev: Button = %BtnDev
 @onready var btn_menu: Button = %BtnMenu
 @onready var result_label: Label = %ResultLabel
+@onready var btn_next_wave: Button = %BtnNextWave
 @onready var bag_panel: PanelContainer = %BagPanel
 @onready var bag_list: VBoxContainer = %BagList
 @onready var btn_bag_close: Button = %BtnBagClose
 @onready var dev_panel: PanelContainer = %DevPanel
 @onready var dimmer: ColorRect = %Dimmer
+@onready var version_label: Label = %VersionLabel
 
 
 func _ready() -> void:
@@ -62,9 +74,11 @@ func _ready() -> void:
 	btn_bag.pressed.connect(_toggle_bag)
 	btn_dev.pressed.connect(_toggle_dev)
 	btn_bag_close.pressed.connect(func(): _set_bag_open(false))
+	btn_next_wave.pressed.connect(_on_next_wave)
 	btn_menu.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/main.tscn"))
 	dimmer.gui_input.connect(_on_dimmer_input)
-	mag_title.text = "弹夹转轮（▼红标=固定击发点 · 数字=顺时针击发顺序 · ROLL=随机转动 · 红框=下一发）"
+	version_label.text = "v%s" % VERSION
+	mag_title.text = "弹夹转轮（▼红标=固定击发点 · 数字=顺时针击发顺序 · ROLL=旋转动画 · 红框=下一发）"
 	_style_overlay_panels()
 	_build_board_cells()
 	_build_wheel_chambers()
@@ -164,12 +178,15 @@ func _build_wheel_chambers() -> void:
 
 func _layout_wheel_chambers() -> void:
 	var center := Vector2(WHEEL_SIZE * 0.5, WHEEL_SIZE * 0.5 + 10.0)
-	var start_i: int = 0
-	if state != null and state.magazine != null:
-		start_i = state.magazine.start_index
+	var start_f: float = 0.0
+	if _wheel_animating:
+		start_f = _wheel_anim_start
+	elif state != null and state.magazine != null:
+		start_f = float(state.magazine.start_index)
+	var n := float(CombatConstants.MAGAZINE_SIZE)
 	for slot_i in CombatConstants.MAGAZINE_SIZE:
-		var order_k: int = (slot_i - start_i + CombatConstants.MAGAZINE_SIZE) % CombatConstants.MAGAZINE_SIZE
-		var angle: float = -PI / 2.0 + float(order_k) * TAU / float(CombatConstants.MAGAZINE_SIZE)
+		var order_k: float = fposmod(float(slot_i) - start_f, n)
+		var angle: float = -PI / 2.0 + order_k * TAU / n
 		var pos := center + Vector2(cos(angle), sin(angle)) * WHEEL_RADIUS
 		var panel: Panel = _chamber_panels[slot_i]
 		panel.position = pos - Vector2(CHAMBER_SIZE, CHAMBER_SIZE) * 0.5
@@ -213,13 +230,13 @@ func _ammo_colors(ammo_id: int) -> Dictionary:
 
 
 func _on_load() -> void:
-	if _firing:
+	if _firing or _rolling:
 		return
 	state.do_load()
 
 
 func _on_fire() -> void:
-	if _firing:
+	if _firing or _rolling:
 		return
 	_run_fire_sequence()
 
@@ -258,15 +275,50 @@ func _flash_fire_chamber() -> void:
 
 
 func _on_roll() -> void:
-	if _firing:
+	if _firing or _rolling:
 		return
-	state.begin_roll()
+	if not state.can_start_roll():
+		return
+	_rolling = true
+	var before: int = state.magazine.start_index
+	_wheel_animating = true
+	_wheel_anim_start = float(before)
+	_refresh()
+	var steps: int = state.apply_roll()
+	if steps < 0:
+		_wheel_animating = false
+		_rolling = false
+		_refresh()
+		return
+	if steps > 0:
+		var dur: float = clampf(ROLL_ANIM_BASE + float(steps) * ROLL_ANIM_PER_STEP, ROLL_ANIM_BASE, ROLL_ANIM_MAX)
+		if _roll_tween != null and _roll_tween.is_valid():
+			_roll_tween.kill()
+		_roll_tween = create_tween()
+		_roll_tween.tween_method(_set_wheel_visual_start, float(before), float(before + steps), dur).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+		await _roll_tween.finished
+	_wheel_animating = false
+	_wheel_anim_start = float(state.magazine.start_index)
+	state.resolve_after_player_action()
+	_rolling = false
+	_refresh()
+
+
+func _set_wheel_visual_start(v: float) -> void:
+	_wheel_anim_start = v
+	_layout_wheel_chambers()
 
 
 func _on_unload() -> void:
-	if _firing:
+	if _firing or _rolling:
 		return
 	state.do_unload()
+
+
+func _on_next_wave() -> void:
+	if _firing or _rolling:
+		return
+	state.start_next_wave()
 
 
 func _toggle_bag() -> void:
@@ -300,7 +352,7 @@ func _refresh_bag_list() -> void:
 	for c in bag_list.get_children():
 		c.queue_free()
 	var title := Label.new()
-	title.text = "弹药袋（只读 · 共 %d 发）｜弃牌 %d｜金币 %d" % [
+	title.text = "弹药袋库存（只读 · 共 %d 发 · 抽弹纯随机无顺序）｜弃牌 %d｜金币 %d" % [
 		state.bag.size(), state.discard.size(), state.gold
 	]
 	title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -318,42 +370,52 @@ func _refresh_bag_list() -> void:
 			counts[ammo_id] = 0
 			order_ids.append(ammo_id)
 		counts[ammo_id] = int(counts[ammo_id]) + 1
-	var idx := 1
+	order_ids.sort()
+	var grid := GridContainer.new()
+	grid.columns = BAG_GRID_COLS
+	grid.add_theme_constant_override("h_separation", 8)
+	grid.add_theme_constant_override("v_separation", 8)
+	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bag_list.add_child(grid)
 	for ammo_id in order_ids:
 		var def: Dictionary = DataRegistry.get_ammo(ammo_id)
-		var dmg = def.get("base_damage", null)
-		var dmg_text := "变化" if dmg == null else str(dmg)
 		var colors := _ammo_colors(ammo_id)
-		var row := PanelContainer.new()
-		var row_style := StyleBoxFlat.new()
-		row_style.bg_color = colors["bg"]
-		row_style.set_corner_radius_all(6)
-		row_style.content_margin_left = 8
-		row_style.content_margin_right = 8
-		row_style.content_margin_top = 6
-		row_style.content_margin_bottom = 6
-		row.add_theme_stylebox_override("panel", row_style)
-		var block := Label.new()
-		block.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		block.add_theme_color_override("font_color", colors["fg"])
-		block.text = "%d. %s ×%d\n基础伤害：%s\n特殊机制：%s" % [
-			idx,
-			str(def.get("name", "未知#%d" % ammo_id)),
-			int(counts[ammo_id]),
-			dmg_text,
-			str(def.get("special", ""))
-		]
-		row.add_child(block)
-		bag_list.add_child(row)
-		idx += 1
-	var seq_title := Label.new()
-	seq_title.text = "—— 袋内顺序（顶部先抽）——"
-	bag_list.add_child(seq_title)
-	for i in state.bag.size():
-		var def2: Dictionary = DataRegistry.get_ammo(state.bag[i])
-		var row2 := Label.new()
-		row2.text = "  [%d] %s" % [i + 1, str(def2.get("name", state.bag[i]))]
-		bag_list.add_child(row2)
+		var cell := PanelContainer.new()
+		cell.custom_minimum_size = BAG_CELL_MIN
+		var cell_style := StyleBoxFlat.new()
+		cell_style.bg_color = colors["bg"]
+		cell_style.set_corner_radius_all(8)
+		cell_style.set_border_width_all(2)
+		cell_style.border_color = Color(0.15, 0.15, 0.18, 0.7)
+		cell_style.content_margin_left = 8
+		cell_style.content_margin_right = 8
+		cell_style.content_margin_top = 8
+		cell_style.content_margin_bottom = 8
+		cell.add_theme_stylebox_override("panel", cell_style)
+		var v := VBoxContainer.new()
+		v.add_theme_constant_override("separation", 2)
+		var name_l := Label.new()
+		var full_name := str(def.get("name", "未知#%d" % ammo_id))
+		var short := full_name.replace("弹药", "")
+		name_l.text = short
+		name_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		name_l.add_theme_color_override("font_color", colors["fg"])
+		name_l.add_theme_font_size_override("font_size", 16)
+		var cnt_l := Label.new()
+		cnt_l.text = "×%d" % int(counts[ammo_id])
+		cnt_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		cnt_l.add_theme_color_override("font_color", colors["fg"])
+		cnt_l.add_theme_font_size_override("font_size", 22)
+		v.add_child(name_l)
+		v.add_child(cnt_l)
+		cell.add_child(v)
+		grid.add_child(cell)
+	var tip := Label.new()
+	tip.text = "格子=弹种库存；装填时从袋内随机抽取，网格不表示抽弹顺序。"
+	tip.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	tip.add_theme_font_size_override("font_size", 13)
+	tip.add_theme_color_override("font_color", Color(0.7, 0.75, 0.85))
+	bag_list.add_child(tip)
 
 
 func _wire_dev_buttons() -> void:
@@ -409,29 +471,34 @@ func _refresh() -> void:
 	discard_label.add_theme_color_override("font_color", COL_DISCARD)
 	gold_label.text = "金币 %d" % state.gold
 	gold_label.add_theme_color_override("font_color", COL_GOLD)
-	turn_label.text = "回合 %d" % state.turn_index
+	turn_label.text = "回合 %d · 第 %d 波" % [state.turn_index, state.wave_index]
 	turn_label.add_theme_color_override("font_color", COL_TURN)
-	var busy := _firing or state.is_busy_firing()
+	var busy := _firing or _rolling or state.is_busy_firing()
 	btn_load.disabled = busy or not state.can_load()
 	btn_fire.disabled = busy or not state.can_fire()
 	btn_roll.disabled = busy or not state.can_start_roll()
 	btn_unload.disabled = busy or not state.can_unload()
+	btn_next_wave.disabled = busy or not state.can_start_next_wave()
 	_refresh_board()
-	_refresh_mag()
+	if not _wheel_animating:
+		_refresh_mag()
 	if _bag_open:
 		_refresh_bag_list()
 	match state.phase:
 		CombatState.Phase.WON:
-			result_label.text = "胜利！敌人全灭"
+			result_label.text = "本波清空！可开下一波"
 			result_label.visible = true
+			btn_next_wave.visible = true
 		CombatState.Phase.LOST:
 			if state.lose_reason == CombatState.LoseReason.AMMO_EXHAUSTED:
 				result_label.text = "失败：弹药耗尽"
 			else:
 				result_label.text = "失败：血量归零"
 			result_label.visible = true
+			btn_next_wave.visible = false
 		_:
 			result_label.visible = false
+			btn_next_wave.visible = false
 
 
 func _refresh_board() -> void:

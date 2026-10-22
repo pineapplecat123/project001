@@ -1,5 +1,5 @@
 class_name CombatState
-## 战斗状态机。Push B：全弹药效果接入；敌人仍以平民为主。
+## 战斗状态机。清场后可下一波；ROLL 可拆成 apply_roll + resolve。
 
 enum Phase {
 	AWAIT_LOAD,
@@ -33,6 +33,7 @@ var rng: RandomNumberGenerator = RandomNumberGenerator.new()
 var last_log: PackedStringArray = PackedStringArray()
 var lose_reason: int = LoseReason.NONE
 var gold: int = 0
+var wave_index: int = 1
 
 ## 弹药跨回合状态
 var pink_bonus: int = 0
@@ -71,8 +72,8 @@ func start_graybox(seed_value: int = 0) -> void:
 	_shuffle(bag)
 	magazine = Magazine.new()
 	enemies.clear()
-	var def: Dictionary = DataRegistry.get_enemy(CombatConstants.CIVILIAN_ENEMY_ID)
-	enemies.append(EnemyInstance.new(def, CombatConstants.BOARD_SIZE - 1))
+	wave_index = 1
+	_spawn_wave_enemies([CombatConstants.CIVILIAN_ENEMY_ID])
 	turn_index = 0
 	needs_reshuffle_next_load = false
 	last_log.clear()
@@ -83,7 +84,9 @@ func start_graybox(seed_value: int = 0) -> void:
 	_reset_fire_session()
 	_pending_gold_autofires = 0
 	_set_phase(Phase.AWAIT_LOAD)
-	_log("战斗开始：白色子弹 ×%d vs 平民。（可用开发者工具加入其它弹药）" % CombatConstants.STARTER_WHITE_COUNT)
+	_log("战斗开始：白色弹药 ×%d · 第 %d 波。（可用开发者工具加入其它弹药）" % [
+		CombatConstants.STARTER_WHITE_COUNT, wave_index
+	])
 	_emit()
 
 
@@ -119,6 +122,17 @@ func _shuffle(arr: Array[int]) -> void:
 		var tmp := arr[i]
 		arr[i] = arr[j]
 		arr[j] = tmp
+
+
+## 弹药袋无顺序：每次从现存弹药中均匀随机抽取（数量加权=逐发随机下标），不按数组 FIFO。
+func _draw_random_from_bag(count: int) -> Array[int]:
+	var drawn: Array[int] = []
+	var n: int = mini(count, bag.size())
+	for _i in n:
+		var idx: int = rng.randi_range(0, bag.size() - 1)
+		drawn.append(bag[idx])
+		bag.remove_at(idx)
+	return drawn
 
 
 func alive_enemies() -> Array:
@@ -181,9 +195,7 @@ func do_load() -> bool:
 		_reshuffle_discard_into_bag()
 		needs_reshuffle_next_load = false
 	var draw_n: int = mini(CombatConstants.MAGAZINE_SIZE, bag.size())
-	var drawn: Array[int] = []
-	for _i in draw_n:
-		drawn.append(bag.pop_front())
+	var drawn: Array[int] = _draw_random_from_bag(draw_n)
 	var prev_load: Array[int] = last_load_ids.duplicate()
 	var resolved: Array[int] = _resolve_black_white_with_prev(drawn, prev_load)
 	last_load_ids = drawn.duplicate()
@@ -471,9 +483,7 @@ func _auto_load_and_fire_once() -> bool:
 	if draw_n <= 0:
 		_log("金色额外轮：无弹药可装。")
 		return false
-	var drawn: Array[int] = []
-	for _i in draw_n:
-		drawn.append(bag.pop_front())
+	var drawn: Array[int] = _draw_random_from_bag(draw_n)
 	var prev := last_load_ids.duplicate()
 	last_load_ids = drawn.duplicate()
 	var resolved := _resolve_black_white_with_prev(drawn, prev)
@@ -520,9 +530,10 @@ func do_fire() -> bool:
 	return true
 
 
-func begin_roll() -> bool:
+## 仅转动转轮并记日志；不进入怪物回合。失败返回 -1，成功返回步数（可为 0）。
+func apply_roll() -> int:
 	if not can_start_roll():
-		return false
+		return -1
 	var before := magazine.start_index
 	var steps: int = magazine.random_roll(rng)
 	if magazine.loaded_count() <= 1:
@@ -531,11 +542,23 @@ func begin_roll() -> bool:
 		_log("重 roll：转轮转动 %d 步（击发点固定）。起点槽 %d → %d。" % [
 			steps, before, magazine.start_index
 		])
+	_emit()
+	return steps
+
+
+## 玩家行动（射击/ROLL/卸除）结束后：判胜负或进入怪物回合。
+func resolve_after_player_action() -> void:
 	if _check_end_after_player():
 		_emit()
-		return true
+		return
 	_run_enemy_turn()
 	_emit()
+
+
+func begin_roll() -> bool:
+	if apply_roll() < 0:
+		return false
+	resolve_after_player_action()
 	return true
 
 
@@ -660,6 +683,58 @@ func phase_name() -> String:
 			return "失败"
 		_:
 			return "未知"
+
+
+func can_start_next_wave() -> bool:
+	return phase == Phase.WON
+
+
+## 清场后开始下一波：随机/轮换现有启用敌人，不回主菜单、不重置弹药袋。
+func start_next_wave() -> bool:
+	if not can_start_next_wave():
+		return false
+	wave_index += 1
+	enemies.clear()
+	_spawn_wave_enemies()
+	lose_reason = LoseReason.NONE
+	_reset_fire_session()
+	_pending_gold_autofires = 0
+	_set_phase(Phase.AWAIT_LOAD)
+	_log("—— 第 %d 波开始：敌人已刷新，请装填。——" % wave_index)
+	_emit()
+	return true
+
+
+func _spawn_wave_enemies(force_ids: Array = []) -> void:
+	var ids: Array[int] = []
+	if force_ids.size() > 0:
+		for x in force_ids:
+			ids.append(int(x))
+	else:
+		var pool: Array[int] = []
+		for item in DataRegistry.all_enemies():
+			if bool(item.get("enabled_in_combat", false)):
+				pool.append(int(item["id"]))
+		if pool.is_empty():
+			pool.append(CombatConstants.CIVILIAN_ENEMY_ID)
+		# 第 n 波：1/2/3 循环数量
+		var count: int = 1 + ((wave_index - 1) % 3)
+		for _i in count:
+			ids.append(pool[rng.randi_range(0, pool.size() - 1)])
+	var cell: int = CombatConstants.BOARD_SIZE - 1
+	for eid in ids:
+		if cell <= CombatConstants.PLAYER_CELL:
+			break
+		while occupied_cells().has(cell) and cell > CombatConstants.PLAYER_CELL + 1:
+			cell -= 1
+		if occupied_cells().has(cell) or cell <= CombatConstants.PLAYER_CELL:
+			break
+		var def: Dictionary = DataRegistry.get_enemy(eid)
+		if def.is_empty():
+			continue
+		enemies.append(EnemyInstance.new(def, cell))
+		_log("波次 %d：%s 出现在格 %d。" % [wave_index, def.get("name", eid), cell])
+		cell -= 1
 
 
 # ——— 开发者工具 ———

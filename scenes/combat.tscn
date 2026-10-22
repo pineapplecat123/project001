@@ -155,7 +155,7 @@ custom_minimum_size = Vector2(220, 0)
 layout_mode = 2
 theme_override_font_sizes/font_size = 14
 autowrap_mode = 3
-text = "ROLL：随机转动转轮，击发点不动。FIRE：逐发间隔 0.4 秒，击发仓闪一下。"
+text = "ROLL：转轮旋转动画，击发点不动。FIRE：逐发 0.4 秒。清场后点「下一波」。"
 
 [node name="UtilCol" type="VBoxContainer" parent="Margin/VBox/MidRow"]
 layout_mode = 2
@@ -197,6 +197,15 @@ theme_override_font_sizes/font_size = 28
 theme_override_colors/font_color = Color(1, 0.85, 0.2, 1)
 text = "结果"
 horizontal_alignment = 1
+
+[node name="BtnNextWave" type="Button" parent="Margin/VBox"]
+unique_name_in_owner = true
+visible = false
+custom_minimum_size = Vector2(240, 48)
+layout_mode = 2
+size_flags_horizontal = 4
+theme_override_font_sizes/font_size = 20
+text = "下一波 NEXT"
 
 [node name="LogTitle" type="Label" parent="Margin/VBox"]
 layout_mode = 2
@@ -562,3 +571,22 @@ unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 36)
 layout_mode = 2
 text = "跳过怪物回合"
+
+[node name="VersionLabel" type="Label" parent="."]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 7
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -60.0
+offset_top = -28.0
+offset_right = 60.0
+offset_bottom = -4.0
+grow_horizontal = 2
+grow_vertical = 0
+theme_override_font_sizes/font_size = 14
+theme_override_colors/font_color = Color(0.55, 0.55, 0.6, 1)
+text = "v0.2.3"
+horizontal_alignment = 1
