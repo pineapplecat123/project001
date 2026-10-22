@@ -9,3 +9,4 @@
 ## 修改日志
 
 - 初建空壳文档。
+- 2026-10-23：设计文档入库（非机制实现）：`game-design-v0.0.1.md`、`mechanism-checklist-v1.0.md`。
