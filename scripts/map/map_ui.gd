@@ -6,7 +6,7 @@ const ShopConstants = preload("res://scripts/shop/shop_constants.gd")
 const RestConstants = preload("res://scripts/rest/rest_constants.gd")
 ## 灰盒缩小版地图：选可达节点 → 战斗 / 商店 / 休息 / 占位路过 → 回地图。
 
-const VERSION := "0.2.9"
+const VERSION := "0.2.10"
 const NODE_W := 120.0
 const NODE_H := 72.0
 const LAYER_GAP_X := 180.0

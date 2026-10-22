@@ -16,7 +16,7 @@ const ROLL_ANIM_MAX := 0.6
 const LOAD_INSERT_PAUSE := 0.06
 const BAG_GRID_COLS := 4
 const BAG_CELL_MIN := Vector2(140, 88)
-const VERSION := "0.2.9"
+const VERSION := "0.2.10"
 
 const COL_PHASE := Color(1.0, 0.92, 0.45)
 const COL_HP_OK := Color(0.45, 0.95, 0.55)
@@ -25,6 +25,9 @@ const COL_BAG := Color(0.55, 0.85, 1.0)
 const COL_DISCARD := Color(0.85, 0.7, 1.0)
 const COL_GOLD := Color(1.0, 0.84, 0.3)
 const COL_TURN := Color(0.8, 0.8, 0.85)
+const COL_REWARD_TITLE := Color(1.0, 0.95, 0.72)
+const COL_REWARD_HINT := Color(0.9, 0.92, 0.98)
+const COL_REWARD_BTN := Color(0.98, 0.98, 1.0)
 
 var state: CombatState
 var _chamber_panels: Array[Panel] = []
@@ -551,9 +554,13 @@ func _refresh_reward_panel() -> void:
 	var resolved := state.phase == CombatState.Phase.WON and state.reward_resolved
 	var enc_title := state.encounter_label() if state != null else "战斗"
 	reward_title.text = ("%s胜利 · 选择奖励" % enc_title) if pending else "奖励已领取"
+	reward_title.add_theme_color_override("font_color", COL_REWARD_TITLE)
 	var base_shown: int = state.last_reward_base_gold if state.last_reward_base_gold > 0 else state.reward_base_gold_for_encounter()
 	reward_gold_label.text = "基础金币 +%d 已入账 · 当前金币 %d" % [base_shown, state.gold]
 	reward_gold_label.add_theme_color_override("font_color", COL_GOLD)
+	reward_hint.add_theme_color_override("font_color", COL_REWARD_HINT)
+	_style_reward_action_button(btn_reward_skip)
+	_style_reward_action_button(btn_reward_next)
 	if pending:
 		reward_hint.text = "从下列三发弹药中选一加入弹药袋，或放弃换额外金币 +%d。" % CombatConstants.REWARD_SKIP_EXTRA_GOLD
 		btn_reward_skip.visible = true
@@ -574,7 +581,7 @@ func _refresh_reward_panel() -> void:
 			if not desc.is_empty():
 				btn.tooltip_text = desc
 			btn.add_theme_font_size_override("font_size", 22)
-			btn.add_theme_color_override("font_color", colors["fg"])
+			_style_reward_choice_button(btn, colors["bg"])
 			var idx := i
 			btn.pressed.connect(func(): _on_reward_pick(idx))
 			reward_choices.add_child(btn)
@@ -596,6 +603,82 @@ func _refresh_reward_panel() -> void:
 		reward_hint.text = ""
 		btn_reward_skip.visible = false
 		btn_reward_next.visible = false
+
+
+func _apply_light_button_font(btn: Button) -> void:
+	btn.add_theme_color_override("font_color", COL_REWARD_BTN)
+	btn.add_theme_color_override("font_hover_color", Color(1.0, 1.0, 1.0))
+	btn.add_theme_color_override("font_pressed_color", Color(0.95, 0.96, 1.0))
+	btn.add_theme_color_override("font_focus_color", COL_REWARD_BTN)
+	btn.add_theme_color_override("font_disabled_color", Color(0.78, 0.8, 0.85, 0.85))
+
+
+func _style_reward_action_button(btn: Button) -> void:
+	_apply_light_button_font(btn)
+	var normal := StyleBoxFlat.new()
+	normal.bg_color = Color(0.22, 0.28, 0.42, 1.0)
+	normal.set_border_width_all(2)
+	normal.border_color = Color(0.7, 0.78, 0.95, 0.95)
+	normal.set_corner_radius_all(8)
+	normal.content_margin_left = 12
+	normal.content_margin_right = 12
+	normal.content_margin_top = 8
+	normal.content_margin_bottom = 8
+	var hover := normal.duplicate()
+	hover.bg_color = Color(0.3, 0.38, 0.55, 1.0)
+	var pressed := normal.duplicate()
+	pressed.bg_color = Color(0.18, 0.22, 0.34, 1.0)
+	var disabled := normal.duplicate()
+	disabled.bg_color = Color(0.16, 0.17, 0.22, 1.0)
+	disabled.border_color = Color(0.4, 0.42, 0.48, 0.7)
+	btn.add_theme_stylebox_override("normal", normal)
+	btn.add_theme_stylebox_override("hover", hover)
+	btn.add_theme_stylebox_override("pressed", pressed)
+	btn.add_theme_stylebox_override("focus", hover)
+	btn.add_theme_stylebox_override("disabled", disabled)
+
+
+func _style_reward_choice_button(btn: Button, ammo_bg: Color) -> void:
+	_apply_light_button_font(btn)
+	# 深色底上用近白字；弹药色只做底色染色，避免沿用深色 fg 导致看不清
+	var base := Color(
+		clampf(ammo_bg.r * 0.35 + 0.12, 0.0, 1.0),
+		clampf(ammo_bg.g * 0.35 + 0.12, 0.0, 1.0),
+		clampf(ammo_bg.b * 0.35 + 0.14, 0.0, 1.0),
+		1.0
+	)
+	var normal := StyleBoxFlat.new()
+	normal.bg_color = base
+	normal.set_border_width_all(2)
+	normal.border_color = Color(
+		clampf(ammo_bg.r * 0.55 + 0.35, 0.0, 1.0),
+		clampf(ammo_bg.g * 0.55 + 0.35, 0.0, 1.0),
+		clampf(ammo_bg.b * 0.55 + 0.4, 0.0, 1.0),
+		1.0
+	)
+	normal.set_corner_radius_all(8)
+	normal.content_margin_left = 12
+	normal.content_margin_right = 12
+	normal.content_margin_top = 8
+	normal.content_margin_bottom = 8
+	var hover := normal.duplicate()
+	hover.bg_color = Color(
+		clampf(base.r + 0.1, 0.0, 1.0),
+		clampf(base.g + 0.1, 0.0, 1.0),
+		clampf(base.b + 0.12, 0.0, 1.0),
+		1.0
+	)
+	var pressed := normal.duplicate()
+	pressed.bg_color = Color(
+		clampf(base.r - 0.04, 0.0, 1.0),
+		clampf(base.g - 0.04, 0.0, 1.0),
+		clampf(base.b - 0.04, 0.0, 1.0),
+		1.0
+	)
+	btn.add_theme_stylebox_override("normal", normal)
+	btn.add_theme_stylebox_override("hover", hover)
+	btn.add_theme_stylebox_override("pressed", pressed)
+	btn.add_theme_stylebox_override("focus", hover)
 
 
 func _on_reward_pick(index: int) -> void:
