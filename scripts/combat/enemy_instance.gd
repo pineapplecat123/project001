@@ -1,5 +1,5 @@
 class_name EnemyInstance
-## 场上敌人运行时实例（含汽油/燃烧/湿，供弹药状态连锁）。
+## 场上敌人运行时实例（汽油/燃烧/湿/流血）。
 
 var def_id: int = 0
 var name_zh: String = ""
@@ -42,7 +42,8 @@ func has_tag(tag: String) -> bool:
 	return tag in tags
 
 
-func apply_hit(raw_damage: int) -> int:
+## 纯扣血（石头 <4 无视）。不触发击中特效。
+func apply_damage(raw_damage: int) -> int:
 	if not is_alive():
 		return 0
 	var dmg := raw_damage
@@ -51,9 +52,15 @@ func apply_hit(raw_damage: int) -> int:
 	if dmg <= 0:
 		return 0
 	hp = maxi(0, hp - dmg)
-	if has_tag("生物") and not has_tag("骷髅"):
-		bleed_stacks += 1
 	return dmg
+
+
+## 子弹/攻击命中：扣血 + 生物流血叠层（骷髅不流血）。
+func apply_hit(raw_damage: int) -> int:
+	var dealt := apply_damage(raw_damage)
+	if dealt > 0 and has_tag("生物") and not has_tag("骷髅"):
+		bleed_stacks += 1
+	return dealt
 
 
 func status_text() -> String:

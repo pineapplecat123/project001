@@ -406,6 +406,45 @@ layout_mode = 2
 size_flags_horizontal = 3
 text = "+雷"
 
+
+[node name="DevEnemyRow" type="HBoxContainer" parent="DevPanel/DevMargin/DevVBox"]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="DevSpawnCivilian" type="Button" parent="DevPanel/DevMargin/DevVBox/DevEnemyRow"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+text = "+平民"
+
+[node name="DevSpawnBandit" type="Button" parent="DevPanel/DevMargin/DevVBox/DevEnemyRow"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+text = "+强盗"
+
+[node name="DevSpawnBear" type="Button" parent="DevPanel/DevMargin/DevVBox/DevEnemyRow"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+text = "+熊"
+
+[node name="DevEnemyRow2" type="HBoxContainer" parent="DevPanel/DevMargin/DevVBox"]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="DevSpawnSkeleton" type="Button" parent="DevPanel/DevMargin/DevVBox/DevEnemyRow2"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+text = "+骷髅"
+
+[node name="DevSpawnStone" type="Button" parent="DevPanel/DevMargin/DevVBox/DevEnemyRow2"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+text = "+石头人"
+
 [node name="DevSkipEnemy" type="Button" parent="DevPanel/DevMargin/DevVBox"]
 unique_name_in_owner = true
 layout_mode = 2

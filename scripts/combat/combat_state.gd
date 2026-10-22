@@ -379,7 +379,7 @@ func _ignite_gas_cluster(start: EnemyInstance) -> void:
 		if e.gas_stacks <= 0:
 			continue
 		var g := e.gas_stacks
-		var boom: int = e.apply_hit(g)
+		var boom: int = e.apply_damage(g)
 		e.burn_stacks += g
 		e.gas_stacks = 0
 		_log("  → %s 汽油引爆伤害%d，燃烧%d" % [e.name_zh, boom, e.burn_stacks])
@@ -589,7 +589,7 @@ func _run_enemy_turn() -> void:
 	for e in alive_enemies():
 		if e.burn_stacks > 0:
 			var b: int = e.burn_stacks
-			var dealt: int = e.apply_hit(b)
+			var dealt: int = e.apply_damage(b)
 			e.burn_stacks = maxi(0, e.burn_stacks - 1)
 			_log("%s 燃烧结算伤害%d，燃烧剩余%d" % [e.name_zh, dealt, e.burn_stacks])
 	_remove_dead()
@@ -608,12 +608,25 @@ func _run_enemy_turn() -> void:
 	if player_hp <= 0:
 		_lose_hp()
 		return
+	_tick_bleed_end_of_enemy_turn()
+	_remove_dead()
 	if alive_enemies().is_empty():
 		_set_phase(Phase.WON)
 		_log("胜利：敌人全灭。")
 		return
 	_set_phase(Phase.AWAIT_LOAD)
 	_log("--- 请装填 ---")
+
+
+func _tick_bleed_end_of_enemy_turn() -> void:
+	## 生物流血：回合结束失去等同层数生命，然后层数-1。石头对 debuff 伤害同样无视 <4。
+	for e in alive_enemies():
+		if e.bleed_stacks <= 0:
+			continue
+		var stacks: int = e.bleed_stacks
+		var dealt: int = e.apply_damage(stacks)
+		e.bleed_stacks = maxi(0, e.bleed_stacks - 1)
+		_log("%s 流血结算伤害%d（层%d→%d）" % [e.name_zh, dealt, stacks, e.bleed_stacks])
 
 
 func _move_enemy(e: EnemyInstance) -> void:

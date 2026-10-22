@@ -25,7 +25,7 @@
         "生物"
       ],
       "type": "小怪",
-      "enabled_in_combat": false
+      "enabled_in_combat": true
     },
     {
       "id": 3,
@@ -38,7 +38,7 @@
         "生物"
       ],
       "type": "小怪",
-      "enabled_in_combat": false
+      "enabled_in_combat": true
     },
     {
       "id": 4,
@@ -51,7 +51,7 @@
         "骷髅"
       ],
       "type": "小怪",
-      "enabled_in_combat": false
+      "enabled_in_combat": true
     },
     {
       "id": 5,
@@ -64,7 +64,7 @@
         "石头"
       ],
       "type": "小怪",
-      "enabled_in_combat": false
+      "enabled_in_combat": true
     }
   ]
 }

@@ -264,6 +264,11 @@ func _wire_dev_buttons() -> void:
 	%DevAddFire.pressed.connect(func(): state.dev_add_ammo(FireResolver.ID_FIRE, 1))
 	%DevAddWater.pressed.connect(func(): state.dev_add_ammo(FireResolver.ID_WATER, 1))
 	%DevAddThunder.pressed.connect(func(): state.dev_add_ammo(FireResolver.ID_THUNDER, 1))
+	%DevSpawnCivilian.pressed.connect(func(): state.dev_spawn_enemy(1))
+	%DevSpawnBandit.pressed.connect(func(): state.dev_spawn_enemy(2))
+	%DevSpawnBear.pressed.connect(func(): state.dev_spawn_enemy(3))
+	%DevSpawnSkeleton.pressed.connect(func(): state.dev_spawn_enemy(4))
+	%DevSpawnStone.pressed.connect(func(): state.dev_spawn_enemy(5))
 
 
 func _refresh() -> void:
@@ -314,7 +319,12 @@ func _refresh_board() -> void:
 				style.border_color = Color(1.0, 0.8, 0.1)
 				style.set_border_width_all(3)
 			var st := e.status_text()
-			info.text = "%s\n%d/%d%s" % [e.name_zh, e.hp, e.max_hp, ("\n" + st) if st != "" else ""]
+			var tag_s := ",".join(e.tags) if e.tags.size() > 0 else ""
+			info.text = "%s\n%d/%d%s%s" % [
+				e.name_zh, e.hp, e.max_hp,
+				("\n" + tag_s) if tag_s != "" else "",
+				("\n" + st) if st != "" else ""
+			]
 		else:
 			style.bg_color = Color(0.35, 0.35, 0.38)
 			info.text = str(i)

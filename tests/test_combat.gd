@@ -239,6 +239,57 @@ func test_force_load_yellow_and_fire() -> void:
 	cs.enemies[0].max_hp = 100
 	cs.dev_force_load([4, 4, 4, 4, 4, 4] as Array[int])
 	assert_true(cs.do_fire())
-	# 6 黄每发 5 → 30
-	assert_eq(cs.enemies[0].hp, 70)
+	# 6 黄每发 5 → 30；生物被命中 6 次叠 6 层流血，怪回合结算再 -6 → 64，层数剩 5
+	assert_eq(cs.enemies[0].hp, 64)
+	assert_eq(cs.enemies[0].bleed_stacks, 5)
 	assert_eq(cs.phase, CombatState.Phase.AWAIT_LOAD)
+
+
+func test_skeleton_does_not_bleed() -> void:
+	var def: Dictionary = DataRegistry.get_enemy(4)
+	var e := EnemyInstance.new(def, 5)
+	assert_true(e.has_tag("骷髅"))
+	e.apply_hit(3)
+	assert_eq(e.bleed_stacks, 0)
+
+
+func test_bio_bleeds_and_ticks() -> void:
+	var cs := CombatState.new(4)
+	cs.start_graybox(4)
+	cs.enemies[0].hp = 100
+	cs.enemies[0].max_hp = 100
+	cs.enemies[0].cell = 9
+	# 命中叠流血
+	cs.enemies[0].apply_hit(3)
+	assert_eq(cs.enemies[0].bleed_stacks, 1)
+	var hp_before: int = cs.enemies[0].hp
+	cs.do_load()
+	cs.do_unload()  # 怪回合含流血结算
+	assert_eq(cs.enemies[0].hp, hp_before - 1)
+	assert_eq(cs.enemies[0].bleed_stacks, 0)
+
+
+func test_stone_ignores_damage_under_4() -> void:
+	var def: Dictionary = DataRegistry.get_enemy(5)
+	var e := EnemyInstance.new(def, 5)
+	assert_eq(e.apply_hit(3), 0)
+	assert_eq(e.hp, e.max_hp)
+	assert_eq(e.apply_hit(4), 4)
+	assert_eq(e.hp, e.max_hp - 4)
+
+
+func test_stone_ignores_bleed_dot_under_4() -> void:
+	var def: Dictionary = DataRegistry.get_enemy(5)
+	var e := EnemyInstance.new(def, 5)
+	e.bleed_stacks = 3  # 强行叠层
+	var dealt := e.apply_damage(e.bleed_stacks)
+	assert_eq(dealt, 0)
+
+
+func test_dev_spawn_bandit() -> void:
+	var cs := CombatState.new(6)
+	cs.start_graybox(6)
+	cs.dev_kill_all_enemies()
+	cs.dev_spawn_enemy(2, 8)
+	assert_eq(cs.alive_enemies().size(), 1)
+	assert_eq(cs.front_enemy().name_zh, "强盗")
