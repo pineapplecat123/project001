@@ -55,7 +55,7 @@ unique_name_in_owner = true
 layout_mode = 2
 theme_override_font_sizes/font_size = 14
 autowrap_mode = 3
-text = "装填 / 射击 / 重roll / 卸除 · 检视弹药袋 · 开发者工具"
+text = "装填 / 射击 / 重roll / 卸除 · 检视弹药袋 · 胜利奖励 · 开发者工具"
 horizontal_alignment = 1
 
 [node name="Spacer" type="Control" parent="Center"]
@@ -92,7 +92,7 @@ offset_right = 80.0
 offset_bottom = -12.0
 grow_horizontal = 2
 grow_vertical = 0
-text = "v0.2.3"
+text = "v0.2.4"
 horizontal_alignment = 1
 
 [connection signal="pressed" from="Center/BtnStart" to="." method="_on_start_pressed"]

@@ -1,6 +1,6 @@
 extends Control
-## 灰盒战斗 UI：棋盘 + 环形转轮 + LOAD/FIRE/ROLL/UNLOAD + 检视袋网格 + 下一波 + 开发者工具。
-## FIRE 逐发 0.4s；ROLL 转轮旋转动画；清场后可下一波。
+## 灰盒战斗 UI：棋盘 + 环形转轮 + LOAD/FIRE/ROLL/UNLOAD + 检视袋网格 + 胜利奖励 + 下一波 + 开发者工具。
+## FIRE 逐发 0.4s；ROLL 转轮旋转动画；清场后奖励三选一，结算后再下一波。
 
 const CELL_W := 96
 const CELL_H := 86
@@ -13,7 +13,7 @@ const ROLL_ANIM_PER_STEP := 0.04
 const ROLL_ANIM_MAX := 0.55
 const BAG_GRID_COLS := 4
 const BAG_CELL_MIN := Vector2(140, 72)
-const VERSION := "0.2.3"
+const VERSION := "0.2.4"
 
 const COL_PHASE := Color(1.0, 0.92, 0.45)
 const COL_HP_OK := Color(0.45, 0.95, 0.55)
@@ -33,6 +33,7 @@ var _wheel_animating: bool = false
 var _wheel_anim_start: float = 0.0
 var _fire_flash_tween: Tween
 var _roll_tween: Tween
+var _reward_open: bool = false
 
 @onready var phase_label: Label = %PhaseLabel
 @onready var hp_label: Label = %HpLabel
@@ -58,6 +59,13 @@ var _roll_tween: Tween
 @onready var bag_list: VBoxContainer = %BagList
 @onready var btn_bag_close: Button = %BtnBagClose
 @onready var dev_panel: PanelContainer = %DevPanel
+@onready var reward_panel: PanelContainer = %RewardPanel
+@onready var reward_title: Label = %RewardTitle
+@onready var reward_gold_label: Label = %RewardGoldLabel
+@onready var reward_hint: Label = %RewardHint
+@onready var reward_choices: VBoxContainer = %RewardChoices
+@onready var btn_reward_skip: Button = %BtnRewardSkip
+@onready var btn_reward_next: Button = %BtnRewardNext
 @onready var dimmer: ColorRect = %Dimmer
 @onready var version_label: Label = %VersionLabel
 
@@ -76,6 +84,8 @@ func _ready() -> void:
 	btn_bag_close.pressed.connect(func(): _set_bag_open(false))
 	btn_next_wave.pressed.connect(_on_next_wave)
 	btn_menu.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/main.tscn"))
+	btn_reward_skip.pressed.connect(_on_reward_skip)
+	btn_reward_next.pressed.connect(_on_next_wave)
 	dimmer.gui_input.connect(_on_dimmer_input)
 	version_label.text = "v%s" % VERSION
 	mag_title.text = "弹夹转轮（▼红标=固定击发点 · 数字=顺时针击发顺序 · ROLL=旋转动画 · 红框=下一发）"
@@ -85,13 +95,14 @@ func _ready() -> void:
 	_wire_dev_buttons()
 	bag_panel.visible = false
 	dev_panel.visible = false
+	reward_panel.visible = false
 	dimmer.visible = false
 	state.start_graybox()
 	_refresh()
 
 
 func _style_overlay_panels() -> void:
-	for panel in [bag_panel, dev_panel]:
+	for panel in [bag_panel, dev_panel, reward_panel]:
 		var style := StyleBoxFlat.new()
 		style.bg_color = Color(0.12, 0.13, 0.18, 0.96)
 		style.set_border_width_all(2)
@@ -106,6 +117,9 @@ func _style_overlay_panels() -> void:
 
 func _on_dimmer_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		# 奖励面板必须选完，点遮罩不关闭
+		if _reward_open:
+			return
 		_set_bag_open(false)
 		if _dev_open:
 			_toggle_dev()
@@ -318,7 +332,10 @@ func _on_unload() -> void:
 func _on_next_wave() -> void:
 	if _firing or _rolling:
 		return
+	if not state.can_start_next_wave():
+		return
 	state.start_next_wave()
+	_set_reward_open(false)
 
 
 func _toggle_bag() -> void:
@@ -326,6 +343,8 @@ func _toggle_bag() -> void:
 
 
 func _set_bag_open(open: bool) -> void:
+	if open and _reward_open:
+		return
 	_bag_open = open
 	bag_panel.visible = open
 	if open:
@@ -336,6 +355,8 @@ func _set_bag_open(open: bool) -> void:
 
 
 func _toggle_dev() -> void:
+	if (not _dev_open) and _reward_open:
+		return
 	_dev_open = not _dev_open
 	dev_panel.visible = _dev_open
 	if _dev_open:
@@ -345,7 +366,74 @@ func _toggle_dev() -> void:
 
 
 func _update_dimmer() -> void:
-	dimmer.visible = _bag_open or _dev_open
+	dimmer.visible = _bag_open or _dev_open or _reward_open
+
+
+func _set_reward_open(open: bool) -> void:
+	_reward_open = open
+	reward_panel.visible = open
+	if open:
+		_bag_open = false
+		_dev_open = false
+		bag_panel.visible = false
+		dev_panel.visible = false
+		_refresh_reward_panel()
+	_update_dimmer()
+
+
+func _refresh_reward_panel() -> void:
+	for c in reward_choices.get_children():
+		c.queue_free()
+	var pending := state.can_pick_reward()
+	var resolved := state.phase == CombatState.Phase.WON and state.reward_resolved
+	reward_title.text = "战斗胜利 · 选择奖励" if pending else "奖励已领取"
+	reward_gold_label.text = "基础金币 +%d 已入账 · 当前金币 %d" % [
+		CombatConstants.REWARD_BASE_GOLD, state.gold
+	]
+	reward_gold_label.add_theme_color_override("font_color", COL_GOLD)
+	if pending:
+		reward_hint.text = "从下列三发弹药中选一加入弹药袋，或放弃换额外金币 +%d。" % CombatConstants.REWARD_SKIP_EXTRA_GOLD
+		btn_reward_skip.visible = true
+		btn_reward_skip.text = "放弃三选一 · 换额外金币 +%d" % CombatConstants.REWARD_SKIP_EXTRA_GOLD
+		btn_reward_skip.disabled = false
+		btn_reward_next.visible = false
+		for i in state.reward_choices.size():
+			var ammo_id: int = state.reward_choices[i]
+			var def: Dictionary = DataRegistry.get_ammo(ammo_id)
+			var colors := _ammo_colors(ammo_id)
+			var btn := Button.new()
+			btn.custom_minimum_size = Vector2(0, 64)
+			btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			var nm := str(def.get("name", "未知#%d" % ammo_id))
+			var desc := str(def.get("special", ""))
+			var dmg = def.get("base_damage", "")
+			btn.text = "【%d】%s（基础伤 %s）" % [i + 1, nm, str(dmg)]
+			if not desc.is_empty():
+				btn.tooltip_text = desc
+			btn.add_theme_font_size_override("font_size", 22)
+			btn.add_theme_color_override("font_color", colors["fg"])
+			var idx := i
+			btn.pressed.connect(func(): _on_reward_pick(idx))
+			reward_choices.add_child(btn)
+	elif resolved:
+		reward_hint.text = "可继续下一波（弹药袋不重置）。无伤/三回合额外金灰盒暂未结算。"
+		btn_reward_skip.visible = false
+		btn_reward_next.visible = true
+		btn_reward_next.disabled = not state.can_start_next_wave()
+	else:
+		reward_hint.text = ""
+		btn_reward_skip.visible = false
+		btn_reward_next.visible = false
+
+
+func _on_reward_pick(index: int) -> void:
+	if state.pick_reward_ammo(index):
+		_refresh_reward_panel()
+
+
+func _on_reward_skip() -> void:
+	if state.skip_reward_for_gold():
+		_refresh_reward_panel()
 
 
 func _refresh_bag_list() -> void:
@@ -486,9 +574,20 @@ func _refresh() -> void:
 		_refresh_bag_list()
 	match state.phase:
 		CombatState.Phase.WON:
-			result_label.text = "本波清空！可开下一波"
+			if state.reward_pending:
+				result_label.text = "本波清空！请选择奖励"
+				if not _reward_open:
+					_set_reward_open(true)
+				elif _reward_open:
+					_refresh_reward_panel()
+			elif state.reward_resolved:
+				result_label.text = "奖励已领取 · 可开下一波"
+				if _reward_open:
+					_refresh_reward_panel()
+			else:
+				result_label.text = "本波清空！"
 			result_label.visible = true
-			btn_next_wave.visible = true
+			btn_next_wave.visible = state.reward_resolved
 		CombatState.Phase.LOST:
 			if state.lose_reason == CombatState.LoseReason.AMMO_EXHAUSTED:
 				result_label.text = "失败：弹药耗尽"
@@ -496,9 +595,13 @@ func _refresh() -> void:
 				result_label.text = "失败：血量归零"
 			result_label.visible = true
 			btn_next_wave.visible = false
+			if _reward_open:
+				_set_reward_open(false)
 		_:
 			result_label.visible = false
 			btn_next_wave.visible = false
+			if _reward_open:
+				_set_reward_open(false)
 
 
 func _refresh_board() -> void:

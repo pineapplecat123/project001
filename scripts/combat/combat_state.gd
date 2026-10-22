@@ -1,5 +1,5 @@
 class_name CombatState
-## 战斗状态机。清场后可下一波；ROLL 可拆成 apply_roll + resolve。
+## 战斗状态机。清场后奖励三选一，结算后再下一波；ROLL 可拆成 apply_roll + resolve。
 
 enum Phase {
 	AWAIT_LOAD,
@@ -34,6 +34,14 @@ var last_log: PackedStringArray = PackedStringArray()
 var lose_reason: int = LoseReason.NONE
 var gold: int = 0
 var wave_index: int = 1
+
+## 战斗胜利奖励（灰盒：基础金币 + 弹药三选一；可放弃换额外金）
+var reward_pending: bool = false
+var reward_resolved: bool = false
+var reward_choices: Array[int] = []
+## 预留钩子：本波是否受伤、本波玩家回合数（无伤/三回合奖励灰盒先不做）
+var wave_took_damage: bool = false
+var wave_player_turns: int = 0
 
 ## 弹药跨回合状态
 var pink_bonus: int = 0
@@ -83,6 +91,9 @@ func start_graybox(seed_value: int = 0) -> void:
 	last_load_ids.clear()
 	_reset_fire_session()
 	_pending_gold_autofires = 0
+	_clear_reward_state()
+	wave_took_damage = false
+	wave_player_turns = 0
 	_set_phase(Phase.AWAIT_LOAD)
 	_log("战斗开始：白色弹药 ×%d · 第 %d 波。（可用开发者工具加入其它弹药）" % [
 		CombatConstants.STARTER_WHITE_COUNT, wave_index
@@ -203,6 +214,7 @@ func do_load() -> bool:
 	if bag.is_empty():
 		needs_reshuffle_next_load = true
 	turn_index += 1
+	wave_player_turns += 1
 	_log("第 %d 回合：装填 %d 发。" % [turn_index, resolved.size()])
 	for i in resolved.size():
 		if drawn[i] == FireResolver.ID_BW and resolved[i] != FireResolver.ID_BW:
@@ -586,8 +598,7 @@ func do_unload() -> bool:
 func _check_end_after_player() -> bool:
 	_remove_dead()
 	if alive_enemies().is_empty():
-		_set_phase(Phase.WON)
-		_log("胜利：敌人全灭。")
+		_enter_won()
 		return true
 	if player_hp <= 0:
 		_lose_hp()
@@ -617,14 +628,15 @@ func _run_enemy_turn() -> void:
 			_log("%s 燃烧结算伤害%d，燃烧剩余%d" % [e.name_zh, dealt, e.burn_stacks])
 	_remove_dead()
 	if alive_enemies().is_empty():
-		_set_phase(Phase.WON)
-		_log("胜利：敌人全灭。")
+		_enter_won()
 		return
 	var order: Array = enemies_sorted_by_cell()
 	for e in order:
 		_move_enemy(e)
 		if is_adjacent_to_player(e):
 			player_hp = maxi(0, player_hp - e.atk)
+			if e.atk > 0:
+				wave_took_damage = true
 			_log("%s 攻击玩家，造成 %d（玩家 HP %d/%d）" % [e.name_zh, e.atk, player_hp, player_max_hp])
 		else:
 			_log("%s 未邻接，不攻击（格 %d）。" % [e.name_zh, e.cell])
@@ -634,8 +646,7 @@ func _run_enemy_turn() -> void:
 	_tick_bleed_end_of_enemy_turn()
 	_remove_dead()
 	if alive_enemies().is_empty():
-		_set_phase(Phase.WON)
-		_log("胜利：敌人全灭。")
+		_enter_won()
 		return
 	_set_phase(Phase.AWAIT_LOAD)
 	_log("--- 请装填 ---")
@@ -685,8 +696,105 @@ func phase_name() -> String:
 			return "未知"
 
 
+
+func _clear_reward_state() -> void:
+	reward_pending = false
+	reward_resolved = false
+	reward_choices.clear()
+
+
+## 进入胜利：发基础金币并生成三选一；无伤/三回合额外金灰盒预留钩子暂不结算。
+func _enter_won() -> void:
+	if phase == Phase.WON and (reward_pending or reward_resolved):
+		return
+	_set_phase(Phase.WON)
+	_log("胜利：敌人全灭。")
+	_begin_reward()
+
+
+func _begin_reward() -> void:
+	reward_choices = generate_reward_choices()
+	reward_pending = true
+	reward_resolved = false
+	var base_g: int = CombatConstants.REWARD_BASE_GOLD
+	gold += base_g
+	_log("奖励：基础金币 +%d（现 %d）。请三选一弹药，或放弃换额外金币。" % [base_g, gold])
+	# 灰盒预留钩子（数值为 0 / 未启用）：
+	# var no_dmg := _hook_no_damage_bonus_gold()
+	# var fast := _hook_fast_clear_bonus_gold()
+	_emit()
+
+
+## 从启用弹药表随机抽 3 个（池≥3 时去重；不足则允许重复）。同名可多份入袋。
+func generate_reward_choices() -> Array[int]:
+	var pool: Array[int] = []
+	for item in DataRegistry.all_ammo():
+		if bool(item.get("enabled_in_combat", false)):
+			pool.append(int(item["id"]))
+	if pool.is_empty():
+		pool.append(CombatConstants.WHITE_AMMO_ID)
+	var out: Array[int] = []
+	var need: int = CombatConstants.REWARD_CHOICE_COUNT
+	if pool.size() >= need:
+		var work: Array[int] = pool.duplicate()
+		_shuffle(work)
+		for i in need:
+			out.append(work[i])
+	else:
+		for _i in need:
+			out.append(pool[rng.randi_range(0, pool.size() - 1)])
+	return out
+
+
+func can_pick_reward() -> bool:
+	return phase == Phase.WON and reward_pending and not reward_resolved
+
+
+## 选择三选一中的第 index 发（0..2），加入弹药袋。
+func pick_reward_ammo(index: int) -> bool:
+	if not can_pick_reward():
+		return false
+	if index < 0 or index >= reward_choices.size():
+		return false
+	var ammo_id: int = reward_choices[index]
+	bag.append(ammo_id)
+	reward_pending = false
+	reward_resolved = true
+	_log("奖励：选择 %s 加入弹药袋（袋内 %d）。" % [_ammo_name(ammo_id), bag.size()])
+	_emit()
+	return true
+
+
+## 放弃三选一，换额外金币。
+func skip_reward_for_gold() -> bool:
+	if not can_pick_reward():
+		return false
+	var extra: int = CombatConstants.REWARD_SKIP_EXTRA_GOLD
+	gold += extra
+	reward_pending = false
+	reward_resolved = true
+	_log("奖励：放弃三选一，额外金币 +%d（现 %d）。" % [extra, gold])
+	_emit()
+	return true
+
+
+## 灰盒预留：无伤通关额外金（当前恒 0）。
+func _hook_no_damage_bonus_gold() -> int:
+	if wave_took_damage:
+		return 0
+	return CombatConstants.REWARD_NO_DAMAGE_EXTRA_GOLD
+
+
+## 灰盒预留：三回合内通关额外金（当前恒 0）。
+func _hook_fast_clear_bonus_gold() -> int:
+	if wave_player_turns > CombatConstants.REWARD_FAST_CLEAR_TURN_LIMIT:
+		return 0
+	return CombatConstants.REWARD_FAST_CLEAR_EXTRA_GOLD
+
+
 func can_start_next_wave() -> bool:
-	return phase == Phase.WON
+	## 奖励结算完成后才可下一波（不重置弹药袋）。
+	return phase == Phase.WON and reward_resolved and not reward_pending
 
 
 ## 清场后开始下一波：随机/轮换现有启用敌人，不回主菜单、不重置弹药袋。
@@ -699,6 +807,9 @@ func start_next_wave() -> bool:
 	lose_reason = LoseReason.NONE
 	_reset_fire_session()
 	_pending_gold_autofires = 0
+	_clear_reward_state()
+	wave_took_damage = false
+	wave_player_turns = 0
 	_set_phase(Phase.AWAIT_LOAD)
 	_log("—— 第 %d 波开始：敌人已刷新，请装填。——" % wave_index)
 	_emit()
@@ -765,8 +876,7 @@ func dev_kill_all_enemies() -> void:
 	_remove_dead()
 	_log("[开发] 一键杀敌")
 	if alive_enemies().is_empty():
-		_set_phase(Phase.WON)
-		_log("胜利：敌人全灭。")
+		_enter_won()
 	_emit()
 
 

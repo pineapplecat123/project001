@@ -301,6 +301,10 @@ func test_start_next_wave_after_win() -> void:
 	assert_eq(cs.wave_index, 1)
 	cs.dev_kill_all_enemies()
 	assert_eq(cs.phase, CombatState.Phase.WON)
+	# 奖励未结算前不能下一波
+	assert_true(cs.reward_pending)
+	assert_false(cs.can_start_next_wave())
+	assert_true(cs.pick_reward_ammo(0))
 	assert_true(cs.can_start_next_wave())
 	assert_true(cs.start_next_wave())
 	assert_eq(cs.wave_index, 2)
@@ -343,3 +347,61 @@ func test_apply_roll_without_enemy_turn() -> void:
 	cs.resolve_after_player_action()
 	assert_eq(cs.enemies[0].cell, cell_before - 1)
 	assert_eq(cs.phase, CombatState.Phase.AWAIT_LOAD)
+
+
+func test_reward_generate_three_choices() -> void:
+	var cs := CombatState.new(7)
+	cs.start_graybox(7)
+	var choices := cs.generate_reward_choices()
+	assert_eq(choices.size(), CombatConstants.REWARD_CHOICE_COUNT)
+	for id in choices:
+		assert_true(DataRegistry.is_ammo_enabled(id))
+
+
+func test_reward_pick_adds_to_bag_and_base_gold() -> void:
+	var cs := CombatState.new(8)
+	cs.start_graybox(8)
+	var bag_before := cs.bag.size()
+	assert_eq(cs.gold, 0)
+	cs.dev_kill_all_enemies()
+	assert_eq(cs.phase, CombatState.Phase.WON)
+	assert_eq(cs.gold, CombatConstants.REWARD_BASE_GOLD)
+	assert_eq(cs.reward_choices.size(), 3)
+	var chosen: int = cs.reward_choices[1]
+	assert_true(cs.pick_reward_ammo(1))
+	assert_eq(cs.bag.size(), bag_before + 1)
+	assert_eq(cs.bag[cs.bag.size() - 1], chosen)
+	assert_true(cs.reward_resolved)
+	assert_false(cs.reward_pending)
+	assert_false(cs.can_pick_reward())
+	assert_true(cs.can_start_next_wave())
+
+
+func test_reward_skip_for_extra_gold() -> void:
+	var cs := CombatState.new(9)
+	cs.start_graybox(9)
+	var bag_before := cs.bag.size()
+	cs.dev_kill_all_enemies()
+	assert_eq(cs.gold, CombatConstants.REWARD_BASE_GOLD)
+	assert_true(cs.skip_reward_for_gold())
+	assert_eq(cs.gold, CombatConstants.REWARD_BASE_GOLD + CombatConstants.REWARD_SKIP_EXTRA_GOLD)
+	assert_eq(cs.bag.size(), bag_before)
+	assert_true(cs.reward_resolved)
+	assert_true(cs.can_start_next_wave())
+	# 不可重复领取
+	assert_false(cs.skip_reward_for_gold())
+	assert_false(cs.pick_reward_ammo(0))
+
+
+func test_reward_next_wave_keeps_bag_and_gold() -> void:
+	var cs := CombatState.new(11)
+	cs.start_graybox(11)
+	cs.dev_kill_all_enemies()
+	assert_true(cs.pick_reward_ammo(0))
+	var gold_after := cs.gold
+	var bag_after := cs.bag.duplicate()
+	assert_true(cs.start_next_wave())
+	assert_eq(cs.gold, gold_after)
+	assert_eq(cs.bag, bag_after)
+	assert_false(cs.reward_pending)
+	assert_false(cs.reward_resolved)
