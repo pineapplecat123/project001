@@ -43,6 +43,9 @@ var reward_choices: Array[int] = []
 var wave_took_damage: bool = false
 var wave_player_turns: int = 0
 
+## 是否来自地图 run（胜利领奖后回地图；练习战则下一波）
+var from_map_run: bool = false
+
 ## 弹药跨回合状态
 var pink_bonus: int = 0
 var last_load_ids: Array[int] = []  ## 上次装填原始序列（变形前），供黑白弹药
@@ -94,11 +97,78 @@ func start_graybox(seed_value: int = 0) -> void:
 	_clear_reward_state()
 	wave_took_damage = false
 	wave_player_turns = 0
+	from_map_run = false
 	_set_phase(Phase.AWAIT_LOAD)
 	_log("战斗开始：白色弹药 ×%d · 第 %d 波。（可用开发者工具加入其它弹药）" % [
 		CombatConstants.STARTER_WHITE_COUNT, wave_index
 	])
 	_emit()
+
+
+## 从地图 Run 进入战斗：继承袋/金币/HP/粉成长；不重置构筑。
+func start_from_run(payload: Dictionary, seed_value: int = 0) -> void:
+	if seed_value != 0:
+		rng.seed = seed_value
+	elif int(payload.get("seed", 0)) != 0:
+		rng.seed = int(payload["seed"])
+	BulletEffectRegistry.ensure_defaults()
+	from_map_run = true
+	player_max_hp = int(payload.get("player_max_hp", CombatConstants.PLAYER_MAX_HP))
+	player_hp = int(payload.get("player_hp", player_max_hp))
+	bag.clear()
+	for x in payload.get("bag", []):
+		bag.append(int(x))
+	if bag.is_empty():
+		for _i in CombatConstants.STARTER_WHITE_COUNT:
+			bag.append(CombatConstants.WHITE_AMMO_ID)
+	discard.clear()
+	magazine = Magazine.new()
+	enemies.clear()
+	wave_index = 1
+	_spawn_wave_enemies()
+	turn_index = 0
+	needs_reshuffle_next_load = false
+	last_log.clear()
+	lose_reason = LoseReason.NONE
+	gold = int(payload.get("gold", 0))
+	pink_bonus = int(payload.get("pink_bonus", 0))
+	last_load_ids.clear()
+	_reset_fire_session()
+	_pending_gold_autofires = 0
+	_clear_reward_state()
+	wave_took_damage = false
+	wave_player_turns = 0
+	_set_phase(Phase.AWAIT_LOAD)
+	_log("地图战斗：袋 %d · 金币 %d · HP %d · 第 %d 波。" % [
+		bag.size(), gold, player_hp, wave_index
+	])
+	_emit()
+
+
+## 离开战斗回地图前：匣内/弃牌并回袋，导出 run 快照。
+func export_run_payload() -> Dictionary:
+	_consolidate_ammo_into_bag()
+	var out_bag: Array[int] = []
+	for id in bag:
+		out_bag.append(id)
+	return {
+		"gold": gold,
+		"bag": out_bag,
+		"player_hp": player_hp,
+		"player_max_hp": player_max_hp,
+		"pink_bonus": pink_bonus,
+	}
+
+
+func _consolidate_ammo_into_bag() -> void:
+	if not magazine.is_empty():
+		for id in magazine.unload_all():
+			bag.append(id)
+	if not discard.is_empty():
+		for id in discard:
+			bag.append(id)
+		discard.clear()
+
 
 
 func _reset_fire_session() -> void:

@@ -1,0 +1,157 @@
+extends Node
+
+const MapGraph = preload("res://scripts/map/map_graph.gd")
+## 局内 Run 状态：地图 ↔ 战斗之间保持金币 / 弹药袋 / HP / 粉弹成长。
+## 非地图练习战不启用本对象（active=false）。
+
+var active: bool = false
+var run_seed: int = 0
+var gold: int = 0
+var bag: Array[int] = []
+var player_hp: int = CombatConstants.PLAYER_MAX_HP
+var player_max_hp: int = CombatConstants.PLAYER_MAX_HP
+var pink_bonus: int = 0
+
+var graph: Dictionary = {}
+var current_node_id: int = 0
+var completed_ids: Array[int] = []
+## 进入战斗前写入；胜利回地图后清零。
+var pending_combat_node_id: int = -1
+var run_finished: bool = false
+var last_message: String = ""
+
+
+func is_in_map_run() -> bool:
+	return active
+
+
+func begin_run(seed_value: int = 0) -> void:
+	active = true
+	run_finished = false
+	last_message = ""
+	if seed_value != 0:
+		run_seed = seed_value
+	else:
+		run_seed = randi()
+	gold = 0
+	bag.clear()
+	for _i in CombatConstants.STARTER_WHITE_COUNT:
+		bag.append(CombatConstants.WHITE_AMMO_ID)
+	player_max_hp = CombatConstants.PLAYER_MAX_HP
+	player_hp = player_max_hp
+	pink_bonus = 0
+	graph = MapGraph.build_mini(run_seed)
+	current_node_id = 0
+	completed_ids = [0]
+	pending_combat_node_id = -1
+
+
+func end_run() -> void:
+	active = false
+	pending_combat_node_id = -1
+	run_finished = false
+	last_message = ""
+	graph = {}
+	completed_ids.clear()
+	bag.clear()
+	gold = 0
+	pink_bonus = 0
+
+
+func available_node_ids() -> Array[int]:
+	var out: Array[int] = []
+	if not active or run_finished:
+		return out
+	for nid in MapGraph.neighbors(graph, current_node_id):
+		if not completed_ids.has(nid):
+			out.append(nid)
+	return out
+
+
+func is_completed(node_id: int) -> bool:
+	return completed_ids.has(node_id)
+
+
+func enter_combat_node(node_id: int) -> bool:
+	if not active or run_finished:
+		return false
+	if not available_node_ids().has(node_id):
+		return false
+	var n: Dictionary = MapGraph.node_by_id(graph, node_id)
+	var t: int = int(n.get("type", -1))
+	if t != MapGraph.NodeType.COMBAT and t != MapGraph.NodeType.FINALE:
+		return false
+	pending_combat_node_id = node_id
+	return true
+
+
+## 访问占位节点：灰盒不开放内容，直接标完成并前进。
+func visit_placeholder(node_id: int) -> String:
+	if not active or run_finished:
+		return "局未开始"
+	if not available_node_ids().has(node_id):
+		return "该节点不可达"
+	var n: Dictionary = MapGraph.node_by_id(graph, node_id)
+	if int(n.get("type", -1)) != MapGraph.NodeType.PLACEHOLDER:
+		return "不是占位节点"
+	var kind: String = str(n.get("kind", n.get("label", "非战斗")))
+	_complete_node(node_id)
+	last_message = "【%s】灰盒未开放：已路过，无奖励。" % kind
+	return last_message
+
+
+func apply_combat_result(payload: Dictionary, victory: bool) -> void:
+	if not active:
+		return
+	# 无论胜负，同步战斗内资源（失败也保留当前状态供展示，随后 end）
+	if payload.has("gold"):
+		gold = int(payload["gold"])
+	if payload.has("bag"):
+		bag = _copy_int_array(payload["bag"])
+	if payload.has("player_hp"):
+		player_hp = int(payload["player_hp"])
+	if payload.has("player_max_hp"):
+		player_max_hp = int(payload["player_max_hp"])
+	if payload.has("pink_bonus"):
+		pink_bonus = int(payload["pink_bonus"])
+	var node_id: int = pending_combat_node_id
+	pending_combat_node_id = -1
+	if not victory:
+		last_message = "战斗失败，本局结束。"
+		run_finished = true
+		return
+	if node_id < 0:
+		return
+	_complete_node(node_id)
+	var n: Dictionary = MapGraph.node_by_id(graph, node_id)
+	if int(n.get("type", -1)) == MapGraph.NodeType.FINALE:
+		run_finished = true
+		last_message = "终战胜利！缩小版地图通关。"
+	else:
+		last_message = "战斗胜利，可选择下一节点。"
+
+
+func combat_snapshot() -> Dictionary:
+	return {
+		"gold": gold,
+		"bag": bag.duplicate(),
+		"player_hp": player_hp,
+		"player_max_hp": player_max_hp,
+		"pink_bonus": pink_bonus,
+		"seed": run_seed,
+		"from_map": true,
+		"node_id": pending_combat_node_id,
+	}
+
+
+func _complete_node(node_id: int) -> void:
+	if not completed_ids.has(node_id):
+		completed_ids.append(node_id)
+	current_node_id = node_id
+
+
+func _copy_int_array(src) -> Array[int]:
+	var out: Array[int] = []
+	for x in src:
+		out.append(int(x))
+	return out

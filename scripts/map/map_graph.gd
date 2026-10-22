@@ -1,0 +1,67 @@
+class_name MapGraph
+## 灰盒缩小版地图：短分叉 + 合流，数个战斗节点 + 1 个非战斗占位。
+## 拓扑固定；占位类型（商店/休息/事件）按种子随机三选一。
+
+enum NodeType {
+	START = 0,
+	COMBAT = 1,
+	PLACEHOLDER = 2,
+	FINALE = 3,
+}
+
+const PLACEHOLDER_KINDS: Array[String] = ["商店", "休息", "特殊事件"]
+
+
+## 生成迷你图。返回 { nodes: Array[Dictionary], edges: Array[Array] }。
+## 节点字段：id, type, label, layer, slot, kind(可选)
+static func build_mini(seed_value: int = 0) -> Dictionary:
+	var rng := RandomNumberGenerator.new()
+	if seed_value != 0:
+		rng.seed = seed_value
+	else:
+		rng.randomize()
+	var kind: String = PLACEHOLDER_KINDS[rng.randi_range(0, PLACEHOLDER_KINDS.size() - 1)]
+	var nodes: Array = [
+		{"id": 0, "type": NodeType.START, "label": "起点", "layer": 0, "slot": 0},
+		{"id": 1, "type": NodeType.COMBAT, "label": "战斗", "layer": 1, "slot": 0},
+		{"id": 2, "type": NodeType.COMBAT, "label": "战斗", "layer": 1, "slot": 1},
+		{"id": 3, "type": NodeType.PLACEHOLDER, "label": kind, "layer": 2, "slot": 0, "kind": kind},
+		{"id": 4, "type": NodeType.COMBAT, "label": "战斗", "layer": 3, "slot": 0},
+		{"id": 5, "type": NodeType.FINALE, "label": "终战", "layer": 4, "slot": 0},
+	]
+	var edges: Array = [
+		[0, 1], [0, 2],
+		[1, 3], [2, 3],
+		[3, 4],
+		[4, 5],
+	]
+	return {"nodes": nodes, "edges": edges}
+
+
+static func node_by_id(graph: Dictionary, node_id: int) -> Dictionary:
+	for n in graph.get("nodes", []):
+		if int(n.get("id", -1)) == node_id:
+			return n
+	return {}
+
+
+static func neighbors(graph: Dictionary, from_id: int) -> Array[int]:
+	var out: Array[int] = []
+	for e in graph.get("edges", []):
+		if int(e[0]) == from_id:
+			out.append(int(e[1]))
+	return out
+
+
+static func type_name(t: int) -> String:
+	match t:
+		NodeType.START:
+			return "起点"
+		NodeType.COMBAT:
+			return "战斗"
+		NodeType.PLACEHOLDER:
+			return "非战斗"
+		NodeType.FINALE:
+			return "终战"
+		_:
+			return "未知"

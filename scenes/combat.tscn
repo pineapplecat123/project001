@@ -155,7 +155,7 @@ custom_minimum_size = Vector2(220, 0)
 layout_mode = 2
 theme_override_font_sizes/font_size = 14
 autowrap_mode = 3
-text = "ROLL：转轮旋转动画，击发点不动。FIRE：逐发 0.4 秒。清场后点「下一波」。"
+text = "ROLL：转轮旋转动画。FIRE：逐发 0.4 秒。地图战领奖后回地图；练习战可下一波。"
 
 [node name="UtilCol" type="VBoxContainer" parent="Margin/VBox/MidRow"]
 layout_mode = 2
@@ -644,7 +644,7 @@ visible = false
 custom_minimum_size = Vector2(0, 56)
 layout_mode = 2
 theme_override_font_sizes/font_size = 22
-text = "继续下一波"
+text = "下一波 NEXT"
 
 [node name="VersionLabel" type="Label" parent="."]
 unique_name_in_owner = true
@@ -662,5 +662,5 @@ grow_horizontal = 2
 grow_vertical = 0
 theme_override_font_sizes/font_size = 14
 theme_override_colors/font_color = Color(0.55, 0.55, 0.6, 1)
-text = "v0.2.4"
+text = "v0.2.5"
 horizontal_alignment = 1

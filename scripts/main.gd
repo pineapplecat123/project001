@@ -1,7 +1,7 @@
 extends Control
-## 主菜单：开始战斗 / 退出；底部版本号。无地图。
+## 主菜单：开始冒险（地图）/ 练习战斗 / 退出；底部版本号。
 
-const VERSION := "0.2.4"
+const VERSION := "0.2.5"
 
 
 func _ready() -> void:
@@ -11,6 +11,7 @@ func _ready() -> void:
 
 func _style_menu() -> void:
 	%BtnStart.custom_minimum_size = Vector2(220, 48)
+	%BtnPractice.custom_minimum_size = Vector2(220, 44)
 	%BtnQuit.custom_minimum_size = Vector2(220, 40)
 	%TitleLabel.add_theme_font_size_override("font_size", 52)
 	%Subtitle.add_theme_color_override("font_color", Color(0.75, 0.8, 0.9))
@@ -19,6 +20,12 @@ func _style_menu() -> void:
 
 
 func _on_start_pressed() -> void:
+	RunState.begin_run()
+	get_tree().change_scene_to_file("res://scenes/map.tscn")
+
+
+func _on_practice_pressed() -> void:
+	RunState.end_run()
 	get_tree().change_scene_to_file("res://scenes/combat.tscn")
 
 

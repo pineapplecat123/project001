@@ -1,6 +1,6 @@
 extends Control
-## 灰盒战斗 UI：棋盘 + 环形转轮 + LOAD/FIRE/ROLL/UNLOAD + 检视袋网格 + 胜利奖励 + 下一波 + 开发者工具。
-## FIRE 逐发 0.4s；ROLL 转轮旋转动画；清场后奖励三选一，结算后再下一波。
+## 灰盒战斗 UI：棋盘 + 环形转轮 + LOAD/FIRE/ROLL/UNLOAD + 检视袋网格 + 胜利奖励 + 开发者工具。
+## FIRE 逐发 0.4s；ROLL 转轮旋转动画；清场后奖励三选一。地图 run 领奖后回地图；练习战可下一波。
 
 const CELL_W := 96
 const CELL_H := 86
@@ -13,7 +13,7 @@ const ROLL_ANIM_PER_STEP := 0.04
 const ROLL_ANIM_MAX := 0.55
 const BAG_GRID_COLS := 4
 const BAG_CELL_MIN := Vector2(140, 72)
-const VERSION := "0.2.4"
+const VERSION := "0.2.5"
 
 const COL_PHASE := Color(1.0, 0.92, 0.45)
 const COL_HP_OK := Color(0.45, 0.95, 0.55)
@@ -83,9 +83,9 @@ func _ready() -> void:
 	btn_dev.pressed.connect(_toggle_dev)
 	btn_bag_close.pressed.connect(func(): _set_bag_open(false))
 	btn_next_wave.pressed.connect(_on_next_wave)
-	btn_menu.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/main.tscn"))
+	btn_menu.pressed.connect(_on_menu_pressed)
 	btn_reward_skip.pressed.connect(_on_reward_skip)
-	btn_reward_next.pressed.connect(_on_next_wave)
+	btn_reward_next.pressed.connect(_on_reward_continue)
 	dimmer.gui_input.connect(_on_dimmer_input)
 	version_label.text = "v%s" % VERSION
 	mag_title.text = "弹夹转轮（▼红标=固定击发点 · 数字=顺时针击发顺序 · ROLL=旋转动画 · 红框=下一发）"
@@ -97,7 +97,13 @@ func _ready() -> void:
 	dev_panel.visible = false
 	reward_panel.visible = false
 	dimmer.visible = false
-	state.start_graybox()
+	if RunState.is_in_map_run() and RunState.pending_combat_node_id >= 0:
+		state.start_from_run(RunState.combat_snapshot())
+		btn_menu.text = "放弃回地图"
+	else:
+		state.start_graybox()
+		btn_menu.text = "返回主菜单"
+		btn_next_wave.text = "下一波 NEXT"
 	_refresh()
 
 
@@ -329,12 +335,41 @@ func _on_unload() -> void:
 	state.do_unload()
 
 
+func _on_menu_pressed() -> void:
+	if state.from_map_run:
+		# 中途退出：放弃本节点战斗，不完成节点，回地图（保留进战前资源）
+		RunState.pending_combat_node_id = -1
+		get_tree().change_scene_to_file("res://scenes/map.tscn")
+	else:
+		get_tree().change_scene_to_file("res://scenes/main.tscn")
+
+
+func _on_reward_continue() -> void:
+	if state.from_map_run:
+		_return_to_map(true)
+	else:
+		_on_next_wave()
+
+
+func _return_to_map(victory: bool) -> void:
+	if victory and not state.can_start_next_wave():
+		return
+	var payload := state.export_run_payload()
+	RunState.apply_combat_result(payload, victory)
+	get_tree().change_scene_to_file("res://scenes/map.tscn")
+
+
 func _on_next_wave() -> void:
 	if _firing or _rolling:
+		return
+	# 地图 run 战败：用下一波按钮返回地图并结束本局
+	if state.from_map_run and state.phase == CombatState.Phase.LOST:
+		_return_to_map(false)
 		return
 	if not state.can_start_next_wave():
 		return
 	state.start_next_wave()
+	btn_next_wave.text = "下一波 NEXT"
 	_set_reward_open(false)
 
 
@@ -416,7 +451,12 @@ func _refresh_reward_panel() -> void:
 			btn.pressed.connect(func(): _on_reward_pick(idx))
 			reward_choices.add_child(btn)
 	elif resolved:
-		reward_hint.text = "可继续下一波（弹药袋不重置）。无伤/三回合额外金灰盒暂未结算。"
+		if state.from_map_run:
+			reward_hint.text = "领取完毕。返回地图选择下一节点（本战不会再刷下一波）。无伤/三回合额外金灰盒暂未结算。"
+			btn_reward_next.text = "返回地图 RETURN"
+		else:
+			reward_hint.text = "可继续下一波（弹药袋不重置）。练习战无地图。无伤/三回合额外金灰盒暂未结算。"
+			btn_reward_next.text = "下一波 NEXT"
 		btn_reward_skip.visible = false
 		btn_reward_next.visible = true
 		btn_reward_next.disabled = not state.can_start_next_wave()
@@ -581,20 +621,29 @@ func _refresh() -> void:
 				elif _reward_open:
 					_refresh_reward_panel()
 			elif state.reward_resolved:
-				result_label.text = "奖励已领取 · 可开下一波"
+				if state.from_map_run:
+					result_label.text = "奖励已领取 · 请返回地图"
+				else:
+					result_label.text = "奖励已领取 · 可开下一波"
 				if _reward_open:
 					_refresh_reward_panel()
 			else:
 				result_label.text = "本波清空！"
 			result_label.visible = true
-			btn_next_wave.visible = state.reward_resolved
+			# 地图 run：只用奖励面板「返回地图」；练习战显示「下一波」
+			btn_next_wave.visible = state.reward_resolved and not state.from_map_run
 		CombatState.Phase.LOST:
 			if state.lose_reason == CombatState.LoseReason.AMMO_EXHAUSTED:
 				result_label.text = "失败：弹药耗尽"
 			else:
 				result_label.text = "失败：血量归零"
 			result_label.visible = true
-			btn_next_wave.visible = false
+			if state.from_map_run:
+				btn_next_wave.visible = true
+				btn_next_wave.text = "返回地图（本局结束）"
+				btn_next_wave.disabled = false
+			else:
+				btn_next_wave.visible = false
 			if _reward_open:
 				_set_reward_open(false)
 		_:

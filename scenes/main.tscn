@@ -28,10 +28,10 @@ anchor_left = 0.5
 anchor_top = 0.5
 anchor_right = 0.5
 anchor_bottom = 0.5
-offset_left = -200.0
-offset_top = -160.0
-offset_right = 200.0
-offset_bottom = 160.0
+offset_left = -220.0
+offset_top = -200.0
+offset_right = 220.0
+offset_bottom = 200.0
 grow_horizontal = 2
 grow_vertical = 2
 theme_override_constants/separation = 14
@@ -47,7 +47,7 @@ horizontal_alignment = 1
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_font_sizes/font_size = 18
-text = "灰盒战斗预览 · 无地图"
+text = "灰盒 · 缩小版地图"
 horizontal_alignment = 1
 
 [node name="HintLabel" type="Label" parent="Center"]
@@ -55,7 +55,7 @@ unique_name_in_owner = true
 layout_mode = 2
 theme_override_font_sizes/font_size = 14
 autowrap_mode = 3
-text = "装填 / 射击 / 重roll / 卸除 · 检视弹药袋 · 胜利奖励 · 开发者工具"
+text = "开始冒险：地图选节点 → 战斗 → 领奖 → 回地图。练习战斗：无地图，可下一波。"
 horizontal_alignment = 1
 
 [node name="Spacer" type="Control" parent="Center"]
@@ -68,7 +68,15 @@ custom_minimum_size = Vector2(220, 48)
 layout_mode = 2
 size_flags_horizontal = 4
 theme_override_font_sizes/font_size = 20
-text = "开始战斗"
+text = "开始冒险"
+
+[node name="BtnPractice" type="Button" parent="Center"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(220, 44)
+layout_mode = 2
+size_flags_horizontal = 4
+theme_override_font_sizes/font_size = 18
+text = "练习战斗"
 
 [node name="BtnQuit" type="Button" parent="Center"]
 unique_name_in_owner = true
@@ -92,8 +100,9 @@ offset_right = 80.0
 offset_bottom = -12.0
 grow_horizontal = 2
 grow_vertical = 0
-text = "v0.2.4"
+text = "v0.2.5"
 horizontal_alignment = 1
 
 [connection signal="pressed" from="Center/BtnStart" to="." method="_on_start_pressed"]
+[connection signal="pressed" from="Center/BtnPractice" to="." method="_on_practice_pressed"]
 [connection signal="pressed" from="Center/BtnQuit" to="." method="_on_quit_pressed"]
