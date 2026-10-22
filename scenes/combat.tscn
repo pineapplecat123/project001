@@ -1,0 +1,116 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/combat/combat_ui.gd" id="1_ui"]
+
+[node name="Combat" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_ui")
+
+[node name="Margin" type="MarginContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/margin_left = 16
+theme_override_constants/margin_top = 12
+theme_override_constants/margin_right = 16
+theme_override_constants/margin_bottom = 12
+
+[node name="VBox" type="VBoxContainer" parent="Margin"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="TopBar" type="HBoxContainer" parent="Margin/VBox"]
+layout_mode = 2
+theme_override_constants/separation = 24
+
+[node name="PhaseLabel" type="Label" parent="Margin/VBox/TopBar"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+text = "阶段："
+
+[node name="HpLabel" type="Label" parent="Margin/VBox/TopBar"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "玩家 HP"
+
+[node name="BagLabel" type="Label" parent="Margin/VBox/TopBar"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "袋/弃"
+
+[node name="BtnMenu" type="Button" parent="Margin/VBox/TopBar"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "返回菜单"
+
+[node name="BoardTitle" type="Label" parent="Margin/VBox"]
+layout_mode = 2
+text = "棋盘（左=玩家，右=来敌）"
+
+[node name="BoardRow" type="HBoxContainer" parent="Margin/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="MagTitle" type="Label" parent="Margin/VBox"]
+layout_mode = 2
+text = "弹夹（红标=起点；ROLL 时点击选新起点）"
+
+[node name="MagRow" type="HBoxContainer" parent="Margin/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="Actions" type="HBoxContainer" parent="Margin/VBox"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="BtnLoad" type="Button" parent="Margin/VBox/Actions"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "装填 LOAD"
+
+[node name="BtnFire" type="Button" parent="Margin/VBox/Actions"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "射击 FIRE"
+
+[node name="BtnRoll" type="Button" parent="Margin/VBox/Actions"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "重roll ROLL"
+
+[node name="BtnUnload" type="Button" parent="Margin/VBox/Actions"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "卸除 UNLOAD"
+
+[node name="ResultLabel" type="Label" parent="Margin/VBox"]
+unique_name_in_owner = true
+visible = false
+layout_mode = 2
+theme_override_font_sizes/font_size = 28
+theme_override_colors/font_color = Color(1, 0.85, 0.2, 1)
+text = "结果"
+horizontal_alignment = 1
+
+[node name="LogTitle" type="Label" parent="Margin/VBox"]
+layout_mode = 2
+text = "战斗日志"
+
+[node name="LogBox" type="RichTextLabel" parent="Margin/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 3
+custom_minimum_size = Vector2(0, 180)
+bbcode_enabled = false
+scroll_following = true

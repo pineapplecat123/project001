@@ -1,0 +1,155 @@
+{
+  "version": 1,
+  "items": [
+    {
+      "id": 1,
+      "name": "白色子弹",
+      "rarity": null,
+      "base_damage": 3,
+      "base_damage_mode": "fixed",
+      "special": "无，常规子弹",
+      "tags": [],
+      "enabled_in_combat": true
+    },
+    {
+      "id": 2,
+      "name": "黑色子弹",
+      "rarity": null,
+      "base_damage": 0,
+      "base_damage_mode": "fixed",
+      "special": "如果这次装填中黑色子弹数量是最多的，则将这次装填的所有伤害×3",
+      "tags": [],
+      "enabled_in_combat": false
+    },
+    {
+      "id": 3,
+      "name": "绿色子弹",
+      "rarity": null,
+      "base_damage": 2,
+      "base_damage_mode": "fixed",
+      "special": "根据在击发顺序中离末尾的距离确定伤害，如果在最后一个被击发则2倍基础伤害，如果倒数第二个也是绿色子弹，则它是3倍伤害，如果倒数第三个也是绿色子弹，则它是4倍基础伤害，以此类推。但如果全部都是绿色子弹，则全部造成0伤害。并且末尾的绿色子弹要连在一起才生效，如果中间有其他颜色子弹，则只生效与末尾相连接的部分",
+      "tags": [],
+      "enabled_in_combat": false
+    },
+    {
+      "id": 4,
+      "name": "黄色子弹",
+      "rarity": null,
+      "base_damage": null,
+      "base_damage_mode": "formula",
+      "special": "装填数量越多伤害越高，根据数量伤害分别为：1、2、3、4、5、5",
+      "tags": [],
+      "enabled_in_combat": false
+    },
+    {
+      "id": 5,
+      "name": "紫色子弹",
+      "rarity": null,
+      "base_damage": null,
+      "base_damage_mode": "formula",
+      "special": "按装填中连着的数量计算伤害，连在一起的紫色子弹越多伤害越高，根据连着的数量：1个（不连）、2个、3个、4个、5个、6个，伤害分别为：0、3、4、5、5、5",
+      "tags": [],
+      "enabled_in_combat": false
+    },
+    {
+      "id": 6,
+      "name": "红色子弹",
+      "rarity": null,
+      "base_damage": 3,
+      "base_damage_mode": "fixed",
+      "special": "根据装填中黄色子弹的数量计算伤害，黄色子弹数量越多，红色子弹加成越高，根据黄色子弹数量1、2、3、4、5，红色子弹伤害加成分别为：+1、+3、+5、+6、+7",
+      "tags": [],
+      "enabled_in_combat": false
+    },
+    {
+      "id": 7,
+      "name": "蓝色子弹",
+      "rarity": null,
+      "base_damage": 1,
+      "base_damage_mode": "fixed",
+      "special": "装填中每有一种不同的子弹，伤害+1，如果有6种不同子弹，则将这次装填的所有伤害×2",
+      "tags": [],
+      "enabled_in_combat": false
+    },
+    {
+      "id": 8,
+      "name": "金色子弹",
+      "rarity": null,
+      "base_damage": 0,
+      "base_damage_mode": "fixed",
+      "special": "射击后获得一个额外的装填回合并自动射击",
+      "tags": [],
+      "enabled_in_combat": false
+    },
+    {
+      "id": 9,
+      "name": "粉色子弹",
+      "rarity": null,
+      "base_damage": 3,
+      "base_damage_mode": "fixed",
+      "special": "当粉色子弹被unload时，粉色子弹在这局的伤害永久+1",
+      "tags": [],
+      "enabled_in_combat": false
+    },
+    {
+      "id": 10,
+      "name": "黑白子弹",
+      "rarity": null,
+      "base_damage": null,
+      "base_damage_mode": "formula",
+      "special": "变成上次装填中数量最多的一种子弹，如果有多个选择则随机",
+      "tags": [],
+      "enabled_in_combat": false
+    },
+    {
+      "id": 11,
+      "name": "穿透子弹",
+      "rarity": null,
+      "base_damage": 3,
+      "base_damage_mode": "fixed",
+      "special": "自带【穿透】效果，并赋予下一颗被击发的子弹【穿透】效果。【穿透】：子弹可以击穿怪物，对第一个怪物造成一次全值伤害，之后伤害-1，对下一个怪物造成伤害，以此类推直到这次伤害数值减到0",
+      "tags": [],
+      "enabled_in_combat": false
+    },
+    {
+      "id": 12,
+      "name": "汽油子弹",
+      "rarity": null,
+      "base_damage": 1,
+      "base_damage_mode": "fixed",
+      "special": "自带【汽油】效果，并赋予下一颗被击发的子弹【汽油】效果。【汽油】：为击中的怪物施加等同于伤害数字的层数的【汽油debuff】debuff，获得该debuff的怪物在被【火】属性子弹攻击后会被点燃，立即造成一次等同于【汽油debuff】层数的伤害，并施加相同层数【燃烧debuff】状态并清空【汽油】层数，同时所有连在一起的拥有【汽油debuff】的怪物会同时被【火】子弹点燃。【燃烧debuff】：每回合造成一次等同于该debuff层数的伤害，然后减少1层。如果怪物已经有【燃烧debuff】时被汽油子弹击中，则本来要施加的【汽油debuff】直接转化为一次等同于该debuff层数的伤害。",
+      "tags": [],
+      "enabled_in_combat": false
+    },
+    {
+      "id": 13,
+      "name": "火子弹",
+      "rarity": null,
+      "base_damage": 3,
+      "base_damage_mode": "fixed",
+      "special": "自带【火】效果，并赋予下一颗被击发的子弹【火】效果。【火】：击中敌人后施加等同于伤害的【燃烧debuff】",
+      "tags": [],
+      "enabled_in_combat": false
+    },
+    {
+      "id": 14,
+      "name": "水子弹",
+      "rarity": null,
+      "base_damage": 2,
+      "base_damage_mode": "fixed",
+      "special": "自带【水】效果，并赋予下一颗被击发的子弹【水】效果。【水】：击中敌人后施加等同于伤害的【湿debuff】，该效果会覆盖已有的【燃烧debuff】",
+      "tags": [],
+      "enabled_in_combat": false
+    },
+    {
+      "id": 15,
+      "name": "雷击子弹",
+      "rarity": null,
+      "base_damage": 3,
+      "base_damage_mode": "fixed",
+      "special": "自带【电】效果，并赋予下一颗被击发的子弹【电】效果。【电】：击中带有【湿debuff】的敌人后可以将伤害传导到它旁边的敌人，如果被传导的敌人也有【湿debuff】则可以继续传导，每个敌人只会被传导一次，不会循环嵌套",
+      "tags": [],
+      "enabled_in_combat": false
+    }
+  ]
+}

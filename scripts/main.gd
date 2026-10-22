@@ -1,14 +1,20 @@
-extends Node2D
-## 主场景脚本。
+extends Control
+## 主菜单：开始战斗 / 退出；底部版本号。无地图。
 
-const TITLE := "project001"
-
-@onready var title_label: Label = $TitleLabel
+const VERSION := "0.1.0-graybox"
 
 
 func _ready() -> void:
-	title_label.text = get_title()
+	%VersionLabel.text = "v%s" % VERSION
+
+
+func _on_start_pressed() -> void:
+	get_tree().change_scene_to_file("res://scenes/combat.tscn")
+
+
+func _on_quit_pressed() -> void:
+	get_tree().quit()
 
 
 func get_title() -> String:
-	return TITLE
+	return "project001"

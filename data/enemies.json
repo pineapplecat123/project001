@@ -1,0 +1,70 @@
+{
+  "version": 1,
+  "items": [
+    {
+      "id": 1,
+      "name": "平民",
+      "hp": 10,
+      "atk": 1,
+      "mobility": 1,
+      "special": "无",
+      "tags": [
+        "生物"
+      ],
+      "type": "小怪",
+      "enabled_in_combat": true
+    },
+    {
+      "id": 2,
+      "name": "强盗",
+      "hp": 15,
+      "atk": 2,
+      "mobility": 1,
+      "special": "无",
+      "tags": [
+        "生物"
+      ],
+      "type": "小怪",
+      "enabled_in_combat": false
+    },
+    {
+      "id": 3,
+      "name": "熊",
+      "hp": 20,
+      "atk": 3,
+      "mobility": 1,
+      "special": "无",
+      "tags": [
+        "生物"
+      ],
+      "type": "小怪",
+      "enabled_in_combat": false
+    },
+    {
+      "id": 4,
+      "name": "骷髅",
+      "hp": 10,
+      "atk": 1,
+      "mobility": 1,
+      "special": "无",
+      "tags": [
+        "骷髅"
+      ],
+      "type": "小怪",
+      "enabled_in_combat": false
+    },
+    {
+      "id": 5,
+      "name": "石头人",
+      "hp": 20,
+      "atk": 2,
+      "mobility": 1,
+      "special": "无",
+      "tags": [
+        "石头"
+      ],
+      "type": "小怪",
+      "enabled_in_combat": false
+    }
+  ]
+}
