@@ -413,10 +413,17 @@ func test_stepwise_load_api() -> void:
 	assert_eq(cs.phase, CombatState.Phase.AWAIT_LOAD)
 	assert_true(cs.begin_load())
 	assert_true(cs.is_busy_loading())
+	assert_eq(cs.magazine.start_index, CombatConstants.LOAD_SESSION_INITIAL_START)
+	assert_eq(cs.magazine.chamber_at_load_port(), 0)
 	var n := 0
+	var last: Dictionary = {}
+	var loaded_slots: Array[int] = []
 	while cs.is_busy_loading():
 		var r: Dictionary = cs.load_next_chamber()
 		assert_true(bool(r.get("ok", false)))
+		last = r
+		if int(r.get("slot", -1)) >= 0:
+			loaded_slots.append(int(r["slot"]))
 		n += 1
 		assert_lte(n, CombatConstants.MAGAZINE_SIZE + 1)
 		if bool(r.get("done", false)):
@@ -424,9 +431,12 @@ func test_stepwise_load_api() -> void:
 	assert_eq(n, CombatConstants.MAGAZINE_SIZE)
 	assert_false(cs.is_busy_loading())
 	assert_eq(cs.magazine.loaded_count(), CombatConstants.MAGAZINE_SIZE)
-	assert_eq(cs.magazine.start_index, 0)
+	# 装满后标记需要 reroll；start_index 在 spin 前保持会话末值
+	assert_true(bool(last.get("needs_spin", false)))
 	assert_eq(cs.phase, CombatState.Phase.AWAIT_ACTION)
 	assert_eq(cs.bag.size(), CombatConstants.STARTER_WHITE_COUNT - CombatConstants.MAGAZINE_SIZE)
+	# 上弹口依次装入仓 0,1,2,3,4,5
+	assert_eq(loaded_slots, [0, 1, 2, 3, 4, 5])
 
 
 func test_stepwise_load_partial_when_bag_small() -> void:
@@ -472,3 +482,66 @@ func test_ammo_inventory_bag_and_mag() -> void:
 	assert_eq(int(e["mag"]), CombatConstants.MAGAZINE_SIZE)
 	assert_eq(int(e["bag"]), before_bag - CombatConstants.MAGAZINE_SIZE)
 	assert_eq(int(e["total"]), before_bag)
+
+
+func test_load_port_and_fire_port_offsets() -> void:
+	var mag := Magazine.new()
+	mag.start_index = CombatConstants.LOAD_SESSION_INITIAL_START
+	assert_eq(mag.chamber_at_load_port(), 0)
+	assert_eq(mag.chamber_at_fire_port(), CombatConstants.LOAD_SESSION_INITIAL_START)
+	mag.start_index = 0
+	assert_eq(mag.chamber_at_fire_port(), 0)
+	assert_eq(mag.chamber_at_load_port(), CombatConstants.LOAD_PORT_OFFSET_STEPS)
+
+
+func test_stepwise_load_rotates_start_each_chamber() -> void:
+	var cs := CombatState.new(7)
+	cs.start_graybox(7)
+	assert_true(cs.begin_load())
+	var starts: Array[int] = [cs.magazine.start_index]
+	while cs.is_busy_loading():
+		var r: Dictionary = cs.load_next_chamber()
+		if bool(r.get("done", false)):
+			break
+		starts.append(int(r.get("rotate_to", -1)))
+	# 每装一发 start+1：1→2→3→4→5→0（最后一发不步进，不进 starts）
+	assert_eq(starts, [1, 2, 3, 4, 5, 0])
+
+
+func test_do_load_full_applies_post_spin() -> void:
+	var cs := CombatState.new(99)
+	cs.start_graybox(99)
+	assert_true(cs.do_load())
+	assert_eq(cs.magazine.loaded_count(), CombatConstants.MAGAZINE_SIZE)
+	assert_eq(cs.phase, CombatState.Phase.AWAIT_ACTION)
+	# 装满后必有 random_roll；步数∈[0,5]，start 合法
+	assert_gte(cs.magazine.start_index, 0)
+	assert_lt(cs.magazine.start_index, CombatConstants.MAGAZINE_SIZE)
+
+
+func test_fire_consumes_top_chamber_then_advances() -> void:
+	var cs := CombatState.new(3)
+	cs.start_graybox(3)
+	cs.dev_force_load([
+		CombatConstants.WHITE_AMMO_ID, CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID, CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID, CombatConstants.WHITE_AMMO_ID,
+	])
+	cs.magazine.set_start(2)
+	assert_true(cs.begin_fire())
+	var top_before: int = cs.magazine.start_index
+	assert_eq(top_before, 2)
+	assert_eq(cs.magazine.slots[2], CombatConstants.WHITE_AMMO_ID)
+	assert_true(cs.fire_next_shot())
+	assert_eq(cs.magazine.slots[2], Magazine.EMPTY)
+	assert_eq(cs.magazine.start_index, 3)
+
+
+func test_reward_blurb_short() -> void:
+	var blurb := DataRegistry.format_ammo_reward_blurb(1)
+	assert_true(blurb.contains("伤") or blurb.contains("3") or blurb.contains("常规"))
+	assert_lte(blurb.length(), 40)
+	var black := DataRegistry.format_ammo_reward_blurb(2)
+	assert_true(black.length() > 0)
+	assert_lte(black.length(), 48)
+

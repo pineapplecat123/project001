@@ -334,15 +334,21 @@ func is_busy_firing() -> bool:
 
 
 ## 一次装满（测试 / 金色额外轮 / 无动画路径）。UI 请用 begin_load + load_next_chamber。
+## 装满后会自动 random_roll（与 UI 装满后的 reroll 动画一致）；不满匣不转。
 func do_load() -> bool:
 	if not begin_load():
 		return false
+	var needs_spin := false
 	while _load_session_active:
-		load_next_chamber()
+		var r: Dictionary = load_next_chamber()
+		needs_spin = bool(r.get("needs_spin", false))
+	if needs_spin:
+		apply_roll()
 	return true
 
 
 ## 开始逐步装填会话。成功后反复调用 load_next_chamber 直到返回 done。
+## 约定：start_index = 正上击发仓；上弹口=左上=(start+LOAD_PORT_OFFSET)%6。
 func begin_load() -> bool:
 	if not can_load():
 		return false
@@ -354,26 +360,29 @@ func begin_load() -> bool:
 	_load_next_slot = 0
 	_load_raw_ids.clear()
 	_load_resolved_ids.clear()
+	# 仓 0 对准左上上弹口
+	magazine.start_index = CombatConstants.LOAD_SESSION_INITIAL_START
 	turn_index += 1
 	wave_player_turns += 1
-	_log("第 %d 回合：开始装填…" % turn_index)
+	_log("第 %d 回合：开始装填（上弹口=左上，击发点=正上）…" % turn_index)
 	_emit()
-	# 袋已空：立刻收尾（弹药耗尽）
 	if bag.is_empty():
 		return _finish_load_session_empty()
 	return true
 
 
-## 装入下一仓。返回字典：ok/done/ammo_id/slot/rotate_to/exhausted
-## rotate_to = 装完本发后盘面应对准的 start_index（供 UI 转 60° 整数倍）。
+## 装入当前上弹口（左上）那一仓，然后若未满则 start_index+1（整盘转 60°）。
+## 返回：ok/done/ammo_id/slot/rotate_to/exhausted/needs_spin
+## rotate_to = 装完并步进后的 start_index（供 UI 转到新朝向）；最后一发 done 时不步进，needs_spin 表示装满后应 reroll。
 func load_next_chamber() -> Dictionary:
 	var fail := {
 		"ok": false,
 		"done": true,
 		"ammo_id": Magazine.EMPTY,
 		"slot": -1,
-		"rotate_to": 0,
+		"rotate_to": magazine.start_index if magazine != null else 0,
 		"exhausted": false,
+		"needs_spin": false,
 	}
 	if not _load_session_active:
 		return fail
@@ -385,26 +394,26 @@ func load_next_chamber() -> Dictionary:
 	var resolved_arr: Array[int] = _resolve_black_white_with_prev([raw_id], last_load_ids)
 	var resolved: int = resolved_arr[0]
 	_load_resolved_ids.append(resolved)
-	var slot: int = _load_next_slot
+	var slot: int = magazine.chamber_at_load_port()
 	magazine.set_slot(slot, resolved)
 	if raw_id == FireResolver.ID_BW and resolved != FireResolver.ID_BW:
 		_log("黑白子弹变形为 %s。" % _ammo_name(resolved))
-	_log("装填仓 %d：%s。" % [slot + 1, _ammo_name(resolved)])
+	_log("装填上弹口→仓 %d：%s。" % [slot + 1, _ammo_name(resolved)])
 	_load_next_slot += 1
 	if bag.is_empty():
 		needs_reshuffle_next_load = true
 	var more: bool = _load_next_slot < CombatConstants.MAGAZINE_SIZE and not bag.is_empty()
 	if more:
-		# 下一空仓转到击发/上弹位
-		magazine.start_index = _load_next_slot
+		magazine.start_index = (magazine.start_index + 1) % CombatConstants.MAGAZINE_SIZE
 		_emit()
 		return {
 			"ok": true,
 			"done": false,
 			"ammo_id": resolved,
 			"slot": slot,
-			"rotate_to": _load_next_slot,
+			"rotate_to": magazine.start_index,
 			"exhausted": false,
+			"needs_spin": false,
 		}
 	return _complete_load_session_after_shot(resolved, slot)
 
@@ -419,11 +428,15 @@ func _complete_load_session_after_shot(resolved: int, slot: int) -> Dictionary:
 
 func _complete_load_session() -> Dictionary:
 	last_load_ids = _load_raw_ids.duplicate()
-	magazine.start_index = 0
 	var n: int = _load_resolved_ids.size()
-	_log("装填完成：共 %d 发。" % n)
+	var needs_spin: bool = n >= CombatConstants.MAGAZINE_SIZE and not magazine.is_empty()
+	_log("装填完成：共 %d 发%s。" % [
+		n, "（将随机旋转转轮）" if needs_spin else ""
+	])
+	var rotate_to: int = magazine.start_index
 	_reset_load_session()
 	if magazine.is_empty():
+		magazine.start_index = 0
 		_log("弹药袋与弹夹皆空，无法行动。")
 		if discard.is_empty():
 			_lose_ammo_exhausted()
@@ -435,6 +448,7 @@ func _complete_load_session() -> Dictionary:
 				"slot": -1,
 				"rotate_to": 0,
 				"exhausted": true,
+				"needs_spin": false,
 			}
 	_set_phase(Phase.AWAIT_ACTION)
 	_emit()
@@ -443,8 +457,9 @@ func _complete_load_session() -> Dictionary:
 		"done": true,
 		"ammo_id": Magazine.EMPTY,
 		"slot": -1,
-		"rotate_to": 0,
+		"rotate_to": rotate_to,
 		"exhausted": false,
+		"needs_spin": needs_spin,
 	}
 
 

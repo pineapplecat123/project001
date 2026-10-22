@@ -1,6 +1,7 @@
 extends Control
 ## 灰盒战斗 UI：棋盘 + 大圆转轮（带六小圆）+ LOAD/FIRE/ROLL/UNLOAD + 检视袋网格/详情 + 胜利奖励 + 开发者工具。
-## 转轮：大盘带着仓位整盘旋转（每次 60°）；LOAD 逐步上弹；FIRE 逐发 0.4s；ROLL 旋转到目标仓。
+## 转轮：大盘(_disk)带着六小圆整盘转；红击发圈与装弹标挂在 MagWheel 上不转。
+## 击发点=正上固定；上弹口=左上固定；LOAD 装左上→转60°；装满后 reroll；FIRE 射正上→转60°。
 
 const CELL_W := 96
 const CELL_H := 86
@@ -16,7 +17,7 @@ const ROLL_ANIM_MAX := 0.6
 const LOAD_INSERT_PAUSE := 0.06
 const BAG_GRID_COLS := 4
 const BAG_CELL_MIN := Vector2(140, 88)
-const VERSION := "0.2.10"
+const VERSION := "0.2.11"
 
 const COL_PHASE := Color(1.0, 0.92, 0.45)
 const COL_HP_OK := Color(0.45, 0.95, 0.55)
@@ -44,6 +45,8 @@ var _wheel_animating: bool = false
 var _wheel_visual_steps: float = 0.0
 var _fire_flash_tween: Tween
 var _disk_tween: Tween
+var _fire_ring: Panel = null
+var _load_marker: Label = null
 var _reward_open: bool = false
 var _ammo_detail_panel: PanelContainer = null
 var _ammo_detail_body: RichTextLabel = null
@@ -101,7 +104,7 @@ func _ready() -> void:
 	btn_reward_next.pressed.connect(_on_reward_continue)
 	dimmer.gui_input.connect(_on_dimmer_input)
 	version_label.text = "v%s" % VERSION
-	mag_title.text = "弹夹转轮（大圆带着六仓转 · ▼击发点固定不转 · LOAD 逐发上弹 · 红框=击发仓）"
+	mag_title.text = "弹夹转轮（大盘带六仓转 · 红圈正上击发固定 · ◀左上装弹 · LOAD一发一转 · 满后随机转）"
 	_style_overlay_panels()
 	_build_board_cells()
 	_build_wheel_chambers()
@@ -252,15 +255,54 @@ func _build_wheel_chambers() -> void:
 		_disk.add_child(panel)
 		_chamber_panels.append(panel)
 
+	# —— 屏幕固定层（parent=MagWheel，不随 _disk 转）——
+	# 红色击发指示圈：正上方，永远不动
+	if _fire_ring != null and is_instance_valid(_fire_ring):
+		_fire_ring.queue_free()
+	_fire_ring = Panel.new()
+	_fire_ring.name = "FireRing"
+	_fire_ring.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var ring_sz := CHAMBER_SIZE + 10.0
+	var top_pos := Vector2(WHEEL_SIZE, WHEEL_SIZE) * 0.5 + Vector2(0, -WHEEL_RADIUS) - Vector2(ring_sz, ring_sz) * 0.5
+	_fire_ring.position = top_pos
+	_fire_ring.size = Vector2(ring_sz, ring_sz)
+	var ring_style := StyleBoxFlat.new()
+	ring_style.bg_color = Color(0, 0, 0, 0)
+	ring_style.set_border_width_all(4)
+	ring_style.border_color = Color(1.0, 0.15, 0.12, 1.0)
+	ring_style.set_corner_radius_all(999)
+	_fire_ring.add_theme_stylebox_override("panel", ring_style)
+	_fire_ring.z_index = 4
+	mag_wheel.add_child(_fire_ring)
+
 	fire_marker.text = "▼ 击发"
 	fire_marker.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	fire_marker.add_theme_color_override("font_color", Color(1.0, 0.18, 0.12))
-	fire_marker.add_theme_font_size_override("font_size", 22)
-	fire_marker.position = Vector2(WHEEL_SIZE * 0.5 - 40.0, -8.0)
-	fire_marker.size = Vector2(80, 28)
+	fire_marker.add_theme_font_size_override("font_size", 20)
+	fire_marker.position = Vector2(WHEEL_SIZE * 0.5 - 40.0, -10.0)
+	fire_marker.size = Vector2(80, 26)
 	fire_marker.z_index = 5
 	fire_marker.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	mag_wheel.move_child(fire_marker, mag_wheel.get_child_count() - 1)
+
+	# 左上装弹口标（固定）
+	if _load_marker != null and is_instance_valid(_load_marker):
+		_load_marker.queue_free()
+	_load_marker = Label.new()
+	_load_marker.name = "LoadMarker"
+	_load_marker.text = "◀装"
+	_load_marker.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_load_marker.add_theme_color_override("font_color", Color(0.45, 0.95, 0.75))
+	_load_marker.add_theme_font_size_override("font_size", 18)
+	# 左上仓位中心：angle = -PI/2 - PI/3 = -5PI/6
+	var load_angle := -PI / 2.0 - PI / 3.0
+	var load_center := Vector2(WHEEL_SIZE, WHEEL_SIZE) * 0.5 + Vector2(cos(load_angle), sin(load_angle)) * (WHEEL_RADIUS + 42.0)
+	_load_marker.position = load_center - Vector2(28, 12)
+	_load_marker.size = Vector2(56, 24)
+	_load_marker.z_index = 5
+	_load_marker.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	mag_wheel.add_child(_load_marker)
+
 	_wheel_visual_steps = 0.0
 	_apply_disk_rotation(0.0)
 
@@ -349,43 +391,45 @@ func _run_load_sequence() -> void:
 	if not state.begin_load():
 		return
 	_loading = true
+	# 开局：仓 0 在左上上弹口 → start_index = LOAD_SESSION_INITIAL_START
+	_apply_disk_rotation(float(state.magazine.start_index))
 	_refresh()
-	# 空袋已在 begin_load 内收尾
 	if not state.is_busy_loading():
 		_loading = false
 		_apply_disk_rotation(float(state.magazine.start_index))
 		_refresh()
 		return
+	var needs_spin := false
 	while state.is_busy_loading():
 		var before_steps: float = _wheel_visual_steps
 		var result: Dictionary = state.load_next_chamber()
 		if not bool(result.get("ok", false)):
 			break
+		needs_spin = bool(result.get("needs_spin", false))
 		_refresh_mag()
 		_refresh()
 		if LOAD_INSERT_PAUSE > 0.0:
 			await get_tree().create_timer(LOAD_INSERT_PAUSE).timeout
+		if bool(result.get("done", false)):
+			break
+		# 装完一发 → 整盘转 60°，下一空仓转到左上
 		var rotate_to: float = float(result.get("rotate_to", state.magazine.start_index))
-		# 顺时针转到目标（跨圈用 +6）
 		var target: float = rotate_to
 		while target + 0.001 < before_steps:
 			target += float(CombatConstants.MAGAZINE_SIZE)
-		# 若目标相对当前不足一格且未结束，仍转一格
-		if not bool(result.get("done", false)) and absf(target - before_steps) < 0.001:
+		if absf(target - before_steps) < 0.001:
 			target = before_steps + 1.0
-		if absf(target - before_steps) >= 0.001:
-			await _animate_disk_to(target, STEP_ROT_DURATION)
-		if bool(result.get("done", false)):
-			break
-	# 收尾对齐逻辑 start_index（通常 0）
-	var final_i: float = float(state.magazine.start_index)
-	var align: float = final_i
-	while align + 0.001 < _wheel_visual_steps:
-		align += float(CombatConstants.MAGAZINE_SIZE)
-	if absf(align - _wheel_visual_steps) >= 0.001:
-		await _animate_disk_to(align, STEP_ROT_DURATION)
+		await _animate_disk_to(target, STEP_ROT_DURATION)
+	# 装满后：与 ROLL 相同的随机旋转（不进怪物回合）
+	if needs_spin and state.can_start_roll():
+		var steps: int = state.apply_roll()
+		if steps > 0:
+			var dur: float = clampf(ROLL_ANIM_BASE + float(steps) * ROLL_ANIM_PER_STEP, ROLL_ANIM_BASE, ROLL_ANIM_MAX)
+			await _animate_disk_to(_wheel_visual_steps + float(steps), dur)
+		else:
+			_apply_disk_rotation(float(state.magazine.start_index))
 	else:
-		_apply_disk_rotation(fposmod(final_i, float(CombatConstants.MAGAZINE_SIZE)))
+		_apply_disk_rotation(float(state.magazine.start_index))
 	_loading = false
 	_refresh()
 
@@ -400,29 +444,29 @@ func _run_fire_sequence() -> void:
 	if not state.begin_fire():
 		return
 	_firing = true
+	# 红圈固定正上；盘面先对齐当前击发仓
+	_apply_disk_rotation(float(state.magazine.start_index))
 	_refresh()
 	while state.phase == CombatState.Phase.FIRING:
 		var start_before: int = state.magazine.start_index
 		var more: bool = state.fire_next_shot()
+		_flash_fire_chamber_at(start_before)
 		_refresh()
-		_flash_fire_chamber()
-		var start_after: int = state.magazine.start_index
 		if more:
+			var start_after: int = state.magazine.start_index
 			var delta: int = (start_after - start_before + CombatConstants.MAGAZINE_SIZE) % CombatConstants.MAGAZINE_SIZE
-			if delta > 0:
-				await _animate_disk_to(_wheel_visual_steps + float(delta), STEP_ROT_DURATION)
+			if delta == 0:
+				delta = 1
+			await _animate_disk_to(_wheel_visual_steps + float(delta), STEP_ROT_DURATION)
 			await get_tree().create_timer(FIRE_SHOT_DELAY).timeout
 		else:
 			break
-	_apply_disk_rotation(0.0)
+	_apply_disk_rotation(float(state.magazine.start_index))
 	_firing = false
 	_refresh()
 
 
-func _flash_fire_chamber() -> void:
-	if state == null or state.magazine == null:
-		return
-	var slot_i: int = state.magazine.start_index
+func _flash_fire_chamber_at(slot_i: int) -> void:
 	if slot_i < 0 or slot_i >= _chamber_panels.size():
 		return
 	var panel: Panel = _chamber_panels[slot_i]
@@ -572,15 +616,15 @@ func _refresh_reward_panel() -> void:
 			var def: Dictionary = DataRegistry.get_ammo(ammo_id)
 			var colors := _ammo_colors(ammo_id)
 			var btn := Button.new()
-			btn.custom_minimum_size = Vector2(0, 64)
+			btn.custom_minimum_size = Vector2(0, 72)
 			btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			var nm := str(def.get("name", "未知#%d" % ammo_id))
 			var desc := str(def.get("special", ""))
-			var dmg = def.get("base_damage", "")
-			btn.text = "【%d】%s（基础伤 %s）" % [i + 1, nm, str(dmg)]
+			var blurb := DataRegistry.format_ammo_reward_blurb(ammo_id)
+			btn.text = "【%d】%s\n%s" % [i + 1, nm, blurb]
 			if not desc.is_empty():
 				btn.tooltip_text = desc
-			btn.add_theme_font_size_override("font_size", 22)
+			btn.add_theme_font_size_override("font_size", 18)
 			_style_reward_choice_button(btn, colors["bg"])
 			var idx := i
 			btn.pressed.connect(func(): _on_reward_pick(idx))
@@ -1079,7 +1123,12 @@ func _refresh_mag() -> void:
 				style.border_color = Color(0.95, 0.4, 0.4)
 			info.text = "%d\n%s" % [order_num, short]
 			info.add_theme_color_override("font_color", colors["fg"])
-		if order_k == 0:
+		var at_fire: bool = slot_i == state.magazine.chamber_at_fire_port()
+		var at_load: bool = slot_i == state.magazine.chamber_at_load_port()
+		if _loading and at_load:
+			style.border_color = Color(0.35, 0.95, 0.7)
+			style.set_border_width_all(4)
+		elif at_fire:
 			style.border_color = Color(1.0, 0.15, 0.12)
 			style.set_border_width_all(4)
 			if _firing:

@@ -43,3 +43,10 @@ const REWARD_BOSS_BASE_GOLD := 25
 
 ## 无效弹药说明（袋内详情用）
 const INVALID_AMMO_SPECIAL := "击发伤害为 0。由 Boss 等效果塞入弹药袋，占用抽弹名额。"
+
+## 转轮端口（屏幕固定角）
+## 击发点 = 正上（仓位角度 -90°）。六等分无法同时占正上与正左，上弹口取左上仓（相对击发 +5 步 = -60°）。
+const FIRE_PORT_OFFSET_STEPS := 0
+const LOAD_PORT_OFFSET_STEPS := 5
+## begin_load 时 start_index，使仓 0 对准上弹口：(1+5)%6=0
+const LOAD_SESSION_INITIAL_START := 1

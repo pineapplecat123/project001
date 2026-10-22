@@ -99,3 +99,15 @@ func unload_all() -> Array[int]:
 			out.append(id)
 	clear()
 	return out
+
+
+## 给定「正上击发仓」步数，返回处于击发点的仓位下标。
+func chamber_at_fire_port(steps: int = -1) -> int:
+	var s: int = start_index if steps < 0 else steps
+	return posmod(s + CombatConstants.FIRE_PORT_OFFSET_STEPS, size())
+
+
+## 给定「正上击发仓」步数，返回处于左上上弹口的仓位下标。
+func chamber_at_load_port(steps: int = -1) -> int:
+	var s: int = start_index if steps < 0 else steps
+	return posmod(s + CombatConstants.LOAD_PORT_OFFSET_STEPS, size())
