@@ -16,6 +16,12 @@ enum LoseReason {
 	AMMO_EXHAUSTED,
 }
 
+enum EncounterKind {
+	NORMAL,
+	ELITE,
+	BOSS,
+}
+
 signal phase_changed(phase: int)
 signal log_line(text: String)
 signal state_changed
@@ -45,6 +51,10 @@ var wave_player_turns: int = 0
 
 ## 是否来自地图 run（胜利领奖后回地图；练习战则下一波）
 var from_map_run: bool = false
+## 遭遇类型：普通 / 精英 / Boss（灰盒）
+var encounter_kind: int = EncounterKind.NORMAL
+## 本波实际发放的基础金币（供 UI 显示）
+var last_reward_base_gold: int = 0
 
 ## 弹药跨回合状态
 var pink_bonus: int = 0
@@ -98,6 +108,8 @@ func start_graybox(seed_value: int = 0) -> void:
 	wave_took_damage = false
 	wave_player_turns = 0
 	from_map_run = false
+	encounter_kind = EncounterKind.NORMAL
+	last_reward_base_gold = 0
 	_set_phase(Phase.AWAIT_LOAD)
 	_log("战斗开始：白色弹药 ×%d · 第 %d 波。（可用开发者工具加入其它弹药）" % [
 		CombatConstants.STARTER_WHITE_COUNT, wave_index
@@ -113,6 +125,8 @@ func start_from_run(payload: Dictionary, seed_value: int = 0) -> void:
 		rng.seed = int(payload["seed"])
 	BulletEffectRegistry.ensure_defaults()
 	from_map_run = true
+	encounter_kind = _parse_encounter(str(payload.get("encounter", "normal")))
+	last_reward_base_gold = 0
 	player_max_hp = int(payload.get("player_max_hp", CombatConstants.PLAYER_MAX_HP))
 	player_hp = int(payload.get("player_hp", player_max_hp))
 	bag.clear()
@@ -138,9 +152,11 @@ func start_from_run(payload: Dictionary, seed_value: int = 0) -> void:
 	_clear_reward_state()
 	wave_took_damage = false
 	wave_player_turns = 0
+	if encounter_kind == EncounterKind.BOSS:
+		_inject_invalid_ammo(CombatConstants.BOSS_INVALID_ON_START, "开场")
 	_set_phase(Phase.AWAIT_LOAD)
-	_log("地图战斗：袋 %d · 金币 %d · HP %d · 第 %d 波。" % [
-		bag.size(), gold, player_hp, wave_index
+	_log("地图%s：袋 %d · 金币 %d · HP %d · 第 %d 波。" % [
+		encounter_label(), bag.size(), gold, player_hp, wave_index
 	])
 	_emit()
 
@@ -247,6 +263,14 @@ func occupied_cells() -> Dictionary:
 
 func is_adjacent_to_player(e: EnemyInstance) -> bool:
 	return e != null and e.is_alive() and e.cell == CombatConstants.PLAYER_CELL + 1
+
+
+## 敌人是否在其 attack_range 内可攻击玩家（精英/Boss 可 >1）。
+func can_attack_player(e: EnemyInstance) -> bool:
+	if e == null or not e.is_alive():
+		return false
+	var dist: int = e.cell - CombatConstants.PLAYER_CELL
+	return dist >= 1 and dist <= e.attack_range
 
 
 func can_load() -> bool:
@@ -509,7 +533,12 @@ func _thunder_chain(origin: EnemyInstance, dmg: int, gas: bool, fire: bool, wate
 
 
 func _ammo_name(ammo_id: int) -> String:
-	return str(DataRegistry.get_ammo(ammo_id).get("name", str(ammo_id)))
+	if ammo_id == CombatConstants.INVALID_AMMO_ID:
+		return CombatConstants.INVALID_AMMO_NAME
+	var def: Dictionary = DataRegistry.get_ammo(ammo_id)
+	if def.is_empty():
+		return "未知#%d" % ammo_id
+	return str(def.get("name", str(ammo_id)))
 
 
 func _consume_hammer_chamber(expected_id: int) -> void:
@@ -703,13 +732,15 @@ func _run_enemy_turn() -> void:
 	var order: Array = enemies_sorted_by_cell()
 	for e in order:
 		_move_enemy(e)
-		if is_adjacent_to_player(e):
+		if can_attack_player(e):
 			player_hp = maxi(0, player_hp - e.atk)
 			if e.atk > 0:
 				wave_took_damage = true
-			_log("%s 攻击玩家，造成 %d（玩家 HP %d/%d）" % [e.name_zh, e.atk, player_hp, player_max_hp])
+			_log("%s 攻击玩家，造成 %d（玩家 HP %d/%d · 射程 %d）" % [
+				e.name_zh, e.atk, player_hp, player_max_hp, e.attack_range
+			])
 		else:
-			_log("%s 未邻接，不攻击（格 %d）。" % [e.name_zh, e.cell])
+			_log("%s 未进入射程，不攻击（格 %d · 射程 %d）。" % [e.name_zh, e.cell, e.attack_range])
 	if player_hp <= 0:
 		_lose_hp()
 		return
@@ -718,6 +749,9 @@ func _run_enemy_turn() -> void:
 	if alive_enemies().is_empty():
 		_enter_won()
 		return
+	# Boss 独特效果：每怪物回合向袋塞无效弹（灰盒暂定）
+	if encounter_kind == EncounterKind.BOSS:
+		_inject_invalid_ammo(CombatConstants.BOSS_INVALID_PER_ENEMY_TURN, "回合末")
 	_set_phase(Phase.AWAIT_LOAD)
 	_log("--- 请装填 ---")
 
@@ -786,9 +820,12 @@ func _begin_reward() -> void:
 	reward_choices = generate_reward_choices()
 	reward_pending = true
 	reward_resolved = false
-	var base_g: int = CombatConstants.REWARD_BASE_GOLD
+	var base_g: int = reward_base_gold_for_encounter()
+	last_reward_base_gold = base_g
 	gold += base_g
-	_log("奖励：基础金币 +%d（现 %d）。请三选一弹药，或放弃换额外金币。" % [base_g, gold])
+	_log("奖励（%s）：基础金币 +%d（现 %d）。请三选一弹药，或放弃换额外金币。" % [
+		encounter_label(), base_g, gold
+	])
 	# 灰盒预留钩子（数值为 0 / 未启用）：
 	# var no_dmg := _hook_no_damage_bonus_gold()
 	# var fast := _hook_fast_clear_bonus_gold()
@@ -891,6 +928,8 @@ func _spawn_wave_enemies(force_ids: Array = []) -> void:
 	if force_ids.size() > 0:
 		for x in force_ids:
 			ids.append(int(x))
+	elif encounter_kind == EncounterKind.BOSS:
+		ids.append(CombatConstants.BOSS_BODY_ENEMY_ID)
 	else:
 		var pool: Array[int] = []
 		for item in DataRegistry.all_enemies():
@@ -898,8 +937,12 @@ func _spawn_wave_enemies(force_ids: Array = []) -> void:
 				pool.append(int(item["id"]))
 		if pool.is_empty():
 			pool.append(CombatConstants.CIVILIAN_ENEMY_ID)
-		# 第 n 波：1/2/3 循环数量
-		var count: int = 1 + ((wave_index - 1) % 3)
+		var count: int
+		if encounter_kind == EncounterKind.ELITE:
+			count = CombatConstants.ELITE_ENEMY_COUNT
+		else:
+			# 第 n 波：1/2/3 循环数量
+			count = 1 + ((wave_index - 1) % 3)
 		for _i in count:
 			ids.append(pool[rng.randi_range(0, pool.size() - 1)])
 	var cell: int = CombatConstants.BOARD_SIZE - 1
@@ -913,9 +956,75 @@ func _spawn_wave_enemies(force_ids: Array = []) -> void:
 		var def: Dictionary = DataRegistry.get_enemy(eid)
 		if def.is_empty():
 			continue
-		enemies.append(EnemyInstance.new(def, cell))
-		_log("波次 %d：%s 出现在格 %d。" % [wave_index, def.get("name", eid), cell])
+		var e: EnemyInstance = _make_scaled_enemy(def, cell)
+		enemies.append(e)
+		_log("波次 %d：%s 出现在格 %d（HP%d 攻%d 移%d 射程%d）。" % [
+			wave_index, e.name_zh, cell, e.max_hp, e.atk, e.mobility, e.attack_range
+		])
 		cell -= 1
+
+
+func _parse_encounter(s: String) -> int:
+	match s:
+		"elite":
+			return EncounterKind.ELITE
+		"boss":
+			return EncounterKind.BOSS
+		_:
+			return EncounterKind.NORMAL
+
+
+func encounter_label() -> String:
+	match encounter_kind:
+		EncounterKind.ELITE:
+			return "精英战"
+		EncounterKind.BOSS:
+			return "Boss 终战"
+		_:
+			return "战斗"
+
+
+func reward_base_gold_for_encounter() -> int:
+	match encounter_kind:
+		EncounterKind.ELITE:
+			return CombatConstants.REWARD_ELITE_BASE_GOLD
+		EncounterKind.BOSS:
+			return CombatConstants.REWARD_BOSS_BASE_GOLD
+		_:
+			return CombatConstants.REWARD_BASE_GOLD
+
+
+## 按遭遇类型缩放现有敌人（不新增敌人表行）。
+func _make_scaled_enemy(def: Dictionary, cell: int) -> EnemyInstance:
+	var e := EnemyInstance.new(def, cell)
+	match encounter_kind:
+		EncounterKind.ELITE:
+			e.max_hp = maxi(1, int(round(float(e.max_hp) * CombatConstants.ELITE_HP_MULT)))
+			e.hp = e.max_hp
+			e.atk = maxi(0, int(round(float(e.atk) * CombatConstants.ELITE_ATK_MULT)))
+			e.mobility += CombatConstants.ELITE_MOBILITY_BONUS
+			e.attack_range = CombatConstants.ELITE_ATTACK_RANGE
+			e.name_zh = "精英·" + e.name_zh
+		EncounterKind.BOSS:
+			e.max_hp = maxi(1, int(round(float(e.max_hp) * CombatConstants.BOSS_HP_MULT)))
+			e.hp = e.max_hp
+			e.atk = maxi(0, int(round(float(e.atk) * CombatConstants.BOSS_ATK_MULT)))
+			e.mobility += CombatConstants.BOSS_MOBILITY_BONUS
+			e.attack_range = CombatConstants.BOSS_ATTACK_RANGE
+			e.name_zh = "Boss·" + e.name_zh
+		_:
+			pass
+	return e
+
+
+## Boss 向弹药袋塞入无效弹药（本地常量 id，非 Excel）。
+func _inject_invalid_ammo(count: int, reason: String = "") -> void:
+	if count <= 0:
+		return
+	for _i in count:
+		bag.append(CombatConstants.INVALID_AMMO_ID)
+	var tag: String = reason if reason != "" else "效果"
+	_log("Boss[%s]：弹药袋 +无效弹药 ×%d（袋内 %d）。击发伤害 0。" % [tag, count, bag.size()])
 
 
 # ——— 开发者工具 ———

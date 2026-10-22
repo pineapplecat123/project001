@@ -1,7 +1,7 @@
 extends Control
 ## 主菜单：开始冒险（地图）/ 练习战斗 / 退出；底部版本号。
 
-const VERSION := "0.2.7"
+const VERSION := "0.2.8"
 
 
 func _ready() -> void:

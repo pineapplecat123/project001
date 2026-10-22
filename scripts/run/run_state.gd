@@ -87,8 +87,7 @@ func enter_combat_node(node_id: int) -> bool:
 	if not available_node_ids().has(node_id):
 		return false
 	var n: Dictionary = MapGraph.node_by_id(graph, node_id)
-	var t: int = int(n.get("type", -1))
-	if t != MapGraph.NodeType.COMBAT and t != MapGraph.NodeType.FINALE:
+	if not MapGraph.is_combat_like(n):
 		return false
 	pending_combat_node_id = node_id
 	return true
@@ -218,7 +217,9 @@ func apply_combat_result(payload: Dictionary, victory: bool) -> void:
 	var n: Dictionary = MapGraph.node_by_id(graph, node_id)
 	if int(n.get("type", -1)) == MapGraph.NodeType.FINALE:
 		run_finished = true
-		last_message = "终战胜利！缩小版地图通关。"
+		last_message = "Boss 终战胜利！缩小版地图通关。金币 %d · 袋内 %d 发。" % [gold, bag.size()]
+	elif MapGraph.is_elite_node(n):
+		last_message = "精英战胜利，可选择下一节点。"
 	else:
 		last_message = "战斗胜利，可选择下一节点。"
 
@@ -233,7 +234,18 @@ func combat_snapshot() -> Dictionary:
 		"seed": run_seed,
 		"from_map": true,
 		"node_id": pending_combat_node_id,
+		"encounter": encounter_for_node(pending_combat_node_id),
 	}
+
+
+## normal / elite / boss（灰盒；由地图节点类型决定）
+func encounter_for_node(node_id: int) -> String:
+	var n: Dictionary = MapGraph.node_by_id(graph, node_id)
+	if MapGraph.is_elite_node(n):
+		return "elite"
+	if MapGraph.is_boss_node(n):
+		return "boss"
+	return "normal"
 
 
 func _complete_node(node_id: int) -> void:

@@ -13,6 +13,8 @@ var bleed_stacks: int = 0
 var gas_stacks: int = 0
 var burn_stacks: int = 0
 var wet_stacks: int = 0
+## 攻击距离（格）；1=仅邻接。精英/Boss 灰盒可抬高。
+var attack_range: int = 1
 
 
 func _init(def: Dictionary = {}, spawn_cell: int = CombatConstants.BOARD_SIZE - 1) -> void:
@@ -32,6 +34,7 @@ func _init(def: Dictionary = {}, spawn_cell: int = CombatConstants.BOARD_SIZE - 
 	gas_stacks = 0
 	burn_stacks = 0
 	wet_stacks = 0
+	attack_range = 1
 
 
 func is_alive() -> bool:

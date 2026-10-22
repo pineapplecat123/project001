@@ -18,6 +18,7 @@ func test_mini_graph_has_combat_and_placeholder() -> void:
 	assert_gte(int(types.get(MapGraph.NodeType.COMBAT, 0)), 2)
 	assert_eq(int(types.get(MapGraph.NodeType.PLACEHOLDER, 0)), 1)
 	assert_eq(int(types.get(MapGraph.NodeType.FINALE, 0)), 1)
+	assert_eq(int(types.get(MapGraph.NodeType.ELITE, 0)), 1)
 	assert_eq(g["edges"].size(), 6)
 	var ph := {}
 	for n in g["nodes"]:
@@ -108,7 +109,7 @@ func test_export_run_payload_merges_discard() -> void:
 
 func test_finale_victory_finishes_run() -> void:
 	RunState.begin_run(11, "特殊事件")
-	# 路径：0 → 1(战斗) → 3(占位·非商店) → 4(战斗) → 5(终战)
+	# 路径：0 → 1(战斗) → 3(占位·非商店) → 4(精英) → 5(终战 Boss)
 	assert_true(RunState.enter_combat_node(1))
 	RunState.apply_combat_result(_snap(10), true)
 	assert_eq(RunState.current_node_id, 1)

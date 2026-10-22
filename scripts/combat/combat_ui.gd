@@ -13,7 +13,7 @@ const ROLL_ANIM_PER_STEP := 0.04
 const ROLL_ANIM_MAX := 0.55
 const BAG_GRID_COLS := 4
 const BAG_CELL_MIN := Vector2(140, 72)
-const VERSION := "0.2.7"
+const VERSION := "0.2.8"
 
 const COL_PHASE := Color(1.0, 0.92, 0.45)
 const COL_HP_OK := Color(0.45, 0.95, 0.55)
@@ -245,6 +245,8 @@ func _ammo_colors(ammo_id: int) -> Dictionary:
 			return {"bg": Color(0.35, 0.7, 0.95), "fg": Color(0.02, 0.08, 0.15)}
 		FireResolver.ID_THUNDER:
 			return {"bg": Color(0.85, 0.75, 0.2), "fg": Color(0.12, 0.1, 0.0)}
+		CombatConstants.INVALID_AMMO_ID:
+			return {"bg": Color(0.28, 0.28, 0.3), "fg": Color(0.95, 0.55, 0.55)}
 		_:
 			return {"bg": Color(0.85, 0.85, 0.88), "fg": Color(0.1, 0.1, 0.1)}
 
@@ -421,10 +423,10 @@ func _refresh_reward_panel() -> void:
 		c.queue_free()
 	var pending := state.can_pick_reward()
 	var resolved := state.phase == CombatState.Phase.WON and state.reward_resolved
-	reward_title.text = "战斗胜利 · 选择奖励" if pending else "奖励已领取"
-	reward_gold_label.text = "基础金币 +%d 已入账 · 当前金币 %d" % [
-		CombatConstants.REWARD_BASE_GOLD, state.gold
-	]
+	var enc_title := state.encounter_label() if state != null else "战斗"
+	reward_title.text = ("%s胜利 · 选择奖励" % enc_title) if pending else "奖励已领取"
+	var base_shown: int = state.last_reward_base_gold if state.last_reward_base_gold > 0 else state.reward_base_gold_for_encounter()
+	reward_gold_label.text = "基础金币 +%d 已入账 · 当前金币 %d" % [base_shown, state.gold]
 	reward_gold_label.add_theme_color_override("font_color", COL_GOLD)
 	if pending:
 		reward_hint.text = "从下列三发弹药中选一加入弹药袋，或放弃换额外金币 +%d。" % CombatConstants.REWARD_SKIP_EXTRA_GOLD
@@ -452,8 +454,12 @@ func _refresh_reward_panel() -> void:
 			reward_choices.add_child(btn)
 	elif resolved:
 		if state.from_map_run:
-			reward_hint.text = "领取完毕。返回地图选择下一节点（本战不会再刷下一波）。无伤/三回合额外金灰盒暂未结算。"
-			btn_reward_next.text = "返回地图 RETURN"
+			if state.encounter_kind == CombatState.EncounterKind.BOSS:
+				reward_hint.text = "Boss 击败！领取完毕后返回地图查看通关结算。无伤/三回合额外金灰盒暂未结算。"
+				btn_reward_next.text = "通关结算 RETURN"
+			else:
+				reward_hint.text = "领取完毕。返回地图选择下一节点（本战不会再刷下一波）。无伤/三回合额外金灰盒暂未结算。"
+				btn_reward_next.text = "返回地图 RETURN"
 		else:
 			reward_hint.text = "可继续下一波（弹药袋不重置）。练习战无地图。无伤/三回合额外金灰盒暂未结算。"
 			btn_reward_next.text = "下一波 NEXT"
@@ -515,6 +521,9 @@ func _refresh_bag_list() -> void:
 		cell_style.set_corner_radius_all(8)
 		cell_style.set_border_width_all(2)
 		cell_style.border_color = Color(0.15, 0.15, 0.18, 0.7)
+		if ammo_id == CombatConstants.INVALID_AMMO_ID:
+			cell_style.border_color = Color(0.95, 0.35, 0.35)
+			cell_style.set_border_width_all(3)
 		cell_style.content_margin_left = 8
 		cell_style.content_margin_right = 8
 		cell_style.content_margin_top = 8
@@ -523,8 +532,12 @@ func _refresh_bag_list() -> void:
 		var v := VBoxContainer.new()
 		v.add_theme_constant_override("separation", 2)
 		var name_l := Label.new()
-		var full_name := str(def.get("name", "未知#%d" % ammo_id))
-		var short := full_name.replace("弹药", "")
+		var full_name: String
+		if ammo_id == CombatConstants.INVALID_AMMO_ID:
+			full_name = CombatConstants.INVALID_AMMO_NAME
+		else:
+			full_name = str(def.get("name", "未知#%d" % ammo_id))
+		var short := full_name.replace("子弹", "").replace("弹药", "")
 		name_l.text = short
 		name_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		name_l.add_theme_color_override("font_color", colors["fg"])
@@ -599,7 +612,7 @@ func _refresh() -> void:
 	discard_label.add_theme_color_override("font_color", COL_DISCARD)
 	gold_label.text = "金币 %d" % state.gold
 	gold_label.add_theme_color_override("font_color", COL_GOLD)
-	turn_label.text = "回合 %d · 第 %d 波" % [state.turn_index, state.wave_index]
+	turn_label.text = "回合 %d · 第 %d 波 · %s" % [state.turn_index, state.wave_index, state.encounter_label()]
 	turn_label.add_theme_color_override("font_color", COL_TURN)
 	var busy := _firing or _rolling or state.is_busy_firing()
 	btn_load.disabled = busy or not state.can_load()
@@ -679,7 +692,7 @@ func _refresh_board() -> void:
 		elif by_cell.has(i):
 			var e: EnemyInstance = by_cell[i]
 			style.bg_color = Color(0.72, 0.18, 0.2)
-			if state.is_adjacent_to_player(e):
+			if state.can_attack_player(e):
 				style.border_color = Color(1.0, 0.85, 0.15)
 				style.set_border_width_all(4)
 			else:
@@ -738,10 +751,18 @@ func _refresh_mag() -> void:
 			info.add_theme_color_override("font_color", Color(0.7, 0.7, 0.75))
 		else:
 			var def: Dictionary = DataRegistry.get_ammo(ammo_id)
-			var short := str(def.get("name", ammo_id)).replace("子弹", "")
+			var short: String
+			if ammo_id == CombatConstants.INVALID_AMMO_ID:
+				short = "无效"
+			elif def.is_empty():
+				short = str(ammo_id)
+			else:
+				short = str(def.get("name", ammo_id)).replace("子弹", "").replace("弹药", "")
 			var colors := _ammo_colors(ammo_id)
 			style.bg_color = colors["bg"]
 			style.border_color = Color(0.12, 0.12, 0.14)
+			if ammo_id == CombatConstants.INVALID_AMMO_ID:
+				style.border_color = Color(0.95, 0.4, 0.4)
 			info.text = "%d\n%s" % [order_num, short]
 			info.add_theme_color_override("font_color", colors["fg"])
 		if order_k == 0:

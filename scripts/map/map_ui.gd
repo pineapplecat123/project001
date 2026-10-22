@@ -6,7 +6,7 @@ const ShopConstants = preload("res://scripts/shop/shop_constants.gd")
 const RestConstants = preload("res://scripts/rest/rest_constants.gd")
 ## 灰盒缩小版地图：选可达节点 → 战斗 / 商店 / 休息 / 占位路过 → 回地图。
 
-const VERSION := "0.2.7"
+const VERSION := "0.2.8"
 const NODE_W := 120.0
 const NODE_H := 72.0
 const LAYER_GAP_X := 180.0
@@ -139,7 +139,7 @@ func _refresh_header() -> void:
 	else:
 		status_label.text = "地图 · 选择下一节点（当前：%s）" % _node_title(RunState.current_node_id)
 	if not RunState.run_finished:
-		hint_label.text = "高亮节点可点击。战斗进入现有战斗；商店购买/移除；休息可回血；特殊事件灰盒占位路过。地图上只能检视弹药袋。"
+		hint_label.text = "高亮节点可点击。战斗/精英/终战进战斗；商店购买/移除；休息可回血；特殊事件待表占位路过。地图上只能检视弹药袋。"
 
 
 func _node_title(node_id: int) -> String:
@@ -206,7 +206,9 @@ func _button_text(n: Dictionary) -> String:
 				return "休息"
 			return "%s\n(占位)" % label
 		MapGraph.NodeType.FINALE:
-			return "终战"
+			return "终战\nBoss"
+		MapGraph.NodeType.ELITE:
+			return "精英"
 		_:
 			return "战斗"
 
@@ -266,6 +268,8 @@ func _refresh_node_states() -> void:
 			style.bg_color = Color(0.18, 0.38, 0.32)
 		elif t == MapGraph.NodeType.PLACEHOLDER and can:
 			style.bg_color = Color(0.35, 0.28, 0.18)
+		if t == MapGraph.NodeType.ELITE and can:
+			style.bg_color = Color(0.42, 0.22, 0.55)
 		if t == MapGraph.NodeType.FINALE and can:
 			style.bg_color = Color(0.45, 0.18, 0.22)
 		btn.add_theme_stylebox_override("normal", style)
@@ -285,7 +289,7 @@ func _on_node_pressed(node_id: int) -> void:
 	var n: Dictionary = MapGraph.node_by_id(RunState.graph, node_id)
 	var t: int = int(n.get("type", -1))
 	match t:
-		MapGraph.NodeType.COMBAT, MapGraph.NodeType.FINALE:
+		MapGraph.NodeType.COMBAT, MapGraph.NodeType.ELITE, MapGraph.NodeType.FINALE:
 			if RunState.enter_combat_node(node_id):
 				get_tree().change_scene_to_file("res://scenes/combat.tscn")
 		MapGraph.NodeType.PLACEHOLDER:

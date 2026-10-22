@@ -1,13 +1,15 @@
 class_name MapGraph
-## 灰盒缩小版地图：短分叉 + 合流，数个战斗节点 + 1 个非战斗占位。
+## 灰盒缩小版地图：短分叉 + 合流，战斗/精英/终战 + 1 个非战斗占位。
 ## 拓扑固定；占位类型（商店/休息/事件）按种子随机三选一。
-## 商店、休息已实现灰盒 UI；特殊事件仍占位路过。
+## 商店、休息已实现灰盒 UI；特殊事件仍占位路过（待用户交事件表）。
+## 精英=现有敌人数值提升；终战=Boss（更高数值+塞无效弹）；均不新造敌人表行。
 
 enum NodeType {
 	START = 0,
 	COMBAT = 1,
 	PLACEHOLDER = 2,
 	FINALE = 3,
+	ELITE = 4,
 }
 
 const PLACEHOLDER_KINDS: Array[String] = ["商店", "休息", "特殊事件"]
@@ -34,7 +36,7 @@ static func build_mini(seed_value: int = 0, force_kind: String = "") -> Dictiona
 		{"id": 1, "type": NodeType.COMBAT, "label": "战斗", "layer": 1, "slot": 0},
 		{"id": 2, "type": NodeType.COMBAT, "label": "战斗", "layer": 1, "slot": 1},
 		{"id": 3, "type": NodeType.PLACEHOLDER, "label": kind, "layer": 2, "slot": 0, "kind": kind},
-		{"id": 4, "type": NodeType.COMBAT, "label": "战斗", "layer": 3, "slot": 0},
+		{"id": 4, "type": NodeType.ELITE, "label": "精英", "layer": 3, "slot": 0},
 		{"id": 5, "type": NodeType.FINALE, "label": "终战", "layer": 4, "slot": 0},
 	]
 	var edges: Array = [
@@ -77,6 +79,21 @@ static func is_rest_node(n: Dictionary) -> bool:
 	return str(n.get("kind", "")) == KIND_REST
 
 
+static func is_elite_node(n: Dictionary) -> bool:
+	return not n.is_empty() and int(n.get("type", -1)) == NodeType.ELITE
+
+
+static func is_boss_node(n: Dictionary) -> bool:
+	return not n.is_empty() and int(n.get("type", -1)) == NodeType.FINALE
+
+
+static func is_combat_like(n: Dictionary) -> bool:
+	if n.is_empty():
+		return false
+	var t: int = int(n.get("type", -1))
+	return t == NodeType.COMBAT or t == NodeType.ELITE or t == NodeType.FINALE
+
+
 static func type_name(t: int) -> String:
 	match t:
 		NodeType.START:
@@ -87,5 +104,7 @@ static func type_name(t: int) -> String:
 			return "非战斗"
 		NodeType.FINALE:
 			return "终战"
+		NodeType.ELITE:
+			return "精英"
 		_:
 			return "未知"
