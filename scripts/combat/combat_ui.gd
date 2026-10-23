@@ -691,7 +691,7 @@ func _refresh_reward_panel() -> void:
 				reward_hint.text = "领取完毕。返回地图选择下一节点（本战不会再刷下一波）。无伤/三回合额外金灰盒暂未结算。"
 				btn_reward_next.text = "返回地图 RETURN"
 		else:
-			reward_hint.text = "可继续下一波（弹药袋不重置）。练习战无地图。无伤/三回合额外金灰盒暂未结算。"
+			reward_hint.text = "可继续下一波（练习战胜利后弹药已重置为开局牌库）。练习战无地图。无伤/三回合额外金灰盒暂未结算。"
 			btn_reward_next.text = "下一波 NEXT"
 		btn_reward_skip.visible = false
 		btn_reward_next.visible = true

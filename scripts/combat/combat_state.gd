@@ -631,12 +631,23 @@ func fire_next_shot() -> bool:
 	# 本发状态效果挂上枪口，本回合后续击发都附带
 	_mount_muzzle_from(flags)
 
-	if ammo_id == FireResolver.ID_GOLD:
-		_pending_gold_autofires += 1
-
 	_fire_index += 1
 	_remove_dead()
+
+	# 金色：击发后立刻额外自动装填射击一轮（不拖到整匣打完，避免被同匣后续弹清场后跳过）
+	# 「弹夹内有几发金就几轮」只计本匣击发的金，额外轮内的金不再叠加轮数。
+	if ammo_id == FireResolver.ID_GOLD and not alive_enemies().is_empty():
+		_log("金色弹药：额外自动装填射击")
+		_auto_load_and_fire_once()
+		_remove_dead()
+
 	_emit()
+
+	# 中途清场：立刻停射进胜利，未击发归袋
+	if alive_enemies().is_empty():
+		_abort_fire_cleared()
+		return false
+
 	if _fire_index >= _fire_queue.size():
 		_finish_fire()
 		return false
@@ -796,15 +807,10 @@ func _consume_hammer_chamber(expected_id: int) -> void:
 
 
 func _finish_fire() -> void:
+	## 整匣打完（或无剩余实弹）后的收束。金色已在击发当发处理。
 	magazine.clear()
 	_log("射击结算完毕，总伤害 %d。" % _fire_total_damage)
 	_reset_fire_session()
-	# 金色：当前玩家回合内额外装填并自动射击（不跳过怪回合）；枪口效果跨额外轮保留
-	while _pending_gold_autofires > 0 and not _check_end_after_player():
-		_pending_gold_autofires -= 1
-		_log("金色弹药：额外自动装填射击（剩余 %d）" % _pending_gold_autofires)
-		if not _auto_load_and_fire_once():
-			break
 	_pending_gold_autofires = 0
 	_reset_muzzle()  # 本回合射击结束，重置枪口
 	if _check_end_after_player():
@@ -814,13 +820,36 @@ func _finish_fire() -> void:
 	_emit()
 
 
+func _abort_fire_cleared() -> void:
+	## 连射中途敌人全灭：停射、未击发归袋、清枪口、进胜利（不跑怪回合）。
+	var returned := 0
+	if magazine != null and not magazine.is_empty():
+		for id in magazine.slots:
+			if id != Magazine.EMPTY:
+				returned += 1
+		_return_magazine_to_bag()
+	_log("射击中途清场，未击发 %d 发归还弹药袋。总伤害 %d。" % [returned, _fire_total_damage])
+	_reset_fire_session()
+	_pending_gold_autofires = 0
+	_reset_muzzle()
+	_enter_won()
+	_emit()
+
+
 func _auto_load_and_fire_once() -> bool:
-	## 金色额外轮：从袋抽满匣并立刻同步打完（无 UI 延迟）。
+	## 金色额外轮：从袋抽满匣并立刻同步打完（无 UI 延迟）。枪口跨轮保留。
+	## 额外轮内的金色不再叠加新轮（轮数=本匣击发金数）。中途清场则停并归还未击发。
+	## 必须暂存主匣剩余弹，避免 load_sequence 冲掉尚未击发的主匣弹药。
 	_reshuffle_if_needed_for_load()
 	var draw_n: int = mini(CombatConstants.MAGAZINE_SIZE, bag.size())
 	if draw_n <= 0:
 		_log("金色额外轮：无弹药可装。")
 		return false
+	var saved_slots: Array[int] = magazine.slots.duplicate()
+	var saved_start: int = magazine.start_index
+	var saved_queue: Array[int] = _fire_queue.duplicate()
+	var saved_damages: Array[int] = _fire_damages.duplicate()
+	var saved_index: int = _fire_index
 	var drawn: Array[int] = _draw_random_from_bag(draw_n)
 	var prev := last_load_ids.duplicate()
 	last_load_ids = drawn.duplicate()
@@ -828,16 +857,16 @@ func _auto_load_and_fire_once() -> bool:
 	magazine.load_sequence(resolved)
 	if bag.is_empty():
 		needs_reshuffle_next_load = true
-	_reset_fire_session()
 	_fire_queue = magazine.fire_order()
 	_fire_damages = FireResolver.compute_shot_damages(_fire_queue, pink_bonus)
+	_fire_index = 0
 	_set_phase(Phase.FIRING)
 	while _fire_index < _fire_queue.size():
-		# 同步打完（含空仓推进）；金色嵌套再累加 pending
+		if alive_enemies().is_empty():
+			break
 		var hammer: int = magazine.chamber_at_fire_port()
 		if magazine.slots[hammer] == Magazine.EMPTY:
 			_advance_cylinder_one_step()
-			_remove_dead()
 			if magazine.is_empty():
 				break
 			continue
@@ -853,13 +882,22 @@ func _auto_load_and_fire_once() -> bool:
 		_fire_total_damage += _apply_shot_to_enemies(ammo_id, base_dmg, pierce, gas, fire, water, thunder)
 		discard.append(ammo_id)
 		_mount_muzzle_from(flags)
-		if ammo_id == FireResolver.ID_GOLD:
-			_pending_gold_autofires += 1
 		_fire_index += 1
 		_remove_dead()
-	magazine.clear()
+	# 额外轮未打完的弹归袋（中途清场时）
+	if not magazine.is_empty():
+		_return_magazine_to_bag()
+	else:
+		magazine.clear()
 	_log("金色额外轮射击完毕。")
-	_reset_fire_session()
+	# 恢复主匣未击发弹药与射击队列进度
+	magazine.slots = saved_slots
+	magazine.start_index = saved_start
+	_fire_queue = saved_queue
+	_fire_damages = saved_damages
+	_fire_index = saved_index
+	last_shot_was_blank = false
+	last_fired_slot = -1
 	return true
 
 
@@ -1049,7 +1087,27 @@ func _enter_won() -> void:
 		return
 	_set_phase(Phase.WON)
 	_log("胜利：敌人全灭。")
+	# 练习战：胜利后先把弹仓/弃牌/袋重置为开局练习牌库，再发奖励（选弹叠在初始袋上）
+	if not from_map_run:
+		_reset_practice_ammo_to_starter()
 	_begin_reward()
+
+
+func _reset_practice_ammo_to_starter() -> void:
+	## 练习战专用：匣清空、弃牌清空、袋恢复 STARTER_WHITE_COUNT 发白弹。
+	magazine = Magazine.new()
+	discard.clear()
+	bag.clear()
+	for _i in CombatConstants.STARTER_WHITE_COUNT:
+		bag.append(CombatConstants.WHITE_AMMO_ID)
+	_shuffle(bag)
+	needs_reshuffle_next_load = false
+	last_load_ids.clear()
+	_reset_fire_session()
+	_reset_muzzle()
+	_pending_gold_autofires = 0
+	_reset_load_session()
+	_log("练习战：弹药已重置为开局牌库（白弹 ×%d）。" % CombatConstants.STARTER_WHITE_COUNT)
 
 
 func _begin_reward() -> void:

@@ -64,7 +64,7 @@
         "石头"
       ],
       "type": "小怪",
-      "enabled_in_combat": true
+      "enabled_in_combat": false
     }
   ]
 }
