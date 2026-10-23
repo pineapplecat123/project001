@@ -426,13 +426,9 @@ func _run_load_sequence() -> void:
 		state.apply_load_rotate()
 		await _animate_disk_to(target, STEP_ROT_DURATION)
 		_refresh_mag_contents()
-	# 装满后：与 ROLL 相同的随机旋转（不进怪物回合）；视觉加整圈
+	# 装满后：与 ROLL 按钮同一套随机转（_run_shared_cylinder_spin）
 	if needs_spin and state.can_start_roll():
-		var steps: int = state.apply_roll()
-		if steps > 0:
-			await _play_roll_spin_visual(steps)
-		else:
-			_apply_disk_rotation(float(state.magazine.start_index))
+		await _run_shared_cylinder_spin()
 	else:
 		_apply_disk_rotation(float(state.magazine.start_index))
 	_loading = false
@@ -459,14 +455,19 @@ func _run_fire_sequence() -> void:
 		# 结算前锁视觉步数=锤位；signal refresh 不得抢跑
 		_apply_disk_rotation(float(start_before))
 		_wheel_animating = true
-		# 先结算正上那发，黄闪钉在红圈下，看清后再转 60°
 		var more: bool = state.fire_next_shot()
 		if state.last_fired_slot >= 0:
 			fired_slot = state.last_fired_slot
-		_flash_fire_at_top(fired_slot)
-		_refresh_mag_contents()
-		_refresh_hud_only()
-		await get_tree().create_timer(FIRE_FLASH_HOLD).timeout
+		var blank: bool = state.last_shot_was_blank
+		# 空仓：无黄闪；有弹：黄闪钉在红圈下，看清后再转 60°
+		if not blank:
+			_flash_fire_at_top(fired_slot)
+			_refresh_mag_contents()
+			_refresh_hud_only()
+			await get_tree().create_timer(FIRE_FLASH_HOLD).timeout
+		else:
+			_refresh_mag_contents()
+			_refresh_hud_only()
 		if more:
 			var start_after: int = state.magazine.start_index
 			var delta: int = (start_after - start_before + CombatConstants.MAGAZINE_SIZE) % CombatConstants.MAGAZINE_SIZE
@@ -510,19 +511,34 @@ func _on_roll() -> void:
 	if not state.can_start_roll():
 		return
 	_rolling = true
-	_refresh()
-	var steps: int = state.apply_roll()
+	_refresh_hud_only()
+	# 与装填满匣后的随机转完全同一套路径
+	var steps: int = await _run_shared_cylinder_spin()
 	if steps < 0:
 		_rolling = false
 		_refresh()
 		return
+	state.resolve_after_player_action()
+	_rolling = false
+	_refresh()
+
+
+## 装填满匣后 spin 与 ROLL 按钮共用：先对齐视觉到当前 start，再 apply_roll，再整圈动画落点。
+## 返回 apply_roll 步数（失败 -1；单发可为 0）。
+func _run_shared_cylinder_spin() -> int:
+	if not state.can_start_roll():
+		return -1
+	# 先把盘面钉在当前逻辑锤位，避免视觉步数漂移导致「看起来没转 / 落点错」
+	_apply_disk_rotation(float(state.magazine.start_index))
+	_refresh_mag_contents()
+	var steps: int = state.apply_roll()
+	if steps < 0:
+		return -1
 	if steps > 0:
 		await _play_roll_spin_visual(steps)
 	else:
 		_apply_disk_rotation(float(state.magazine.start_index))
-	state.resolve_after_player_action()
-	_rolling = false
-	_refresh()
+	return steps
 
 
 ## 大盘随机转：逻辑步数 + 至少一整圈，落点仍对齐 start_index；红圈不动。

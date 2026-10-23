@@ -150,7 +150,7 @@ static func compute_shot_damages(order: Array[int], pink_bonus: int) -> Array[in
 
 
 static func inherits_from(ammo_id: int) -> Dictionary:
-	## 该发自带并传给下一发的效果旗标。
+	## 该发自带的状态效果旗标（击发后挂上枪口，本回合后续击发都附带）。
 	return {
 		"pierce": ammo_id == ID_PIERCE,
 		"gas": ammo_id == ID_GAS,

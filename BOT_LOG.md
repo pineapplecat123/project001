@@ -1,3 +1,12 @@
+
+## 2026-10-23（v0.2.16）
+
+- 空仓开火：锤位 EMPTY → 无伤害/无效果、转轮推进一格、UI 不黄闪；有弹才黄闪。
+- ROLL：与装填满匣后随机转共用 `_run_shared_cylinder_spin`（先对齐视觉 start → `apply_roll` → `_play_roll_spin_visual` 整圈落点）。
+- 状态弹（穿透/汽油/火/水/雷）：由「只传给下一发」改为「挂枪口」，本回合后续击发都附带；射击回合结束（含金色额外轮后）`_reset_muzzle`。
+- `data/ammo.json` / `docs/data/ammo.md` 文案同步；Excel 待下次换表。
+- GUT 80/80；版本 `0.2.16`。
+
 ## 2026-10-23（v0.2.14）
 - 版本号收成单一来源 `scripts/game_version.gd` → `GameVersion.STRING`；主菜单/地图/战斗不再各自 `const VERSION`。
 - 加 `tools/check_version.sh` + GUT `test_game_version.gd`；CI 顺带跑检查。

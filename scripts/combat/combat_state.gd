@@ -65,11 +65,11 @@ var _fire_queue: Array[int] = []
 var _fire_damages: Array[int] = []
 var _fire_index: int = 0
 var _fire_total_damage: int = 0
-var _carry_pierce: bool = false
-var _carry_gas: bool = false
-var _carry_fire: bool = false
-var _carry_water: bool = false
-var _carry_thunder: bool = false
+var _muzzle_pierce: bool = false
+var _muzzle_gas: bool = false
+var _muzzle_fire: bool = false
+var _muzzle_water: bool = false
+var _muzzle_thunder: bool = false
 var _pending_gold_autofires: int = 0
 
 ## 逐步装填会话（UI：装一发→转 60°→再装；do_load 仍可一次装满）
@@ -77,8 +77,10 @@ var _load_session_active: bool = false
 var _load_next_slot: int = 0
 var _load_raw_ids: Array[int] = []
 var _load_resolved_ids: Array[int] = []
-## UI：上一发实际清空的仓位（锤位）
+## UI：上一发实际对准的仓位（锤位）；空仓也会记下
 var last_fired_slot: int = -1
+## UI：上一发是否空仓（无效果、无黄闪，仍推进一格）
+var last_shot_was_blank: bool = false
 
 
 func _init(seed_value: int = 0) -> void:
@@ -111,6 +113,7 @@ func start_graybox(seed_value: int = 0) -> void:
 	pink_bonus = 0
 	last_load_ids.clear()
 	_reset_fire_session()
+	_reset_muzzle()
 	_pending_gold_autofires = 0
 	_reset_load_session()
 	_clear_reward_state()
@@ -157,6 +160,7 @@ func start_from_run(payload: Dictionary, seed_value: int = 0) -> void:
 	pink_bonus = int(payload.get("pink_bonus", 0))
 	last_load_ids.clear()
 	_reset_fire_session()
+	_reset_muzzle()
 	_pending_gold_autofires = 0
 	_reset_load_session()
 	_clear_reward_state()
@@ -198,15 +202,36 @@ func _consolidate_ammo_into_bag() -> void:
 
 
 func _reset_fire_session() -> void:
+	## 仅清射击队列；枪口效果跨金色额外轮保留，回合结束由 _reset_muzzle 清。
 	_fire_queue.clear()
 	_fire_damages.clear()
 	_fire_index = 0
 	_fire_total_damage = 0
-	_carry_pierce = false
-	_carry_gas = false
-	_carry_fire = false
-	_carry_water = false
-	_carry_thunder = false
+	last_shot_was_blank = false
+	last_fired_slot = -1
+
+
+func _reset_muzzle() -> void:
+	## 回合结束重置枪口：状态弹挂上的效果本回合内持续附带到后续击发。
+	_muzzle_pierce = false
+	_muzzle_gas = false
+	_muzzle_fire = false
+	_muzzle_water = false
+	_muzzle_thunder = false
+
+
+func _mount_muzzle_from(flags: Dictionary) -> void:
+	## 射击过的状态效果挂到枪口（累积，不覆盖其它已挂效果）。
+	if bool(flags.get("pierce", false)):
+		_muzzle_pierce = true
+	if bool(flags.get("gas", false)):
+		_muzzle_gas = true
+	if bool(flags.get("fire", false)):
+		_muzzle_fire = true
+	if bool(flags.get("water", false)):
+		_muzzle_water = true
+	if bool(flags.get("thunder", false)):
+		_muzzle_thunder = true
 
 
 func _set_phase(p: int) -> void:
@@ -567,28 +592,38 @@ func fire_next_shot() -> bool:
 	if _fire_index >= _fire_queue.size():
 		_finish_fire()
 		return false
+	# 锤位空仓：无效果、不耗队列发数；推进一格；UI 不黄闪
+	var hammer: int = magazine.chamber_at_fire_port()
+	last_fired_slot = hammer
+	if magazine.slots[hammer] == Magazine.EMPTY:
+		last_shot_was_blank = true
+		_advance_cylinder_one_step()
+		_log("击发[空仓] → 无效果。")
+		_emit()
+		# 队列里还有实弹则继续；否则收束（不应出现：有实弹待发却只剩空）
+		if _fire_index >= _fire_queue.size() or magazine.is_empty():
+			_finish_fire()
+			return false
+		return true
+
+	last_shot_was_blank = false
 	var ammo_id: int = _fire_queue[_fire_index]
 	var base_dmg: int = _fire_damages[_fire_index]
-	last_fired_slot = magazine.chamber_at_fire_port()
 	_consume_hammer_chamber(ammo_id)
 
 	var flags := FireResolver.inherits_from(ammo_id)
-	var pierce := _carry_pierce or bool(flags["pierce"])
-	var gas := _carry_gas or bool(flags["gas"])
-	var fire := _carry_fire or bool(flags["fire"])
-	var water := _carry_water or bool(flags["water"])
-	var thunder := _carry_thunder or bool(flags["thunder"])
+	var pierce := _muzzle_pierce or bool(flags["pierce"])
+	var gas := _muzzle_gas or bool(flags["gas"])
+	var fire := _muzzle_fire or bool(flags["fire"])
+	var water := _muzzle_water or bool(flags["water"])
+	var thunder := _muzzle_thunder or bool(flags["thunder"])
 
 	var dealt_total := _apply_shot_to_enemies(ammo_id, base_dmg, pierce, gas, fire, water, thunder)
 	_fire_total_damage += dealt_total
 	discard.append(ammo_id)
 
-	# 传给下一发：本发自带的效果
-	_carry_pierce = bool(flags["pierce"])
-	_carry_gas = bool(flags["gas"])
-	_carry_fire = bool(flags["fire"])
-	_carry_water = bool(flags["water"])
-	_carry_thunder = bool(flags["thunder"])
+	# 本发状态效果挂上枪口，本回合后续击发都附带
+	_mount_muzzle_from(flags)
 
 	if ammo_id == FireResolver.ID_GOLD:
 		_pending_gold_autofires += 1
@@ -724,8 +759,15 @@ func _ammo_name(ammo_id: int) -> String:
 	return str(def.get("name", str(ammo_id)))
 
 
+func _advance_cylinder_one_step() -> void:
+	## 转轮固定推进一格（60°）；空仓由 fire_next_shot 单独结算，不再跳过。
+	if magazine == null or magazine.size() <= 0:
+		return
+	magazine.start_index = (magazine.start_index + 1) % magazine.size()
+
+
 func _consume_hammer_chamber(expected_id: int) -> void:
-	## 清空正上击发点那一仓，然后 start_index+1（固定转 60°）。若下一格为空则再跳到下一非空（稀有残匣）。
+	## 清空正上击发点那一仓，然后 start_index+1（固定转 60°）。空仓留给下一发明示结算。
 	if magazine.is_empty():
 		return
 	var hammer: int = magazine.chamber_at_fire_port()
@@ -744,26 +786,21 @@ func _consume_hammer_chamber(expected_id: int) -> void:
 	if magazine.is_empty():
 		magazine.start_index = 0
 		return
-	# 固定转一格（与 UI 60° 一致）
-	magazine.start_index = (magazine.start_index + 1) % magazine.size()
-	# 若转后对准空仓，跳到下一非空，保证后续 fire_order 仍对齐锤位
-	var seen2 := 0
-	while seen2 < magazine.size() and magazine.slots[magazine.start_index] == Magazine.EMPTY:
-		magazine.start_index = (magazine.start_index + 1) % magazine.size()
-		seen2 += 1
+	_advance_cylinder_one_step()
 
 
 func _finish_fire() -> void:
 	magazine.clear()
 	_log("射击结算完毕，总伤害 %d。" % _fire_total_damage)
 	_reset_fire_session()
-	# 金色：当前玩家回合内额外装填并自动射击（不跳过怪回合）
+	# 金色：当前玩家回合内额外装填并自动射击（不跳过怪回合）；枪口效果跨额外轮保留
 	while _pending_gold_autofires > 0 and not _check_end_after_player():
 		_pending_gold_autofires -= 1
 		_log("金色弹药：额外自动装填射击（剩余 %d）" % _pending_gold_autofires)
 		if not _auto_load_and_fire_once():
 			break
 	_pending_gold_autofires = 0
+	_reset_muzzle()  # 本回合射击结束，重置枪口
 	if _check_end_after_player():
 		_emit()
 		return
@@ -790,23 +827,26 @@ func _auto_load_and_fire_once() -> bool:
 	_fire_damages = FireResolver.compute_shot_damages(_fire_queue, pink_bonus)
 	_set_phase(Phase.FIRING)
 	while _fire_index < _fire_queue.size():
-		# 同步打完；金色嵌套再累加 pending
+		# 同步打完（含空仓推进）；金色嵌套再累加 pending
+		var hammer: int = magazine.chamber_at_fire_port()
+		if magazine.slots[hammer] == Magazine.EMPTY:
+			_advance_cylinder_one_step()
+			_remove_dead()
+			if magazine.is_empty():
+				break
+			continue
 		var ammo_id: int = _fire_queue[_fire_index]
 		var base_dmg: int = _fire_damages[_fire_index]
 		_consume_hammer_chamber(ammo_id)
 		var flags := FireResolver.inherits_from(ammo_id)
-		var pierce := _carry_pierce or bool(flags["pierce"])
-		var gas := _carry_gas or bool(flags["gas"])
-		var fire := _carry_fire or bool(flags["fire"])
-		var water := _carry_water or bool(flags["water"])
-		var thunder := _carry_thunder or bool(flags["thunder"])
+		var pierce := _muzzle_pierce or bool(flags["pierce"])
+		var gas := _muzzle_gas or bool(flags["gas"])
+		var fire := _muzzle_fire or bool(flags["fire"])
+		var water := _muzzle_water or bool(flags["water"])
+		var thunder := _muzzle_thunder or bool(flags["thunder"])
 		_fire_total_damage += _apply_shot_to_enemies(ammo_id, base_dmg, pierce, gas, fire, water, thunder)
 		discard.append(ammo_id)
-		_carry_pierce = bool(flags["pierce"])
-		_carry_gas = bool(flags["gas"])
-		_carry_fire = bool(flags["fire"])
-		_carry_water = bool(flags["water"])
-		_carry_thunder = bool(flags["thunder"])
+		_mount_muzzle_from(flags)
 		if ammo_id == FireResolver.ID_GOLD:
 			_pending_gold_autofires += 1
 		_fire_index += 1
@@ -1097,6 +1137,7 @@ func start_next_wave() -> bool:
 	_spawn_wave_enemies()
 	lose_reason = LoseReason.NONE
 	_reset_fire_session()
+	_reset_muzzle()
 	_pending_gold_autofires = 0
 	_reset_load_session()
 	_clear_reward_state()

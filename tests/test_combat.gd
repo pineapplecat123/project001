@@ -667,3 +667,133 @@ func test_roll_returns_mag_to_bag_next_load() -> void:
 	assert_eq(cs.magazine.loaded_count(), 6)
 	# 总量守恒：袋+膛+弃 = 6
 	assert_eq(cs.bag.size() + cs.magazine.loaded_count() + cs.discard.size(), 6)
+
+
+func test_blank_chamber_fire_no_effect_advances() -> void:
+	## 锤位空仓：无伤害、推进一格、标记 blank（供 UI 无黄闪）。
+	var cs := CombatState.new(101)
+	cs.start_graybox(101)
+	cs.enemies[0].hp = 999
+	cs.enemies[0].max_hp = 999
+	# 只装 2 发到槽 0、1；start 对准空仓 3
+	cs.dev_force_load([
+		CombatConstants.WHITE_AMMO_ID, CombatConstants.WHITE_AMMO_ID,
+	] as Array[int])
+	# load_sequence 只填前 2 槽，其余 EMPTY；锤位置于空仓 3
+	assert_eq(cs.magazine.loaded_count(), 2)
+	assert_eq(cs.magazine.slots[2], Magazine.EMPTY)
+	cs.magazine.set_start(2)
+	assert_eq(cs.magazine.chamber_at_fire_port(), 2)
+	var hp_before: int = cs.enemies[0].hp
+	assert_true(cs.begin_fire())
+	assert_true(cs.fire_next_shot())
+	assert_true(cs.last_shot_was_blank)
+	assert_eq(cs.last_fired_slot, 2)
+	assert_eq(cs.enemies[0].hp, hp_before)
+	assert_eq(cs.magazine.start_index, 3)
+	assert_eq(cs.discard.size(), 0)
+
+
+func test_muzzle_fire_persists_for_rest_of_turn() -> void:
+	## 火弹挂枪口后，本回合后续白弹也施加燃烧；旧「只传下一发」会在第 3 发丢失。
+	var cs := CombatState.new(202)
+	cs.start_graybox(202)
+	cs.enemies[0].hp = 999
+	cs.enemies[0].max_hp = 999
+	cs.dev_force_load([
+		FireResolver.ID_FIRE,
+		CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID,
+	] as Array[int])
+	cs.magazine.set_start(0)
+	assert_true(cs.begin_fire())
+	assert_true(cs.fire_next_shot())  # 火
+	var burn1: int = cs.enemies[0].burn_stacks
+	assert_gt(burn1, 0)
+	assert_true(cs.fire_next_shot())  # 白+枪口火
+	var burn2: int = cs.enemies[0].burn_stacks
+	assert_gt(burn2, burn1)
+	assert_true(cs.fire_next_shot())  # 白+枪口火（旧逻辑此处不应再烧）
+	var burn3: int = cs.enemies[0].burn_stacks
+	assert_gt(burn3, burn2)
+
+
+func test_muzzle_resets_after_fire_turn() -> void:
+	## 射击回合结束后枪口重置；下一匣纯白不再带火。
+	var cs := CombatState.new(303)
+	cs.start_graybox(303)
+	cs.enemies[0].hp = 999
+	cs.enemies[0].max_hp = 999
+	cs.dev_force_load([
+		FireResolver.ID_FIRE, CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID, CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID, CombatConstants.WHITE_AMMO_ID,
+	] as Array[int])
+	assert_true(cs.do_fire())
+	# 进入怪物回合后应为 AWAIT_LOAD 或仍在打；清空后重新装纯白
+	cs.bag.clear()
+	cs.discard.clear()
+	for _i in 6:
+		cs.bag.append(CombatConstants.WHITE_AMMO_ID)
+	if cs.phase != CombatState.Phase.AWAIT_LOAD:
+		# 若怪未清仍可能 AWAIT_LOAD
+		pass
+	# 强制到可装填
+	cs.dev_skip_enemy_turn()
+	assert_true(cs.do_load())
+	var e: EnemyInstance = cs.enemies[0]
+	e.burn_stacks = 0
+	e.hp = 999
+	e.max_hp = 999
+	assert_true(cs.begin_fire())
+	assert_true(cs.fire_next_shot())
+	assert_eq(e.burn_stacks, 0, "muzzle should be clear on new fire turn")
+
+
+func test_muzzle_pierce_applies_to_later_whites() -> void:
+	## 穿透挂枪口后，后续白弹也能打穿第二只怪。
+	var cs := CombatState.new(404)
+	cs.start_graybox(404)
+	cs.enemies.clear()
+	cs.dev_spawn_enemy(1, 1)
+	cs.dev_spawn_enemy(1, 2)
+	assert_eq(cs.alive_enemies().size(), 2)
+	cs.dev_force_load([
+		FireResolver.ID_PIERCE,
+		CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID,
+	] as Array[int])
+	cs.magazine.set_start(0)
+	var back: EnemyInstance = null
+	for e in cs.enemies:
+		if e.cell == 2:
+			back = e
+	assert_not_null(back)
+	var hp_back0: int = back.hp
+	assert_true(cs.begin_fire())
+	assert_true(cs.fire_next_shot())  # pierce
+	assert_lt(back.hp, hp_back0)
+	var hp_back1: int = back.hp
+	assert_true(cs.fire_next_shot())  # white + muzzle pierce
+	assert_lt(back.hp, hp_back1)
+	var hp_back2: int = back.hp
+	assert_true(cs.fire_next_shot())  # white + muzzle pierce again
+	assert_lt(back.hp, hp_back2)
+
+
+func test_apply_roll_steps_match_post_load_spin_range() -> void:
+	## ROLL 与装满后 spin 共用 apply_roll：满匣步数 ∈ [1,5]。
+	var cs := CombatState.new(505)
+	cs.start_graybox(505)
+	cs.dev_force_load([1, 2, 3, 4, 5, 6] as Array[int])
+	var before: int = cs.magazine.start_index
+	var steps: int = cs.apply_roll()
+	assert_gte(steps, 1)
+	assert_lte(steps, 5)
+	assert_eq(cs.magazine.start_index, (before + steps) % CombatConstants.MAGAZINE_SIZE)
