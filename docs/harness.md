@@ -1,4 +1,4 @@
-# Project 001 — Harness（完整版 v1.3.4）
+# Project 001 — Harness（完整版 v1.3.5）
 
 ## 一、项目参数（锁定）
 
@@ -150,6 +150,12 @@ Bot 每次遇到需决策事项时，先自评重要度，再按对应时机行�
 - 主菜单 / 地图 / 战斗 UI 一律读 `GameVersion.STRING` 显示 `v%s`，禁止再写 `const VERSION`。
 - 提交前可跑 `tools/check_version.sh`；GUT `test_game_version.gd` 也会卡住重复定义。
 
+**UI 中文与字体子集**：
+- 玩家可见中文（`data/*.json`、场景 `text=`、脚本字符串）必须被 `tools/ui_charset.txt` 与 `assets/fonts/NotoSansSC-UI.ttf` 覆盖。
+- **凡改动玩家可见中文文案后**：必须 `python3 tools/collect_ui_charset.py` + `bash tools/rebuild_ui_font.sh`（或至少 `bash tools/check_ui_charset.sh` 全绿）。
+- **禁止带着缺字推送**；乱码多半是子集缺字形，不是 JSON 编码坏了。
+- CI 会跑 `tools/check_ui_charset.sh`；本地发版前也要跑。
+
 **Web 导出约束**：
 - **Web 导出预设**必须使用 GL Compatibility 渲染器（当前主目标）。
 - 允许保留/新增桌面或移动导出预设，并可在这些非 Web 预设上使用 Forward+/Mobile，为后期扩展留口；不得把工程默认渲染器改离 GL Compatibility，除非你主动批准。
@@ -168,6 +174,9 @@ Bot 每次遇到需决策事项时，先自评重要度，再按对应时机行�
 ---
 
 ## 修改日志
+
+### v1.3.5（2026-10-23 Asia/Shanghai）
+- 七、技术备忘：改玩家可见中文后必须 collect+rebuild（或至少 check）字体子集；缺字不得推送；CI 挂 `check_ui_charset.sh`。
 
 ### v1.3.4（2026-10-23 Asia/Shanghai）
 - 3.1.1：聊天用颜文字表达情绪；少用 emoji、优先颜文字。

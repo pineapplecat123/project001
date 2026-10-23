@@ -1,4 +1,11 @@
 
+## 2026-10-23（字体缺字 / v0.2.20）
+
+- 弹药介绍乱码：根因是 `NotoSansSC-UI.ttf` 子集缺字（非 JSON 编码）。缺过：严享依处尚录挂断枪止片近追那附限首 等（重建前相对 charset 共 66 字）。
+- `tools/rebuild_ui_font.sh` 重建子集；新增 `tools/check_ui_charset.{sh,py}`（charset 过期或缺字形 → 非零退出）；CI 挂上。
+- harness v1.3.5：改玩家可见中文必须 collect+rebuild / check，缺字不得推送。
+- 版本 `0.2.20`。
+
 ## 2026-10-23（v0.2.16）
 
 - 空仓开火：锤位 EMPTY → 无伤害/无效果、转轮推进一格、UI 不黄闪；有弹才黄闪。

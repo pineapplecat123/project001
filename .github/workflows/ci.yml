@@ -44,5 +44,11 @@ jobs:
       - name: Check single version source
         run: bash tools/check_version.sh
 
+      - name: Install fonttools for charset check
+        run: pip install --user fonttools
+
+      - name: Check UI charset / subset font coverage
+        run: bash tools/check_ui_charset.sh
+
       - name: Run GUT tests
         run: godot --headless -s addons/gut/gut_cmdln.gd -gexit
