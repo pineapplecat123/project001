@@ -67,11 +67,12 @@ func rotate_start_forward() -> void:
 
 
 ## 随机转动转轮：改变对准击发点的槽，相对顺序不变。
-## 仅 0/1 发时步数为 0；否则步数 ∈ [0, size)。返回实际转动步数。
+## 仅 0/1 发时步数为 0；否则步数 ∈ [1, size-1]（必转，避免视觉上不动）。
+## 返回逻辑步数；UI 可再加整圈基数做「转一圈」动画。
 func random_roll(p_rng: RandomNumberGenerator) -> int:
 	if loaded_count() <= 1 or slots.size() <= 1:
 		return 0
-	var steps: int = p_rng.randi_range(0, slots.size() - 1)
+	var steps: int = p_rng.randi_range(1, slots.size() - 1)
 	start_index = (start_index + steps) % slots.size()
 	return steps
 

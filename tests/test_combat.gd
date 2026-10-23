@@ -35,7 +35,8 @@ func test_magazine_random_roll_keeps_relative_order() -> void:
 	var before: Array[int] = mag.fire_order()
 	var steps: int = mag.random_roll(rng)
 	var after: Array[int] = mag.fire_order()
-	assert_gte(steps, 0)
+	assert_gte(steps, 1)
+	assert_lte(steps, mag.size() - 1)
 	assert_eq(after.size(), before.size())
 	# after 应是 before 的旋转
 	var ok := false
@@ -341,7 +342,8 @@ func test_apply_roll_without_enemy_turn() -> void:
 	var cell_before: int = cs.enemies[0].cell
 	cs.do_load()
 	var steps: int = cs.apply_roll()
-	assert_gte(steps, 0)
+	assert_gte(steps, 1)
+	assert_lte(steps, CombatConstants.MAGAZINE_SIZE - 1)
 	assert_eq(cs.phase, CombatState.Phase.AWAIT_ACTION)
 	assert_eq(cs.enemies[0].cell, cell_before)
 	cs.resolve_after_player_action()
@@ -519,7 +521,7 @@ func test_do_load_full_applies_post_spin() -> void:
 	assert_true(cs.do_load())
 	assert_eq(cs.magazine.loaded_count(), CombatConstants.MAGAZINE_SIZE)
 	assert_eq(cs.phase, CombatState.Phase.AWAIT_ACTION)
-	# 装满后必有 random_roll；步数∈[0,5]，start 合法
+	# 装满后必有 random_roll；步数∈[1,5]，start 合法
 	assert_gte(cs.magazine.start_index, 0)
 	assert_lt(cs.magazine.start_index, CombatConstants.MAGAZINE_SIZE)
 
@@ -602,3 +604,66 @@ func test_wheel_port_geometry_angles() -> void:
 		assert_eq(load_i, (s + 5) % 6)
 		# 装弹口相对击发口固定隔 5 步（屏幕 -150° vs -90°）
 		assert_eq((load_i - fire_i + 6) % 6, 5)
+
+
+func test_magazine_random_roll_steps_nonzero_when_full() -> void:
+	## 满匣 ROLL 逻辑步数必须 >0，避免视觉上几乎不动。
+	var mag := Magazine.new()
+	mag.load_sequence([1, 2, 3, 4, 5, 6] as Array[int])
+	var rng := RandomNumberGenerator.new()
+	for seed_v in range(1, 40):
+		rng.seed = seed_v
+		mag.start_index = 0
+		var steps: int = mag.random_roll(rng)
+		assert_gte(steps, 1, "seed %d" % seed_v)
+		assert_lte(steps, 5, "seed %d" % seed_v)
+
+
+func test_partial_load_then_next_turn_reshuffles_no_ammo_lose() -> void:
+	## 袋剩 N 发只装 N；FIRE 进弃牌；下回合洗回后再装，不因袋空判负。
+	var cs := CombatState.new(42)
+	cs.start_graybox(42)
+	cs.enemies[0].hp = 999
+	cs.enemies[0].max_hp = 999
+	cs.bag.clear()
+	cs.discard.clear()
+	for _i in 2:
+		cs.bag.append(CombatConstants.WHITE_AMMO_ID)
+	assert_true(cs.do_load())
+	assert_eq(cs.magazine.loaded_count(), 2)
+	assert_true(cs.bag.is_empty())
+	assert_true(cs.needs_reshuffle_next_load)
+	assert_true(cs.do_fire())
+	assert_eq(cs.phase, CombatState.Phase.AWAIT_LOAD)
+	assert_eq(cs.discard.size(), 2)
+	assert_ne(cs.phase, CombatState.Phase.LOST)
+	assert_true(cs.do_load())
+	assert_eq(cs.lose_reason, CombatState.LoseReason.NONE)
+	assert_eq(cs.magazine.loaded_count(), 2)
+	assert_true(cs.discard.is_empty())
+
+
+func test_roll_returns_mag_to_bag_next_load() -> void:
+	## ROLL 不耗弹；下回合 LOAD 归还膛内弹，不应丢弹或判弹药耗尽。
+	var cs := CombatState.new(77)
+	cs.start_graybox(77)
+	cs.enemies[0].hp = 999
+	cs.enemies[0].max_hp = 999
+	cs.bag.clear()
+	cs.discard.clear()
+	for _i in 6:
+		cs.bag.append(CombatConstants.WHITE_AMMO_ID)
+	assert_true(cs.do_load())
+	assert_eq(cs.magazine.loaded_count(), 6)
+	assert_true(cs.bag.is_empty())
+	var steps: int = cs.apply_roll()
+	assert_gte(steps, 1)
+	cs.resolve_after_player_action()
+	assert_eq(cs.phase, CombatState.Phase.AWAIT_LOAD)
+	# 膛内仍有 6 发（尚未 begin_load）
+	assert_eq(cs.magazine.loaded_count(), 6)
+	assert_true(cs.do_load())
+	assert_ne(cs.lose_reason, CombatState.LoseReason.AMMO_EXHAUSTED)
+	assert_eq(cs.magazine.loaded_count(), 6)
+	# 总量守恒：袋+膛+弃 = 6
+	assert_eq(cs.bag.size() + cs.magazine.loaded_count() + cs.discard.size(), 6)

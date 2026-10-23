@@ -353,12 +353,12 @@ func do_load() -> bool:
 
 ## 开始逐步装填会话。成功后反复调用 load_next_chamber；每发写入后若未满，再 apply_load_rotate。
 ## 约定：start_index = 正上击发仓；上弹口=左上=(start+LOAD_PORT_OFFSET)%6。
+## 下回合洗回：先归还膛内未耗弹（ROLL 后），再按标记/袋空把弃牌洗回袋；本回合仍能抽几发装几发。
 func begin_load() -> bool:
 	if not can_load():
 		return false
-	if needs_reshuffle_next_load:
-		_reshuffle_discard_into_bag()
-		needs_reshuffle_next_load = false
+	_return_magazine_to_bag()
+	_reshuffle_if_needed_for_load()
 	magazine.clear()
 	_load_session_active = true
 	_load_next_slot = 0
@@ -463,6 +463,8 @@ func _complete_load_session() -> Dictionary:
 				"exhausted": true,
 				"needs_spin": false,
 			}
+		# 弃牌仍有弹：标记下回合洗回，不因袋空判负
+		needs_reshuffle_next_load = true
 	_set_phase(Phase.AWAIT_ACTION)
 	_emit()
 	return {
@@ -501,9 +503,31 @@ func _resolve_black_white_with_prev(drawn: Array[int], prev_load: Array[int]) ->
 
 
 func _lose_ammo_exhausted() -> void:
+	## 仅当袋+弃+膛皆空且无法洗回时触发（正常对局袋空会在下回合洗回，不应走到这里）。
 	lose_reason = LoseReason.AMMO_EXHAUSTED
 	_set_phase(Phase.LOST)
-	_log("失败：弹药耗尽（并非被怪物击杀）。")
+	_log("失败：弹药耗尽（袋、弃牌与弹夹皆空，无法洗回）。")
+
+
+## ROLL 不耗弹：下回合 LOAD 前把膛内剩余弹归还弹药袋（不进弃牌堆）。
+func _return_magazine_to_bag() -> void:
+	if magazine == null or magazine.is_empty():
+		return
+	var n := 0
+	for id in magazine.slots:
+		if id != Magazine.EMPTY:
+			bag.append(id)
+			n += 1
+	magazine.clear()
+	if n > 0:
+		_log("膛内未耗 %d 发归还弹药袋。" % n)
+
+
+## 下回合洗回：标记为真，或袋已空且弃牌有弹时，把弃牌洗混回袋。不在当回合装弹中途洗满。
+func _reshuffle_if_needed_for_load() -> void:
+	if needs_reshuffle_next_load or (bag.is_empty() and not discard.is_empty()):
+		_reshuffle_discard_into_bag()
+		needs_reshuffle_next_load = false
 
 
 func _lose_hp() -> void:
@@ -749,11 +773,7 @@ func _finish_fire() -> void:
 
 func _auto_load_and_fire_once() -> bool:
 	## 金色额外轮：从袋抽满匣并立刻同步打完（无 UI 延迟）。
-	if needs_reshuffle_next_load:
-		_reshuffle_discard_into_bag()
-		needs_reshuffle_next_load = false
-	if bag.is_empty() and not discard.is_empty():
-		_reshuffle_discard_into_bag()
+	_reshuffle_if_needed_for_load()
 	var draw_n: int = mini(CombatConstants.MAGAZINE_SIZE, bag.size())
 	if draw_n <= 0:
 		_log("金色额外轮：无弹药可装。")
@@ -805,7 +825,7 @@ func do_fire() -> bool:
 	return true
 
 
-## 仅转动转轮并记日志；不进入怪物回合。失败返回 -1，成功返回步数（可为 0）。
+## 仅转动转轮并记日志；不进入怪物回合。失败返回 -1；满匣/多发成功步数 ∈ [1,size-1]，单发为 0。
 func apply_roll() -> int:
 	if not can_start_roll():
 		return -1
@@ -814,7 +834,7 @@ func apply_roll() -> int:
 	if magazine.loaded_count() <= 1:
 		_log("重 roll：仅 %d 发，转轮不转（步数 0）。" % magazine.loaded_count())
 	else:
-		_log("重 roll：转轮转动 %d 步（击发点固定）。起点槽 %d → %d。" % [
+		_log("重 roll：大盘随机转动 %d 步（击发红圈固定）。起点槽 %d → %d。" % [
 			steps, before, magazine.start_index
 		])
 	_emit()

@@ -10,10 +10,12 @@ const CHAMBER_SIZE := 68.0
 const WHEEL_RADIUS := 92.0
 const DISK_BG_SIZE := 248.0
 const FIRE_SHOT_DELAY := 0.4
+const FIRE_FLASH_HOLD := 0.2
 const STEP_ROT_DURATION := 0.18
-const ROLL_ANIM_BASE := 0.32
-const ROLL_ANIM_PER_STEP := 0.05
-const ROLL_ANIM_MAX := 0.6
+const ROLL_ANIM_BASE := 0.45
+const ROLL_ANIM_PER_STEP := 0.06
+const ROLL_ANIM_MAX := 1.05
+const ROLL_VISUAL_EXTRA_TURNS := 1
 const LOAD_INSERT_PAUSE := 0.14
 const BAG_GRID_COLS := 4
 const BAG_CELL_MIN := Vector2(140, 88)
@@ -424,12 +426,11 @@ func _run_load_sequence() -> void:
 		state.apply_load_rotate()
 		await _animate_disk_to(target, STEP_ROT_DURATION)
 		_refresh_mag_contents()
-	# 装满后：与 ROLL 相同的随机旋转（不进怪物回合）
+	# 装满后：与 ROLL 相同的随机旋转（不进怪物回合）；视觉加整圈
 	if needs_spin and state.can_start_roll():
 		var steps: int = state.apply_roll()
 		if steps > 0:
-			var dur: float = clampf(ROLL_ANIM_BASE + float(steps) * ROLL_ANIM_PER_STEP, ROLL_ANIM_BASE, ROLL_ANIM_MAX)
-			await _animate_disk_to(_wheel_visual_steps + float(steps), dur)
+			await _play_roll_spin_visual(steps)
 		else:
 			_apply_disk_rotation(float(state.magazine.start_index))
 	else:
@@ -458,12 +459,14 @@ func _run_fire_sequence() -> void:
 		# 结算前锁视觉步数=锤位；signal refresh 不得抢跑
 		_apply_disk_rotation(float(start_before))
 		_wheel_animating = true
+		# 先结算正上那发，黄闪钉在红圈下，看清后再转 60°
 		var more: bool = state.fire_next_shot()
 		if state.last_fired_slot >= 0:
 			fired_slot = state.last_fired_slot
-		_flash_fire_chamber_at(fired_slot)
+		_flash_fire_at_top(fired_slot)
 		_refresh_mag_contents()
 		_refresh_hud_only()
+		await get_tree().create_timer(FIRE_FLASH_HOLD).timeout
 		if more:
 			var start_after: int = state.magazine.start_index
 			var delta: int = (start_after - start_before + CombatConstants.MAGAZINE_SIZE) % CombatConstants.MAGAZINE_SIZE
@@ -480,15 +483,25 @@ func _run_fire_sequence() -> void:
 	_refresh()
 
 
-func _flash_fire_chamber_at(slot_i: int) -> void:
-	if slot_i < 0 or slot_i >= _chamber_panels.size():
-		return
-	var panel: Panel = _chamber_panels[slot_i]
+## 在正上击发点（红圈下）打出发黄闪；chamber 在盘上此时应对准正上。
+func _flash_fire_at_top(slot_i: int) -> void:
 	if _fire_flash_tween != null and _fire_flash_tween.is_valid():
 		_fire_flash_tween.kill()
-	panel.modulate = Color(1.6, 1.4, 0.7)
 	_fire_flash_tween = create_tween()
-	_fire_flash_tween.tween_property(panel, "modulate", Color.WHITE, 0.28)
+	_fire_flash_tween.set_parallel(true)
+	# 固定红圈脉冲：保证黄闪出现在正上击发点
+	if _fire_ring != null and is_instance_valid(_fire_ring):
+		_fire_ring.modulate = Color(1.8, 1.55, 0.35)
+		_fire_flash_tween.tween_property(_fire_ring, "modulate", Color.WHITE, 0.32)
+	# 当前对准正上的小圆一并发黄
+	if slot_i >= 0 and slot_i < _chamber_panels.size():
+		var panel: Panel = _chamber_panels[slot_i]
+		panel.modulate = Color(1.7, 1.45, 0.55)
+		_fire_flash_tween.tween_property(panel, "modulate", Color.WHITE, 0.32)
+
+
+func _flash_fire_chamber_at(slot_i: int) -> void:
+	_flash_fire_at_top(slot_i)
 
 
 func _on_roll() -> void:
@@ -497,7 +510,6 @@ func _on_roll() -> void:
 	if not state.can_start_roll():
 		return
 	_rolling = true
-	var before: int = state.magazine.start_index
 	_refresh()
 	var steps: int = state.apply_roll()
 	if steps < 0:
@@ -505,13 +517,24 @@ func _on_roll() -> void:
 		_refresh()
 		return
 	if steps > 0:
-		var dur: float = clampf(ROLL_ANIM_BASE + float(steps) * ROLL_ANIM_PER_STEP, ROLL_ANIM_BASE, ROLL_ANIM_MAX)
-		await _animate_disk_to(_wheel_visual_steps + float(steps), dur)
+		await _play_roll_spin_visual(steps)
 	else:
 		_apply_disk_rotation(float(state.magazine.start_index))
 	state.resolve_after_player_action()
 	_rolling = false
 	_refresh()
+
+
+## 大盘随机转：逻辑步数 + 至少一整圈，落点仍对齐 start_index；红圈不动。
+func _play_roll_spin_visual(logic_steps: int) -> void:
+	var extra: int = CombatConstants.MAGAZINE_SIZE * ROLL_VISUAL_EXTRA_TURNS
+	var visual: float = float(logic_steps + extra)
+	var dur: float = clampf(
+		ROLL_ANIM_BASE + visual * ROLL_ANIM_PER_STEP,
+		ROLL_ANIM_BASE,
+		ROLL_ANIM_MAX
+	)
+	await _animate_disk_to(_wheel_visual_steps + visual, dur)
 
 
 func _on_unload() -> void:
