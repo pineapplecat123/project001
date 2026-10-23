@@ -106,7 +106,8 @@ func test_stepwise_fire_api() -> void:
 	assert_eq(cs.phase, CombatState.Phase.AWAIT_LOAD)
 
 
-func test_roll_random_then_enemy_advances() -> void:
+func test_roll_keeps_action_phase_and_buttons() -> void:
+	## ROLL 后仍停留 AWAIT_ACTION，可继续 ROLL / UNLOAD / FIRE（不进怪物回合）。
 	var cs := CombatState.new(99)
 	cs.start_graybox(99)
 	cs.enemies[0].hp = 100
@@ -117,11 +118,20 @@ func test_roll_random_then_enemy_advances() -> void:
 	var order_before: Array[int] = cs.magazine.fire_order()
 	assert_true(cs.begin_roll())
 	var order_after: Array[int] = cs.magazine.fire_order()
-	# 相对循环顺序保持
 	assert_eq(order_after.size(), order_before.size())
-	assert_eq(cs.enemies[0].cell, start_cell - 1)
-	assert_eq(cs.player_hp, hp_before)  # 远处不掉血
-	assert_eq(cs.phase, CombatState.Phase.AWAIT_LOAD)
+	assert_eq(cs.phase, CombatState.Phase.AWAIT_ACTION)
+	assert_eq(cs.enemies[0].cell, start_cell)  # 未进怪物回合
+	assert_eq(cs.player_hp, hp_before)
+	assert_false(cs.can_load())
+	assert_true(cs.can_start_roll())
+	assert_true(cs.can_unload())
+	assert_true(cs.can_fire())
+	# 可再 ROLL 一次仍不结束行动
+	assert_true(cs.begin_roll())
+	assert_eq(cs.phase, CombatState.Phase.AWAIT_ACTION)
+	assert_true(cs.can_start_roll())
+	assert_true(cs.can_unload())
+	assert_true(cs.can_fire())
 
 
 func test_distant_enemy_multiple_turns_no_player_damage() -> void:
@@ -348,6 +358,23 @@ func test_apply_roll_without_enemy_turn() -> void:
 	assert_eq(cs.enemies[0].cell, cell_before)
 	cs.resolve_after_player_action()
 	assert_eq(cs.enemies[0].cell, cell_before - 1)
+	assert_eq(cs.phase, CombatState.Phase.AWAIT_LOAD)
+
+
+func test_after_roll_can_still_unload_or_fire() -> void:
+	## ROLL 后可卸除或开火；卸除才进入怪物回合。
+	var cs := CombatState.new(44)
+	cs.start_graybox(44)
+	cs.enemies[0].hp = 999
+	cs.enemies[0].max_hp = 999
+	var cell0: int = cs.enemies[0].cell
+	cs.do_load()
+	assert_true(cs.begin_roll())
+	assert_eq(cs.phase, CombatState.Phase.AWAIT_ACTION)
+	assert_true(cs.can_unload())
+	assert_true(cs.can_fire())
+	assert_true(cs.do_unload())
+	assert_eq(cs.enemies[0].cell, cell0 - 1)
 	assert_eq(cs.phase, CombatState.Phase.AWAIT_LOAD)
 
 

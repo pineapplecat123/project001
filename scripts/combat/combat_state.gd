@@ -1,5 +1,5 @@
 class_name CombatState
-## 战斗状态机。清场后奖励三选一，结算后再下一波；ROLL 可拆成 apply_roll + resolve；LOAD 可逐步装填。
+## 战斗状态机。清场后奖励三选一，结算后再下一波；ROLL 仅转轮不结束行动；LOAD 可逐步装填。
 
 enum Phase {
 	AWAIT_LOAD,
@@ -881,7 +881,7 @@ func apply_roll() -> int:
 	return steps
 
 
-## 玩家行动（射击/ROLL/卸除）结束后：判胜负或进入怪物回合。
+## 玩家行动（射击/卸除）结束后：判胜负或进入怪物回合。ROLL 不调用此函数。
 func resolve_after_player_action() -> void:
 	if _check_end_after_player():
 		_emit()
@@ -890,11 +890,9 @@ func resolve_after_player_action() -> void:
 	_emit()
 
 
+## 仅随机转轮；保持 AWAIT_ACTION，可继续 ROLL / UNLOAD / FIRE。
 func begin_roll() -> bool:
-	if apply_roll() < 0:
-		return false
-	resolve_after_player_action()
-	return true
+	return apply_roll() >= 0
 
 
 func do_unload() -> bool:

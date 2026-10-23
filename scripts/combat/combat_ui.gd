@@ -512,13 +512,12 @@ func _on_roll() -> void:
 		return
 	_rolling = true
 	_refresh_hud_only()
-	# 与装填满匣后的随机转完全同一套路径
+	# 与装填满匣后的随机转完全同一套路径；ROLL 不结束行动回合
 	var steps: int = await _run_shared_cylinder_spin()
 	if steps < 0:
 		_rolling = false
 		_refresh()
 		return
-	state.resolve_after_player_action()
 	_rolling = false
 	_refresh()
 
