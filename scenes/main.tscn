@@ -29,9 +29,9 @@ anchor_top = 0.5
 anchor_right = 0.5
 anchor_bottom = 0.5
 offset_left = -220.0
-offset_top = -200.0
+offset_top = -220.0
 offset_right = 220.0
-offset_bottom = 200.0
+offset_bottom = 220.0
 grow_horizontal = 2
 grow_vertical = 2
 theme_override_constants/separation = 14
@@ -78,6 +78,14 @@ size_flags_horizontal = 4
 theme_override_font_sizes/font_size = 18
 text = "练习战斗"
 
+[node name="BtnChangelog" type="Button" parent="Center"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(220, 44)
+layout_mode = 2
+size_flags_horizontal = 4
+theme_override_font_sizes/font_size = 18
+text = "更新日志"
+
 [node name="BtnQuit" type="Button" parent="Center"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(220, 40)
@@ -100,9 +108,80 @@ offset_right = 80.0
 offset_bottom = -12.0
 grow_horizontal = 2
 grow_vertical = 0
-text = "v0.2.14"
+text = "v0.2.22"
 horizontal_alignment = 1
+
+[node name="ChangelogDimmer" type="ColorRect" parent="."]
+unique_name_in_owner = true
+visible = false
+z_index = 9
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 0
+color = Color(0, 0, 0, 0.55)
+
+[node name="ChangelogPanel" type="PanelContainer" parent="."]
+unique_name_in_owner = true
+visible = false
+z_index = 10
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -360.0
+offset_top = -280.0
+offset_right = 360.0
+offset_bottom = 280.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="ChangelogMargin" type="MarginContainer" parent="ChangelogPanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 14
+theme_override_constants/margin_top = 12
+theme_override_constants/margin_right = 14
+theme_override_constants/margin_bottom = 12
+
+[node name="ChangelogVBox" type="VBoxContainer" parent="ChangelogPanel/ChangelogMargin"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="ChangelogHeader" type="HBoxContainer" parent="ChangelogPanel/ChangelogMargin/ChangelogVBox"]
+layout_mode = 2
+
+[node name="ChangelogHeaderLabel" type="Label" parent="ChangelogPanel/ChangelogMargin/ChangelogVBox/ChangelogHeader"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 22
+text = "更新日志"
+
+[node name="BtnChangelogClose" type="Button" parent="ChangelogPanel/ChangelogMargin/ChangelogVBox/ChangelogHeader"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(110, 42)
+layout_mode = 2
+theme_override_font_sizes/font_size = 18
+text = "关闭"
+
+[node name="ChangelogScroll" type="ScrollContainer" parent="ChangelogPanel/ChangelogMargin/ChangelogVBox"]
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="ChangelogList" type="VBoxContainer" parent="ChangelogPanel/ChangelogMargin/ChangelogVBox/ChangelogScroll"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
 
 [connection signal="pressed" from="Center/BtnStart" to="." method="_on_start_pressed"]
 [connection signal="pressed" from="Center/BtnPractice" to="." method="_on_practice_pressed"]
+[connection signal="pressed" from="Center/BtnChangelog" to="." method="_on_changelog_pressed"]
 [connection signal="pressed" from="Center/BtnQuit" to="." method="_on_quit_pressed"]
+[connection signal="gui_input" from="ChangelogDimmer" to="." method="_on_changelog_dimmer_gui_input"]
+[connection signal="pressed" from="ChangelogPanel/ChangelogMargin/ChangelogVBox/ChangelogHeader/BtnChangelogClose" to="." method="_on_changelog_close_pressed"]

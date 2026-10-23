@@ -1,5 +1,13 @@
 
 
+## 2026-10-23（v0.2.22）
+
+- 主菜单增加「更新日志」入口；点开遮罩面板，按新→旧列出各版要点。
+- 数据源：`data/changelog.json`（独立 JSON，UI 不硬编码条目）。
+- 整理已有发版要点（约 0.1.3–0.2.22）；含本版本条。
+- GUT：`test_changelog.gd`（JSON 可解析/非空/新→旧、按钮可开）；charset 检查。
+- 版本 `0.2.22`。
+
 ## 2026-10-23（v0.2.21）
 
 - 根因：v0.2.19 让 ROLL 走 `resolve_after_player_action` → `_run_enemy_turn` 末尾**总是** `AWAIT_LOAD`，即使匣内仍有弹，导致不能再射/roll/卸。
