@@ -512,12 +512,13 @@ func _on_roll() -> void:
 		return
 	_rolling = true
 	_refresh_hud_only()
-	# 与装填满匣后的随机转完全同一套路径；ROLL 不结束行动回合
+	# 与装填满匣后的随机转同一套路径；转完后结束玩家行动（怪前进）
 	var steps: int = await _run_shared_cylinder_spin()
 	if steps < 0:
 		_rolling = false
 		_refresh()
 		return
+	state.resolve_after_player_action()
 	_rolling = false
 	_refresh()
 
@@ -793,20 +794,21 @@ func _refresh_bag_list() -> void:
 	var inv: Dictionary = state.ammo_inventory_by_id()
 	var bag_n: int = state.bag.size()
 	var mag_n: int = state.magazine.loaded_count() if state.magazine != null else 0
-	var total_n: int = bag_n + mag_n
+	var disc_n: int = state.discard.size()
+	var total_n: int = bag_n + mag_n + disc_n
 	var title := Label.new()
-	title.text = "完整库存（袋+膛 · 共 %d 发：袋 %d / 膛 %d）｜弃牌 %d｜金币 %d" % [
-		total_n, bag_n, mag_n, state.discard.size(), state.gold
+	title.text = "牌库拥有（袋+膛+弃 · 共 %d 发：袋 %d / 膛 %d / 弃 %d）｜金币 %d" % [
+		total_n, bag_n, mag_n, disc_n, state.gold
 	]
 	title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	title.add_theme_font_size_override("font_size", 16)
 	bag_list.add_child(title)
 	if inv.is_empty():
 		var empty := Label.new()
-		empty.text = "（袋与弹夹皆空）"
+		empty.text = "（牌库空：袋、膛、弃皆无）"
 		bag_list.add_child(empty)
 		var tip0 := Label.new()
-		tip0.text = "亮=仍在袋可抽；暗=已上膛。点击格子查看弹药数据与效果。"
+		tip0.text = "亮=仍在袋可抽；暗=已上膛或在弃牌。袋空仍会列出拥有弹种。点击格子查看弹药数据与效果。"
 		tip0.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		tip0.add_theme_font_size_override("font_size", 13)
 		tip0.add_theme_color_override("font_color", Color(0.7, 0.75, 0.85))
@@ -826,7 +828,8 @@ func _refresh_bag_list() -> void:
 		var entry: Dictionary = inv[ammo_id]
 		var in_bag: int = int(entry.get("bag", 0))
 		var in_mag: int = int(entry.get("mag", 0))
-		var total: int = int(entry.get("total", in_bag + in_mag))
+		var in_disc: int = int(entry.get("discard", 0))
+		var total: int = int(entry.get("total", in_bag + in_mag + in_disc))
 		var def: Dictionary = DataRegistry.get_ammo(ammo_id)
 		var colors := _ammo_colors(ammo_id)
 		var cell := PanelContainer.new()
@@ -845,13 +848,16 @@ func _refresh_bag_list() -> void:
 			cell_style.set_border_width_all(3)
 		elif in_bag == 0 and in_mag > 0:
 			cell_style.border_color = Color(0.35, 0.35, 0.4)
+		elif in_bag == 0 and in_mag == 0 and in_disc > 0:
+			# 全在弃牌：蓝灰描边，袋空仍可见拥有
+			cell_style.border_color = Color(0.45, 0.55, 0.75)
 		cell_style.content_margin_left = 8
 		cell_style.content_margin_right = 8
 		cell_style.content_margin_top = 8
 		cell_style.content_margin_bottom = 8
 		cell.add_theme_stylebox_override("panel", cell_style)
-		# 全数已上膛 → 整格变暗；仍有在袋 → 正常亮度
-		if in_bag == 0 and in_mag > 0:
+		# 仍有在袋 → 正常；全上膛或全弃 → 变暗（仍列出）
+		if in_bag == 0 and (in_mag > 0 or in_disc > 0):
 			cell.modulate = Color(0.55, 0.55, 0.58, 1.0)
 		else:
 			cell.modulate = Color.WHITE
@@ -874,11 +880,13 @@ func _refresh_bag_list() -> void:
 		cnt_l.add_theme_color_override("font_color", colors["fg"])
 		cnt_l.add_theme_font_size_override("font_size", 20)
 		var split_l := Label.new()
-		split_l.text = "袋%d · 膛%d" % [in_bag, in_mag]
+		split_l.text = "袋%d · 膛%d · 弃%d" % [in_bag, in_mag, in_disc]
 		split_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		split_l.add_theme_font_size_override("font_size", 13)
+		split_l.add_theme_font_size_override("font_size", 12)
 		if in_mag > 0:
 			split_l.add_theme_color_override("font_color", Color(0.35, 0.35, 0.4) if in_bag == 0 else Color(0.45, 0.35, 0.1))
+		elif in_bag == 0 and in_disc > 0:
+			split_l.add_theme_color_override("font_color", Color(0.4, 0.48, 0.62))
 		else:
 			split_l.add_theme_color_override("font_color", colors["fg"].darkened(0.15))
 		v.add_child(name_l)
@@ -891,7 +899,7 @@ func _refresh_bag_list() -> void:
 		cell.gui_input.connect(func(ev: InputEvent): _on_bag_cell_input(ev, aid))
 		grid.add_child(cell)
 	var tip := Label.new()
-	tip.text = "亮格=仍有在袋可抽；暗格=该种已全部上膛；黄边=部分上膛。数字「袋/膛」按弹种汇总。点击查看数据与效果。网格不表示抽弹顺序。"
+	tip.text = "亮格=仍有在袋可抽；暗格=该种已全部上膛或在弃牌；黄边=部分上膛。袋空仍显示牌库拥有。点击查看效果。网格不表示抽弹顺序。"
 	tip.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	tip.add_theme_font_size_override("font_size", 13)
 	tip.add_theme_color_override("font_color", Color(0.7, 0.75, 0.85))

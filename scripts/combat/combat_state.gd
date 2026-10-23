@@ -1,5 +1,5 @@
 class_name CombatState
-## 战斗状态机。清场后奖励三选一，结算后再下一波；ROLL 仅转轮不结束行动；LOAD 可逐步装填。
+## 战斗状态机。清场后奖励三选一，结算后再下一波；ROLL/FIRE/UNLOAD 均结束玩家行动；LOAD 可逐步装填。
 
 enum Phase {
 	AWAIT_LOAD,
@@ -256,13 +256,13 @@ func _shuffle(arr: Array[int]) -> void:
 		arr[j] = tmp
 
 
-## 检视用：按弹种汇总袋内 + 已上膛数量（不含弃牌）。
+## 检视用：按弹种汇总牌库拥有量（袋 + 膛 + 弃）。袋空时仍列出构筑内弹种。
 func ammo_inventory_by_id() -> Dictionary:
 	var out: Dictionary = {}
 	for ammo_id in bag:
 		var id: int = int(ammo_id)
 		if not out.has(id):
-			out[id] = {"bag": 0, "mag": 0, "total": 0}
+			out[id] = {"bag": 0, "mag": 0, "discard": 0, "total": 0}
 		out[id]["bag"] = int(out[id]["bag"]) + 1
 		out[id]["total"] = int(out[id]["total"]) + 1
 	if magazine != null:
@@ -271,9 +271,15 @@ func ammo_inventory_by_id() -> Dictionary:
 			if id2 == Magazine.EMPTY:
 				continue
 			if not out.has(id2):
-				out[id2] = {"bag": 0, "mag": 0, "total": 0}
+				out[id2] = {"bag": 0, "mag": 0, "discard": 0, "total": 0}
 			out[id2]["mag"] = int(out[id2]["mag"]) + 1
 			out[id2]["total"] = int(out[id2]["total"]) + 1
+	for ammo_id in discard:
+		var id3: int = int(ammo_id)
+		if not out.has(id3):
+			out[id3] = {"bag": 0, "mag": 0, "discard": 0, "total": 0}
+		out[id3]["discard"] = int(out[id3]["discard"]) + 1
+		out[id3]["total"] = int(out[id3]["total"]) + 1
 	return out
 
 
@@ -865,7 +871,7 @@ func do_fire() -> bool:
 	return true
 
 
-## 仅转动转轮并记日志；不进入怪物回合。失败返回 -1；满匣/多发成功步数 ∈ [1,size-1]，单发为 0。
+## 仅转动转轮并记日志；不结束行动（供装填后 spin / UI 动画先转再结算）。失败 -1；多发步数 ∈ [1,size-1]，单发 0。
 func apply_roll() -> int:
 	if not can_start_roll():
 		return -1
@@ -881,7 +887,7 @@ func apply_roll() -> int:
 	return steps
 
 
-## 玩家行动（射击/卸除）结束后：判胜负或进入怪物回合。ROLL 不调用此函数。
+## 玩家行动（射击/卸除/ROLL）结束后：判胜负或进入怪物回合。
 func resolve_after_player_action() -> void:
 	if _check_end_after_player():
 		_emit()
@@ -890,9 +896,12 @@ func resolve_after_player_action() -> void:
 	_emit()
 
 
-## 仅随机转轮；保持 AWAIT_ACTION，可继续 ROLL / UNLOAD / FIRE。
+## 随机转轮并结束本回合（进怪物回合）。UI 动画路径：先 apply_roll 再 resolve_after_player_action。
 func begin_roll() -> bool:
-	return apply_roll() >= 0
+	if apply_roll() < 0:
+		return false
+	resolve_after_player_action()
+	return true
 
 
 func do_unload() -> bool:
