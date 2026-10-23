@@ -17,7 +17,7 @@ const ROLL_ANIM_MAX := 0.6
 const LOAD_INSERT_PAUSE := 0.14
 const BAG_GRID_COLS := 4
 const BAG_CELL_MIN := Vector2(140, 88)
-const VERSION := "0.2.12"
+const VERSION := "0.2.13"
 
 const COL_PHASE := Color(1.0, 0.92, 0.45)
 const COL_HP_OK := Color(0.45, 0.95, 0.55)
