@@ -77,6 +77,8 @@ var _load_session_active: bool = false
 var _load_next_slot: int = 0
 var _load_raw_ids: Array[int] = []
 var _load_resolved_ids: Array[int] = []
+## UI：上一发实际清空的仓位（锤位）
+var last_fired_slot: int = -1
 
 
 func _init(seed_value: int = 0) -> void:
@@ -333,7 +335,7 @@ func is_busy_firing() -> bool:
 	return phase == Phase.FIRING
 
 
-## 一次装满（测试 / 金色额外轮 / 无动画路径）。UI 请用 begin_load + load_next_chamber。
+## 一次装满（测试 / 金色额外轮 / 无动画路径）。UI 请用 begin_load + load_next_chamber + apply_load_rotate。
 ## 装满后会自动 random_roll（与 UI 装满后的 reroll 动画一致）；不满匣不转。
 func do_load() -> bool:
 	if not begin_load():
@@ -342,12 +344,14 @@ func do_load() -> bool:
 	while _load_session_active:
 		var r: Dictionary = load_next_chamber()
 		needs_spin = bool(r.get("needs_spin", false))
+		if not bool(r.get("done", false)) and bool(r.get("ok", false)):
+			apply_load_rotate()
 	if needs_spin:
 		apply_roll()
 	return true
 
 
-## 开始逐步装填会话。成功后反复调用 load_next_chamber 直到返回 done。
+## 开始逐步装填会话。成功后反复调用 load_next_chamber；每发写入后若未满，再 apply_load_rotate。
 ## 约定：start_index = 正上击发仓；上弹口=左上=(start+LOAD_PORT_OFFSET)%6。
 func begin_load() -> bool:
 	if not can_load():
@@ -371,9 +375,9 @@ func begin_load() -> bool:
 	return true
 
 
-## 装入当前上弹口（左上）那一仓，然后若未满则 start_index+1（整盘转 60°）。
+## 装入当前上弹口（左上）那一仓。不立即转盘：UI 先展示入弹，再调用 apply_load_rotate。
 ## 返回：ok/done/ammo_id/slot/rotate_to/exhausted/needs_spin
-## rotate_to = 装完并步进后的 start_index（供 UI 转到新朝向）；最后一发 done 时不步进，needs_spin 表示装满后应 reroll。
+## rotate_to = 下一步应转到的 start_index（未满时 = 当前+1）；done 时不转。
 func load_next_chamber() -> Dictionary:
 	var fail := {
 		"ok": false,
@@ -404,18 +408,27 @@ func load_next_chamber() -> Dictionary:
 		needs_reshuffle_next_load = true
 	var more: bool = _load_next_slot < CombatConstants.MAGAZINE_SIZE and not bag.is_empty()
 	if more:
-		magazine.start_index = (magazine.start_index + 1) % CombatConstants.MAGAZINE_SIZE
+		var rotate_to: int = (magazine.start_index + 1) % CombatConstants.MAGAZINE_SIZE
 		_emit()
 		return {
 			"ok": true,
 			"done": false,
 			"ammo_id": resolved,
 			"slot": slot,
-			"rotate_to": magazine.start_index,
+			"rotate_to": rotate_to,
 			"exhausted": false,
 			"needs_spin": false,
 		}
 	return _complete_load_session_after_shot(resolved, slot)
+
+
+## 装弹入格展示完毕后调用：整盘逻辑步进 60°（start_index+1），供下一发对准上弹口。
+func apply_load_rotate() -> int:
+	if magazine == null:
+		return 0
+	magazine.start_index = (magazine.start_index + 1) % CombatConstants.MAGAZINE_SIZE
+	_emit()
+	return magazine.start_index
 
 
 func _complete_load_session_after_shot(resolved: int, slot: int) -> Dictionary:
@@ -532,6 +545,7 @@ func fire_next_shot() -> bool:
 		return false
 	var ammo_id: int = _fire_queue[_fire_index]
 	var base_dmg: int = _fire_damages[_fire_index]
+	last_fired_slot = magazine.chamber_at_fire_port()
 	_consume_hammer_chamber(ammo_id)
 
 	var flags := FireResolver.inherits_from(ammo_id)
@@ -687,27 +701,32 @@ func _ammo_name(ammo_id: int) -> String:
 
 
 func _consume_hammer_chamber(expected_id: int) -> void:
+	## 清空正上击发点那一仓，然后 start_index+1（固定转 60°）。若下一格为空则再跳到下一非空（稀有残匣）。
 	if magazine.is_empty():
 		return
-	var i := magazine.start_index
-	var seen := 0
-	while seen < magazine.size():
-		if magazine.slots[i] == expected_id:
-			magazine.slots[i] = Magazine.EMPTY
-			break
-		i = (i + 1) % magazine.size()
-		seen += 1
+	var hammer: int = magazine.chamber_at_fire_port()
+	if magazine.slots[hammer] == expected_id:
+		magazine.slots[hammer] = Magazine.EMPTY
+	else:
+		# 兜底：自锤位起找第一发匹配（不应在逐步射满匣时触发）
+		var i := hammer
+		var seen := 0
+		while seen < magazine.size():
+			if magazine.slots[i] == expected_id:
+				magazine.slots[i] = Magazine.EMPTY
+				break
+			i = (i + 1) % magazine.size()
+			seen += 1
 	if magazine.is_empty():
 		magazine.start_index = 0
 		return
-	var j := magazine.start_index % magazine.size()
-	seen = 0
-	while seen < magazine.size():
-		if magazine.slots[j] != Magazine.EMPTY:
-			magazine.start_index = j
-			return
-		j = (j + 1) % magazine.size()
-		seen += 1
+	# 固定转一格（与 UI 60° 一致）
+	magazine.start_index = (magazine.start_index + 1) % magazine.size()
+	# 若转后对准空仓，跳到下一非空，保证后续 fire_order 仍对齐锤位
+	var seen2 := 0
+	while seen2 < magazine.size() and magazine.slots[magazine.start_index] == Magazine.EMPTY:
+		magazine.start_index = (magazine.start_index + 1) % magazine.size()
+		seen2 += 1
 
 
 func _finish_fire() -> void:

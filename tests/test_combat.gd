@@ -428,6 +428,8 @@ func test_stepwise_load_api() -> void:
 		assert_lte(n, CombatConstants.MAGAZINE_SIZE + 1)
 		if bool(r.get("done", false)):
 			break
+		# 入弹后才转盘，下一发才换上弹口仓
+		cs.apply_load_rotate()
 	assert_eq(n, CombatConstants.MAGAZINE_SIZE)
 	assert_false(cs.is_busy_loading())
 	assert_eq(cs.magazine.loaded_count(), CombatConstants.MAGAZINE_SIZE)
@@ -453,6 +455,7 @@ func test_stepwise_load_partial_when_bag_small() -> void:
 		n += 1
 		if bool(r.get("done", false)):
 			break
+		cs.apply_load_rotate()
 	assert_eq(n, 3)
 	assert_eq(cs.magazine.loaded_count(), 3)
 	assert_eq(cs.phase, CombatState.Phase.AWAIT_ACTION)
@@ -503,8 +506,10 @@ func test_stepwise_load_rotates_start_each_chamber() -> void:
 		var r: Dictionary = cs.load_next_chamber()
 		if bool(r.get("done", false)):
 			break
-		starts.append(int(r.get("rotate_to", -1)))
-	# 每装一发 start+1：1→2→3→4→5→0（最后一发不步进，不进 starts）
+		assert_eq(int(r.get("rotate_to", -1)), (cs.magazine.start_index + 1) % CombatConstants.MAGAZINE_SIZE)
+		cs.apply_load_rotate()
+		starts.append(cs.magazine.start_index)
+	# 每装一发后 apply_load_rotate：1→2→3→4→5→0（最后一发不步进）
 	assert_eq(starts, [1, 2, 3, 4, 5, 0])
 
 
@@ -545,3 +550,55 @@ func test_reward_blurb_short() -> void:
 	assert_true(black.length() > 0)
 	assert_lte(black.length(), 48)
 
+func test_load_writes_only_load_port_each_step() -> void:
+	## 每步只写入当前上弹口；未 apply_load_rotate 前重复写入同一仓。
+	var cs := CombatState.new(11)
+	cs.start_graybox(11)
+	assert_true(cs.begin_load())
+	var port0: int = cs.magazine.chamber_at_load_port()
+	var r1: Dictionary = cs.load_next_chamber()
+	assert_eq(int(r1["slot"]), port0)
+	assert_eq(cs.magazine.loaded_count(), 1)
+	# 未旋转前上弹口仍是同一仓；若再装会覆盖（API 约定每次装后应 rotate）
+	assert_eq(cs.magazine.chamber_at_load_port(), port0)
+	cs.apply_load_rotate()
+	var port1: int = cs.magazine.chamber_at_load_port()
+	assert_ne(port1, port0)
+	var r2: Dictionary = cs.load_next_chamber()
+	assert_eq(int(r2["slot"]), port1)
+	assert_eq(cs.magazine.loaded_count(), 2)
+
+
+func test_fire_consumes_fire_port_chamber() -> void:
+	## 击发清空的是正上锤位仓，与 last_fired_slot / chamber_at_fire_port 一致。
+	var cs := CombatState.new(13)
+	cs.start_graybox(13)
+	cs.dev_force_load([
+		FireResolver.ID_YELLOW, FireResolver.ID_RED, FireResolver.ID_BLUE,
+		FireResolver.ID_GREEN, FireResolver.ID_PURPLE, FireResolver.ID_WHITE,
+	])
+	cs.magazine.set_start(4)
+	assert_eq(cs.magazine.chamber_at_fire_port(), 4)
+	assert_eq(cs.magazine.slots[4], FireResolver.ID_PURPLE)
+	assert_true(cs.begin_fire())
+	assert_true(cs.fire_next_shot())
+	assert_eq(cs.last_fired_slot, 4)
+	assert_eq(cs.magazine.slots[4], Magazine.EMPTY)
+	assert_eq(cs.magazine.start_index, 5)
+	assert_eq(cs.magazine.chamber_at_fire_port(), 5)
+
+
+func test_wheel_port_geometry_angles() -> void:
+	## 逻辑偏移与 UI 固定角约定：击发=正上(i相对0)，装弹=左上(相对+5 → -150°)。
+	assert_eq(CombatConstants.FIRE_PORT_OFFSET_STEPS, 0)
+	assert_eq(CombatConstants.LOAD_PORT_OFFSET_STEPS, 5)
+	assert_eq(CombatConstants.LOAD_SESSION_INITIAL_START, 1)
+	var mag := Magazine.new()
+	for s in 6:
+		mag.start_index = s
+		var fire_i: int = mag.chamber_at_fire_port()
+		var load_i: int = mag.chamber_at_load_port()
+		assert_eq(fire_i, s)
+		assert_eq(load_i, (s + 5) % 6)
+		# 装弹口相对击发口固定隔 5 步（屏幕 -150° vs -90°）
+		assert_eq((load_i - fire_i + 6) % 6, 5)

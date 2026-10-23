@@ -14,10 +14,10 @@ const STEP_ROT_DURATION := 0.18
 const ROLL_ANIM_BASE := 0.32
 const ROLL_ANIM_PER_STEP := 0.05
 const ROLL_ANIM_MAX := 0.6
-const LOAD_INSERT_PAUSE := 0.06
+const LOAD_INSERT_PAUSE := 0.14
 const BAG_GRID_COLS := 4
 const BAG_CELL_MIN := Vector2(140, 88)
-const VERSION := "0.2.11"
+const VERSION := "0.2.12"
 
 const COL_PHASE := Color(1.0, 0.92, 0.45)
 const COL_HP_OK := Color(0.45, 0.95, 0.55)
@@ -393,7 +393,8 @@ func _run_load_sequence() -> void:
 	_loading = true
 	# 开局：仓 0 在左上上弹口 → start_index = LOAD_SESSION_INITIAL_START
 	_apply_disk_rotation(float(state.magazine.start_index))
-	_refresh()
+	_refresh_mag_contents()
+	_refresh_hud_only()
 	if not state.is_busy_loading():
 		_loading = false
 		_apply_disk_rotation(float(state.magazine.start_index))
@@ -406,20 +407,24 @@ func _run_load_sequence() -> void:
 		if not bool(result.get("ok", false)):
 			break
 		needs_spin = bool(result.get("needs_spin", false))
-		_refresh_mag()
-		_refresh()
+		# 关键：盘面仍停在 before_steps，写入的仓正对 ◀装 标注
+		_refresh_mag_contents()
+		_refresh_hud_only()
 		if LOAD_INSERT_PAUSE > 0.0:
 			await get_tree().create_timer(LOAD_INSERT_PAUSE).timeout
 		if bool(result.get("done", false)):
 			break
-		# 装完一发 → 整盘转 60°，下一空仓转到左上
+		# 入弹可见后再逻辑转盘 + Tween 60°（先占住 _wheel_animating，避免 signal refresh 按新 start 误高亮）
 		var rotate_to: float = float(result.get("rotate_to", state.magazine.start_index))
 		var target: float = rotate_to
 		while target + 0.001 < before_steps:
 			target += float(CombatConstants.MAGAZINE_SIZE)
 		if absf(target - before_steps) < 0.001:
 			target = before_steps + 1.0
+		_wheel_animating = true
+		state.apply_load_rotate()
 		await _animate_disk_to(target, STEP_ROT_DURATION)
+		_refresh_mag_contents()
 	# 装满后：与 ROLL 相同的随机旋转（不进怪物回合）
 	if needs_spin and state.can_start_roll():
 		var steps: int = state.apply_roll()
@@ -444,22 +449,32 @@ func _run_fire_sequence() -> void:
 	if not state.begin_fire():
 		return
 	_firing = true
-	# 红圈固定正上；盘面先对齐当前击发仓
+	# 红圈固定正上；盘面先对齐当前击发仓；动画期间禁止 _refresh_mag 抢跑对齐
 	_apply_disk_rotation(float(state.magazine.start_index))
-	_refresh()
+	_refresh_mag_contents()
+	_refresh_hud_only()
 	while state.phase == CombatState.Phase.FIRING:
 		var start_before: int = state.magazine.start_index
+		var fired_slot: int = state.magazine.chamber_at_fire_port()
+		# 结算前锁视觉步数=锤位；signal refresh 不得抢跑
+		_apply_disk_rotation(float(start_before))
+		_wheel_animating = true
 		var more: bool = state.fire_next_shot()
-		_flash_fire_chamber_at(start_before)
-		_refresh()
+		if state.last_fired_slot >= 0:
+			fired_slot = state.last_fired_slot
+		_flash_fire_chamber_at(fired_slot)
+		_refresh_mag_contents()
+		_refresh_hud_only()
 		if more:
 			var start_after: int = state.magazine.start_index
 			var delta: int = (start_after - start_before + CombatConstants.MAGAZINE_SIZE) % CombatConstants.MAGAZINE_SIZE
 			if delta == 0:
 				delta = 1
 			await _animate_disk_to(_wheel_visual_steps + float(delta), STEP_ROT_DURATION)
+			_refresh_mag_contents()
 			await get_tree().create_timer(FIRE_SHOT_DELAY).timeout
 		else:
+			_wheel_animating = false
 			break
 	_apply_disk_rotation(float(state.magazine.start_index))
 	_firing = false
@@ -1086,13 +1101,47 @@ func _style_hp_bar(bar: ProgressBar, fill: Color) -> void:
 	bar.add_theme_stylebox_override("fill", fg)
 
 
+func _refresh_hud_only() -> void:
+	## 刷新顶栏/棋盘/按钮等，不碰转盘角度（逐步装弹/射击动画用）。
+	phase_label.text = "阶段：%s" % state.phase_name()
+	phase_label.add_theme_color_override("font_color", COL_PHASE)
+	hp_label.text = "HP %d / %d" % [state.player_hp, state.player_max_hp]
+	var hp_ratio := float(state.player_hp) / float(maxi(state.player_max_hp, 1))
+	hp_label.add_theme_color_override("font_color", COL_HP_LOW if hp_ratio <= 0.35 else COL_HP_OK)
+	bag_label.text = "袋 %d" % state.bag.size()
+	bag_label.add_theme_color_override("font_color", COL_BAG)
+	discard_label.text = "弃 %d" % state.discard.size()
+	discard_label.add_theme_color_override("font_color", COL_DISCARD)
+	gold_label.text = "金币 %d" % state.gold
+	gold_label.add_theme_color_override("font_color", COL_GOLD)
+	turn_label.text = "回合 %d · 第 %d 波 · %s" % [state.turn_index, state.wave_index, state.encounter_label()]
+	turn_label.add_theme_color_override("font_color", COL_TURN)
+	var busy := _busy() or state.is_busy_firing() or state.is_busy_loading()
+	btn_load.disabled = true if (_loading or _firing or _rolling or _wheel_animating) else (busy or not state.can_load())
+	btn_fire.disabled = true if (_loading or _firing or _rolling or _wheel_animating) else (busy or not state.can_fire())
+	btn_roll.disabled = true if (_loading or _firing or _rolling or _wheel_animating) else (busy or not state.can_start_roll())
+	btn_unload.disabled = true if (_loading or _firing or _rolling or _wheel_animating) else (busy or not state.can_unload())
+	btn_next_wave.disabled = busy or not state.can_start_next_wave()
+	_refresh_board()
+
+
+func _refresh_mag_contents() -> void:
+	## 只更新六仓内容与高亮，绝不抢跑旋转角度。
+	_paint_mag_chambers()
+
+
 func _refresh_mag() -> void:
 	var start_i: int = state.magazine.start_index
-	if not _wheel_animating:
-		# 非动画时盘面对齐逻辑起点（保持文字正向）
+	# 逐步装/射/滚/Tween 期间禁止瞬间对齐，否则会跳过 60° 动画并造成标位错位
+	if not _wheel_animating and not _loading and not _firing and not _rolling:
 		var want := float(start_i)
 		if absf(fposmod(_wheel_visual_steps, float(CombatConstants.MAGAZINE_SIZE)) - want) > 0.01:
 			_apply_disk_rotation(want)
+	_paint_mag_chambers()
+
+
+func _paint_mag_chambers() -> void:
+	var start_i: int = state.magazine.start_index
 	for slot_i in CombatConstants.MAGAZINE_SIZE:
 		var panel: Panel = _chamber_panels[slot_i]
 		var info: Label = panel.get_node("Info")
@@ -1123,8 +1172,10 @@ func _refresh_mag() -> void:
 				style.border_color = Color(0.95, 0.4, 0.4)
 			info.text = "%d\n%s" % [order_num, short]
 			info.add_theme_color_override("font_color", colors["fg"])
-		var at_fire: bool = slot_i == state.magazine.chamber_at_fire_port()
-		var at_load: bool = slot_i == state.magazine.chamber_at_load_port()
+		# 高亮跟屏幕固定标走：用盘面视觉步数，避免逻辑 start 已+1 而 Tween 未完成时错位
+		var visual_start: int = int(round(fposmod(_wheel_visual_steps, float(CombatConstants.MAGAZINE_SIZE))))
+		var at_fire: bool = slot_i == posmod(visual_start + CombatConstants.FIRE_PORT_OFFSET_STEPS, CombatConstants.MAGAZINE_SIZE)
+		var at_load: bool = slot_i == posmod(visual_start + CombatConstants.LOAD_PORT_OFFSET_STEPS, CombatConstants.MAGAZINE_SIZE)
 		if _loading and at_load:
 			style.border_color = Color(0.35, 0.95, 0.7)
 			style.set_border_width_all(4)
