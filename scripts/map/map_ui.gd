@@ -6,7 +6,6 @@ const ShopConstants = preload("res://scripts/shop/shop_constants.gd")
 const RestConstants = preload("res://scripts/rest/rest_constants.gd")
 ## 灰盒缩小版地图：选可达节点 → 战斗 / 商店 / 休息 / 占位路过 → 回地图。
 
-const VERSION := "0.2.13"
 const NODE_W := 120.0
 const NODE_H := 72.0
 const LAYER_GAP_X := 180.0
@@ -58,7 +57,7 @@ var _toast_tween: Tween
 
 
 func _ready() -> void:
-	version_label.text = "v%s" % VERSION
+	version_label.text = "v%s" % GameVersion.STRING
 	btn_bag.pressed.connect(_toggle_bag)
 	btn_bag_close.pressed.connect(func(): _set_bag_open(false))
 	btn_menu.pressed.connect(_on_menu)

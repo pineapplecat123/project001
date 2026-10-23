@@ -1,11 +1,8 @@
 extends Control
 ## 主菜单：开始冒险（地图）/ 练习战斗 / 退出；底部版本号。
 
-const VERSION := "0.2.13"
-
-
 func _ready() -> void:
-	%VersionLabel.text = "v%s" % VERSION
+	%VersionLabel.text = "v%s" % GameVersion.STRING
 	_style_menu()
 
 

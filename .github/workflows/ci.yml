@@ -41,5 +41,8 @@ jobs:
       - name: Import project
         run: godot --headless --import
 
+      - name: Check single version source
+        run: bash tools/check_version.sh
+
       - name: Run GUT tests
         run: godot --headless -s addons/gut/gut_cmdln.gd -gexit

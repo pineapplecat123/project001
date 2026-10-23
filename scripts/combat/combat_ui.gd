@@ -17,7 +17,6 @@ const ROLL_ANIM_MAX := 0.6
 const LOAD_INSERT_PAUSE := 0.14
 const BAG_GRID_COLS := 4
 const BAG_CELL_MIN := Vector2(140, 88)
-const VERSION := "0.2.13"
 
 const COL_PHASE := Color(1.0, 0.92, 0.45)
 const COL_HP_OK := Color(0.45, 0.95, 0.55)
@@ -103,7 +102,7 @@ func _ready() -> void:
 	btn_reward_skip.pressed.connect(_on_reward_skip)
 	btn_reward_next.pressed.connect(_on_reward_continue)
 	dimmer.gui_input.connect(_on_dimmer_input)
-	version_label.text = "v%s" % VERSION
+	version_label.text = "v%s" % GameVersion.STRING
 	mag_title.text = "弹夹转轮（大盘带六仓转 · 红圈正上击发固定 · ◀左上装弹 · LOAD一发一转 · 满后随机转）"
 	_style_overlay_panels()
 	_build_board_cells()

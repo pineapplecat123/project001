@@ -137,6 +137,12 @@ Bot 每次遇到需决策事项时，先自评重要度，再按对应时机行�
 
 ## 七、技术备忘
 
+
+**显示版本号（单一来源）**：
+- 发版只改 `scripts/game_version.gd` 里的 `GameVersion.STRING`。
+- 主菜单 / 地图 / 战斗 UI 一律读 `GameVersion.STRING` 显示 `v%s`，禁止再写 `const VERSION`。
+- 提交前可跑 `tools/check_version.sh`；GUT `test_game_version.gd` 也会卡住重复定义。
+
 **Web 导出约束**：
 - **Web 导出预设**必须使用 GL Compatibility 渲染器（当前主目标）。
 - 允许保留/新增桌面或移动导出预设，并可在这些非 Web 预设上使用 Forward+/Mobile，为后期扩展留口；不得把工程默认渲染器改离 GL Compatibility，除非你主动批准。
@@ -155,6 +161,9 @@ Bot 每次遇到需决策事项时，先自评重要度，再按对应时机行�
 ---
 
 ## 修改日志
+
+### v1.3.1（2026-10-23 Asia/Shanghai）
+- 发版显示版本号收成单一来源：`GameVersion.STRING`（`scripts/game_version.gd`）；禁止 UI 脚本再写 `const VERSION`。
 
 ### v1.3（2026-10-21 23:40 Asia/Shanghai）
 - 仓库连接说明改为经 fine-grained PAT 推送（非 Cursor GitHub 集成）。

@@ -671,5 +671,5 @@ grow_horizontal = 2
 grow_vertical = 0
 theme_override_font_sizes/font_size = 14
 theme_override_colors/font_color = Color(0.55, 0.55, 0.6, 1)
-text = "v0.2.13"
+text = "v0.2.14"
 horizontal_alignment = 1

@@ -1,3 +1,8 @@
+## 2026-10-23（v0.2.14）
+- 版本号收成单一来源 `scripts/game_version.gd` → `GameVersion.STRING`；主菜单/地图/战斗不再各自 `const VERSION`。
+- 加 `tools/check_version.sh` + GUT `test_game_version.gd`；CI 顺带跑检查。
+- bump 显示为 `0.2.14`，避免再出现菜单还停在旧号。
+
 # BOT_LOG
 
 ## 2026-10-21
