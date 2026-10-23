@@ -93,7 +93,7 @@ func format_ammo_detail_text(ammo_id: int) -> String:
 	var tag_s := "、".join(tags) if tags is Array and tags.size() > 0 else "无"
 	return "名称：%s\n基础伤害：%s\n标签：%s\n效果：\n%s" % [nm, dmg_s, tag_s, special]
 
-## 奖励三选一用短摘要：基础伤 + special 截断（高对比按钮旁展示，勿整段）。
+## 奖励三选一用短摘要：优先 ammo.json 的 blurb；否则从 special 截断。旁注勿整段。
 func format_ammo_reward_blurb(ammo_id: int, max_chars: int = 28) -> String:
 	if ammo_id == CombatConstants.INVALID_AMMO_ID:
 		return "伤0 · 占袋无效弹"
@@ -101,18 +101,21 @@ func format_ammo_reward_blurb(ammo_id: int, max_chars: int = 28) -> String:
 	if def.is_empty():
 		return "未知弹药"
 	var dmg = def.get("base_damage", null)
-	var special := str(def.get("special", "")).strip_edges()
-	# 取第一句或到逗号/句号
-	for sep in ["。", "；", "，", ".", ";", ","]:
-		var idx := special.find(sep)
-		if idx >= 0 and idx <= max_chars + 4:
-			special = special.substr(0, idx)
-			break
-	if special.length() > max_chars:
-		special = special.substr(0, max_chars) + "…"
-	if special.is_empty() or special == "无" or special.begins_with("无，"):
-		special = "常规"
+	var blurb := str(def.get("blurb", "")).strip_edges()
+	if blurb.is_empty():
+		blurb = str(def.get("special", "")).strip_edges()
+		for sep in ["。", "；", "，", ".", ";", ","]:
+			var idx := blurb.find(sep)
+			if idx >= 0 and idx <= max_chars + 4:
+				blurb = blurb.substr(0, idx)
+				break
+		if blurb.length() > max_chars:
+			blurb = blurb.substr(0, max_chars) + "…"
+		if blurb.is_empty() or blurb == "无" or blurb.begins_with("无，") or blurb.begins_with("无特殊"):
+			blurb = "常规"
+	elif blurb.length() > max_chars:
+		blurb = blurb.substr(0, max_chars) + "…"
 	if dmg == null:
-		return special
-	return "伤%s · %s" % [str(dmg), special]
+		return blurb
+	return "伤%s · %s" % [str(dmg), blurb]
 
