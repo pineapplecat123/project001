@@ -1,5 +1,5 @@
 class_name CombatState
-## 战斗状态机。清场后奖励三选一，结算后再下一波；ROLL/FIRE/UNLOAD 均结束玩家行动；LOAD 可逐步装填。
+## 战斗状态机。清场后奖励三选一，结算后再下一波；ROLL/FIRE/UNLOAD 均结束玩家行动（怪前进）；LOAD 可逐步装填。ROLL 不清空弹匣：怪回合后若匣内仍有弹则回 AWAIT_ACTION。
 
 enum Phase {
 	AWAIT_LOAD,
@@ -896,7 +896,7 @@ func resolve_after_player_action() -> void:
 	_emit()
 
 
-## 随机转轮并结束本回合（进怪物回合）。UI 动画路径：先 apply_roll 再 resolve_after_player_action。
+## 随机转轮并结束本回合（进怪物回合）。匣内仍有弹则怪回合后回 AWAIT_ACTION。UI：先 apply_roll 再 resolve_after_player_action。
 func begin_roll() -> bool:
 	if apply_roll() < 0:
 		return false
@@ -983,8 +983,13 @@ func _run_enemy_turn() -> void:
 	# Boss 独特效果：每怪物回合向袋塞无效弹（灰盒暂定）
 	if encounter_kind == EncounterKind.BOSS:
 		_inject_invalid_ammo(CombatConstants.BOSS_INVALID_PER_ENEMY_TURN, "回合末")
-	_set_phase(Phase.AWAIT_LOAD)
-	_log("--- 请装填 ---")
+	# ROLL 不清空弹匣：匣内仍有弹 → 可继续 FIRE/ROLL/UNLOAD；仅空匣才要求装填
+	if magazine.is_empty():
+		_set_phase(Phase.AWAIT_LOAD)
+		_log("--- 请装填 ---")
+	else:
+		_set_phase(Phase.AWAIT_ACTION)
+		_log("--- 请选择行动（膛内仍有弹药）---")
 
 
 func _tick_bleed_end_of_enemy_turn() -> void:

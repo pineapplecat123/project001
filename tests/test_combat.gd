@@ -107,7 +107,7 @@ func test_stepwise_fire_api() -> void:
 
 
 func test_roll_ends_turn_and_enemy_advances() -> void:
-	## ROLL 消耗回合：转轮后进怪物回合，怪前进一格，回到 AWAIT_LOAD。
+	## ROLL 消耗回合：转轮后进怪物回合，怪前进一格；匣内仍有弹 → AWAIT_ACTION，可再射/roll/卸。
 	var cs := CombatState.new(99)
 	cs.start_graybox(99)
 	cs.enemies[0].hp = 100
@@ -119,13 +119,13 @@ func test_roll_ends_turn_and_enemy_advances() -> void:
 	assert_true(cs.begin_roll())
 	var order_after: Array[int] = cs.magazine.fire_order()
 	assert_eq(order_after.size(), order_before.size())
-	assert_eq(cs.phase, CombatState.Phase.AWAIT_LOAD)
+	assert_eq(cs.phase, CombatState.Phase.AWAIT_ACTION)
 	assert_eq(cs.enemies[0].cell, start_cell - 1)
 	assert_eq(cs.player_hp, hp_before)
-	assert_true(cs.can_load())
-	assert_false(cs.can_start_roll())
-	assert_false(cs.can_unload())
-	assert_false(cs.can_fire())
+	assert_false(cs.can_load())
+	assert_true(cs.can_start_roll())
+	assert_true(cs.can_unload())
+	assert_true(cs.can_fire())
 
 
 func test_distant_enemy_multiple_turns_no_player_damage() -> void:
@@ -339,7 +339,7 @@ func test_bag_draw_is_random_not_fifo() -> void:
 
 
 func test_apply_roll_without_enemy_turn() -> void:
-	## apply_roll 本身只转轮（装填后 spin 复用）；显式 resolve 才进怪回合。
+	## apply_roll 本身只转轮（装填后 spin 复用）；显式 resolve 才进怪回合；匣内有弹回 AWAIT_ACTION。
 	var cs := CombatState.new(33)
 	cs.start_graybox(33)
 	cs.enemies[0].hp = 100
@@ -353,11 +353,14 @@ func test_apply_roll_without_enemy_turn() -> void:
 	assert_eq(cs.enemies[0].cell, cell_before)
 	cs.resolve_after_player_action()
 	assert_eq(cs.enemies[0].cell, cell_before - 1)
-	assert_eq(cs.phase, CombatState.Phase.AWAIT_LOAD)
+	assert_eq(cs.phase, CombatState.Phase.AWAIT_ACTION)
+	assert_true(cs.can_fire())
+	assert_true(cs.can_start_roll())
+	assert_true(cs.can_unload())
 
 
 func test_begin_roll_consumes_turn_like_unload() -> void:
-	## begin_roll 与卸除一样耗回合：怪前进，回到装弹。
+	## begin_roll 耗回合：怪前进；与卸除不同——匣未空，回 AWAIT_ACTION 可继续行动。
 	var cs := CombatState.new(44)
 	cs.start_graybox(44)
 	cs.enemies[0].hp = 999
@@ -366,10 +369,11 @@ func test_begin_roll_consumes_turn_like_unload() -> void:
 	cs.do_load()
 	assert_true(cs.begin_roll())
 	assert_eq(cs.enemies[0].cell, cell0 - 1)
-	assert_eq(cs.phase, CombatState.Phase.AWAIT_LOAD)
-	assert_false(cs.can_fire())
-	assert_false(cs.can_unload())
-	assert_true(cs.can_load())
+	assert_eq(cs.phase, CombatState.Phase.AWAIT_ACTION)
+	assert_true(cs.can_fire())
+	assert_true(cs.can_unload())
+	assert_true(cs.can_start_roll())
+	assert_false(cs.can_load())
 
 
 func test_reward_generate_three_choices() -> void:
@@ -691,8 +695,8 @@ func test_partial_load_then_next_turn_reshuffles_no_ammo_lose() -> void:
 	assert_true(cs.discard.is_empty())
 
 
-func test_roll_returns_mag_to_bag_next_load() -> void:
-	## ROLL 不耗弹；下回合 LOAD 归还膛内弹，不应丢弹或判弹药耗尽。
+func test_roll_keeps_mag_and_can_act_after_enemy_turn() -> void:
+	## ROLL 不耗弹；怪回合后匣内仍有弹 → AWAIT_ACTION；卸除后再装不丢弹、不判耗尽。
 	var cs := CombatState.new(77)
 	cs.start_graybox(77)
 	cs.enemies[0].hp = 999
@@ -707,9 +711,15 @@ func test_roll_returns_mag_to_bag_next_load() -> void:
 	var steps: int = cs.apply_roll()
 	assert_gte(steps, 1)
 	cs.resolve_after_player_action()
-	assert_eq(cs.phase, CombatState.Phase.AWAIT_LOAD)
-	# 膛内仍有 6 发（尚未 begin_load）
+	assert_eq(cs.phase, CombatState.Phase.AWAIT_ACTION)
 	assert_eq(cs.magazine.loaded_count(), 6)
+	assert_true(cs.can_fire())
+	assert_true(cs.can_start_roll())
+	assert_true(cs.can_unload())
+	assert_false(cs.can_load())
+	# 卸除清空匣 → 怪回合 → AWAIT_LOAD，再装回
+	assert_true(cs.do_unload())
+	assert_eq(cs.phase, CombatState.Phase.AWAIT_LOAD)
 	assert_true(cs.do_load())
 	assert_ne(cs.lose_reason, CombatState.LoseReason.AMMO_EXHAUSTED)
 	assert_eq(cs.magazine.loaded_count(), 6)

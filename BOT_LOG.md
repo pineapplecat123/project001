@@ -1,4 +1,11 @@
 
+
+## 2026-10-23（v0.2.21）
+
+- 根因：v0.2.19 让 ROLL 走 `resolve_after_player_action` → `_run_enemy_turn` 末尾**总是** `AWAIT_LOAD`，即使匣内仍有弹，导致不能再射/roll/卸。
+- 修复：怪回合结束后若 `magazine` 非空 → `AWAIT_ACTION`；仅空匣 → `AWAIT_LOAD`。保留 ROLL 耗回合/怪前进。
+- GUT 更新对应断言；版本 `0.2.21`。
+
 ## 2026-10-23（字体缺字 / v0.2.20）
 
 - 弹药介绍乱码：根因是 `NotoSansSC-UI.ttf` 子集缺字（非 JSON 编码）。缺过：严享依处尚录挂断枪止片近追那附限首 等（重建前相对 charset 共 66 字）。
