@@ -1,5 +1,5 @@
 extends Control
-## 主菜单：开始冒险（地图）/ 练习战斗 / 更新日志 / 退出；底部版本号。
+## 主菜单：开始冒险（地图）/ 无限模式 / 练习战斗 / 更新日志 / 退出；底部版本号。
 
 const CHANGELOG_PATH := "res://data/changelog.json"
 
@@ -16,6 +16,7 @@ func _ready() -> void:
 
 func _style_menu() -> void:
 	%BtnStart.custom_minimum_size = Vector2(220, 48)
+	%BtnEndless.custom_minimum_size = Vector2(220, 44)
 	%BtnPractice.custom_minimum_size = Vector2(220, 44)
 	%BtnChangelog.custom_minimum_size = Vector2(220, 44)
 	%BtnQuit.custom_minimum_size = Vector2(220, 40)
@@ -91,6 +92,7 @@ func _set_changelog_open(open: bool) -> void:
 	%ChangelogDimmer.visible = open
 	%ChangelogPanel.visible = open
 	%BtnStart.disabled = open
+	%BtnEndless.disabled = open
 	%BtnPractice.disabled = open
 	%BtnChangelog.disabled = open
 	%BtnQuit.disabled = open
@@ -101,8 +103,13 @@ func _on_start_pressed() -> void:
 	get_tree().change_scene_to_file("res://scenes/map.tscn")
 
 
+func _on_endless_pressed() -> void:
+	RunState.request_endless_combat()
+	get_tree().change_scene_to_file("res://scenes/combat.tscn")
+
+
 func _on_practice_pressed() -> void:
-	RunState.end_run()
+	RunState.request_practice_combat()
 	get_tree().change_scene_to_file("res://scenes/combat.tscn")
 
 

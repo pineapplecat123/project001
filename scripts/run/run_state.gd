@@ -24,10 +24,30 @@ var pending_shop_node_id: int = -1
 var pending_rest_node_id: int = -1
 var run_finished: bool = false
 var last_message: String = ""
+## 主菜单「无限模式」进入战斗时置 true；战斗读取后清零。
+var pending_endless: bool = false
 
 
 func is_in_map_run() -> bool:
 	return active
+
+
+func request_endless_combat() -> void:
+	## 主菜单无限模式：退出地图 run，标记下一场战斗为无限。
+	end_run()
+	pending_endless = true
+
+
+func request_practice_combat() -> void:
+	end_run()
+	pending_endless = false
+
+
+func consume_pending_endless() -> bool:
+	var v := pending_endless
+	pending_endless = false
+	return v
+
 
 
 func begin_run(seed_value: int = 0, force_placeholder_kind: String = "") -> void:
@@ -51,10 +71,12 @@ func begin_run(seed_value: int = 0, force_placeholder_kind: String = "") -> void
 	pending_combat_node_id = -1
 	pending_shop_node_id = -1
 	pending_rest_node_id = -1
+	pending_endless = false
 
 
 func end_run() -> void:
 	active = false
+	pending_endless = false
 	pending_combat_node_id = -1
 	pending_shop_node_id = -1
 	pending_rest_node_id = -1

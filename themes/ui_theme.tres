@@ -17,3 +17,4 @@ OptionButton/fonts/font = ExtResource("1_font")
 ItemList/fonts/font = ExtResource("1_font")
 Tree/fonts/font = ExtResource("1_font")
 PopupMenu/fonts/font = ExtResource("1_font")
+Label/constants/line_spacing = 3

@@ -19,9 +19,9 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 theme_override_constants/margin_left = 14
-theme_override_constants/margin_top = 10
+theme_override_constants/margin_top = 28
 theme_override_constants/margin_right = 14
-theme_override_constants/margin_bottom = 10
+theme_override_constants/margin_bottom = 14
 
 [node name="MainHBox" type="HBoxContainer" parent="Margin"]
 layout_mode = 2
@@ -198,16 +198,16 @@ fit_content = false
 
 [node name="BagPanel" type="PanelContainer" parent="Margin/MainHBox"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(280, 0)
+custom_minimum_size = Vector2(320, 0)
 layout_mode = 2
 size_flags_vertical = 3
 
 [node name="BagMargin" type="MarginContainer" parent="Margin/MainHBox/BagPanel"]
 layout_mode = 2
-theme_override_constants/margin_left = 10
-theme_override_constants/margin_top = 8
-theme_override_constants/margin_right = 10
-theme_override_constants/margin_bottom = 8
+theme_override_constants/margin_left = 12
+theme_override_constants/margin_top = 12
+theme_override_constants/margin_right = 12
+theme_override_constants/margin_bottom = 10
 
 [node name="BagVBox" type="VBoxContainer" parent="Margin/MainHBox/BagPanel/BagMargin"]
 layout_mode = 2
@@ -245,9 +245,9 @@ anchor_top = 0.0
 anchor_right = 0.0
 anchor_bottom = 0.0
 offset_left = 8.0
-offset_top = 8.0
+offset_top = 12.0
 offset_right = 148.0
-offset_bottom = 44.0
+offset_bottom = 48.0
 theme_override_font_sizes/font_size = 15
 text = "返回主菜单"
 

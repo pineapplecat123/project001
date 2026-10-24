@@ -137,6 +137,39 @@ func test_practice_win_resets_bag_and_magazine() -> void:
 	assert_eq(cs.bag.size(), CombatConstants.STARTER_WHITE_COUNT + 1)
 
 
+
+
+func test_endless_win_keeps_bag() -> void:
+	## 无限模式胜利：不重置牌库；中途清场未击发归袋；奖励弹叠加入袋；可下一波。
+	var cs := CombatState.new(840)
+	cs.start_graybox(840, true)
+	assert_eq(cs.from_map_run, false)
+	assert_true(cs.endless_mode)
+	cs.dev_force_load([1, 1, 1, 1, 1, 1] as Array[int])
+	cs.bag.clear()
+	cs.bag.append(FireResolver.ID_GOLD)
+	cs.bag.append(FireResolver.ID_FIRE)
+	assert_true(cs.begin_fire())
+	var shots := 0
+	while cs.phase == CombatState.Phase.FIRING:
+		cs.fire_next_shot()
+		shots += 1
+	# 平民 10HP / 白弹 3 → 约 4 发清场，剩 2 归袋
+	assert_eq(shots, 4)
+	assert_eq(cs.phase, CombatState.Phase.WON)
+	assert_eq(cs.discard.size(), 4)
+	# 原袋 2 + 归还未击发 2 = 4（不重置成 12 白）
+	assert_eq(cs.bag.size(), 4)
+	assert_true(cs.bag.has(FireResolver.ID_GOLD))
+	assert_true(cs.bag.has(FireResolver.ID_FIRE))
+	assert_true(cs.pick_reward_ammo(0))
+	assert_eq(cs.bag.size(), 5)
+	assert_true(cs.can_start_next_wave())
+	assert_true(cs.start_next_wave())
+	assert_eq(cs.wave_index, 2)
+	assert_eq(cs.bag.size(), 5)
+
+
 func test_map_run_win_does_not_reset_bag() -> void:
 	## 地图 run 胜利不重置袋；中途清场未击发归袋。
 	var cs := CombatState.new(812)

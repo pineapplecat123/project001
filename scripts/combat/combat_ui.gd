@@ -125,18 +125,20 @@ func _ready() -> void:
 	dev_panel.visible = false
 	reward_panel.visible = false
 	dimmer.visible = false
-	# 顶栏给左上角「返回主菜单」留空，避免叠字
+	# 顶栏给左上角「返回主菜单」留空，避免叠字；并给中文行高留余量防裁切
 	var spacer := Control.new()
 	spacer.name = "TopBarCornerSpacer"
 	spacer.custom_minimum_size = Vector2(150, 0)
 	var top_bar: HBoxContainer = phase_label.get_parent()
 	top_bar.add_child(spacer)
 	top_bar.move_child(spacer, 0)
+	_ensure_top_labels_uncropped()
 	if RunState.is_in_map_run() and RunState.pending_combat_node_id >= 0:
 		state.start_from_run(RunState.combat_snapshot())
 		btn_menu.text = "放弃回地图"
 	else:
-		state.start_graybox()
+		var endless := RunState.consume_pending_endless()
+		state.start_graybox(0, endless)
 		btn_menu.text = "返回主菜单"
 		btn_next_wave.text = "下一波 NEXT"
 	_refresh()
@@ -189,6 +191,29 @@ func _style_corner_buttons() -> void:
 		btn.add_theme_stylebox_override("hover", hover)
 		btn.add_theme_stylebox_override("pressed", pressed)
 		btn.add_theme_stylebox_override("focus", hover)
+
+
+func _ensure_top_labels_uncropped() -> void:
+	# Noto SC 字形常高出 Label 度量，贴顶会被视口裁掉；加大行距与最小高度
+	var labels: Array[Label] = [
+		phase_label, hp_label, bag_label, discard_label, gold_label, turn_label, bag_header_label
+	]
+	for lab in labels:
+		if lab == null:
+			continue
+		lab.add_theme_constant_override("line_spacing", 4)
+		lab.clip_text = false
+		var min_h := maxf(lab.get_minimum_size().y, 28.0)
+		lab.custom_minimum_size = Vector2(lab.custom_minimum_size.x, min_h)
+	# 袋面板略加内边，避免标题贴边被裁
+	if bag_panel != null:
+		var style := bag_panel.get_theme_stylebox("panel")
+		if style is StyleBoxFlat:
+			var flat := (style as StyleBoxFlat).duplicate() as StyleBoxFlat
+			flat.content_margin_top = maxf(flat.content_margin_top, 8.0)
+			flat.content_margin_left = maxf(flat.content_margin_left, 6.0)
+			flat.content_margin_right = maxf(flat.content_margin_right, 6.0)
+			bag_panel.add_theme_stylebox_override("panel", flat)
 
 
 func _ensure_long_press_timer() -> void:
@@ -734,7 +759,10 @@ func _refresh_reward_panel() -> void:
 				reward_hint.text = "领取完毕。返回地图选择下一节点（本战不会再刷下一波）。无伤/三回合额外金灰盒暂未结算。"
 				btn_reward_next.text = "返回地图 RETURN"
 		else:
-			reward_hint.text = "可继续下一波（练习战胜利后弹药已重置为开局牌库）。练习战无地图。无伤/三回合额外金灰盒暂未结算。"
+			if state.endless_mode:
+				reward_hint.text = "可继续下一波（无限模式：牌库与奖励弹药跨波保留）。无伤/三回合额外金灰盒暂未结算。"
+			else:
+				reward_hint.text = "可继续下一波（练习战胜利后弹药已重置为开局牌库）。练习战无地图。无伤/三回合额外金灰盒暂未结算。"
 			btn_reward_next.text = "下一波 NEXT"
 		btn_reward_skip.visible = false
 		btn_reward_next.visible = true
@@ -1177,7 +1205,7 @@ func _refresh() -> void:
 	discard_label.add_theme_color_override("font_color", COL_DISCARD)
 	gold_label.text = "金币 %d" % state.gold
 	gold_label.add_theme_color_override("font_color", COL_GOLD)
-	turn_label.text = "回合 %d · 第 %d 波 · %s" % [state.turn_index, state.wave_index, state.encounter_label()]
+	turn_label.text = "回合 %d · 第 %d 波 · %s" % [state.turn_index, state.wave_index, ("无限" if state.endless_mode else state.encounter_label())]
 	turn_label.add_theme_color_override("font_color", COL_TURN)
 	var busy := _busy() or state.is_busy_firing() or state.is_busy_loading()
 	btn_load.disabled = busy or not state.can_load()
@@ -1309,7 +1337,7 @@ func _refresh_hud_only() -> void:
 	discard_label.add_theme_color_override("font_color", COL_DISCARD)
 	gold_label.text = "金币 %d" % state.gold
 	gold_label.add_theme_color_override("font_color", COL_GOLD)
-	turn_label.text = "回合 %d · 第 %d 波 · %s" % [state.turn_index, state.wave_index, state.encounter_label()]
+	turn_label.text = "回合 %d · 第 %d 波 · %s" % [state.turn_index, state.wave_index, ("无限" if state.endless_mode else state.encounter_label())]
 	turn_label.add_theme_color_override("font_color", COL_TURN)
 	var busy := _busy() or state.is_busy_firing() or state.is_busy_loading()
 	btn_load.disabled = true if (_loading or _firing or _rolling or _wheel_animating) else (busy or not state.can_load())

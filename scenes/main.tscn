@@ -55,7 +55,7 @@ unique_name_in_owner = true
 layout_mode = 2
 theme_override_font_sizes/font_size = 14
 autowrap_mode = 3
-text = "开始冒险：地图选节点 → 战斗 → 领奖 → 回地图。练习战斗：无地图，可下一波。"
+text = "开始冒险：地图选节点 → 战斗 → 领奖 → 回地图。无限模式：一直打、牌库不重置、每波有奖励。练习战斗：每波重置牌库。"
 horizontal_alignment = 1
 
 [node name="Spacer" type="Control" parent="Center"]
@@ -69,6 +69,14 @@ layout_mode = 2
 size_flags_horizontal = 4
 theme_override_font_sizes/font_size = 20
 text = "开始冒险"
+
+[node name="BtnEndless" type="Button" parent="Center"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(220, 44)
+layout_mode = 2
+size_flags_horizontal = 4
+theme_override_font_sizes/font_size = 18
+text = "无限模式"
 
 [node name="BtnPractice" type="Button" parent="Center"]
 unique_name_in_owner = true
@@ -180,6 +188,7 @@ size_flags_horizontal = 3
 theme_override_constants/separation = 6
 
 [connection signal="pressed" from="Center/BtnStart" to="." method="_on_start_pressed"]
+[connection signal="pressed" from="Center/BtnEndless" to="." method="_on_endless_pressed"]
 [connection signal="pressed" from="Center/BtnPractice" to="." method="_on_practice_pressed"]
 [connection signal="pressed" from="Center/BtnChangelog" to="." method="_on_changelog_pressed"]
 [connection signal="pressed" from="Center/BtnQuit" to="." method="_on_quit_pressed"]

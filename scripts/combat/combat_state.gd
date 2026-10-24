@@ -51,6 +51,8 @@ var wave_player_turns: int = 0
 
 ## 是否来自地图 run（胜利领奖后回地图；练习战则下一波）
 var from_map_run: bool = false
+## 无限模式：可一直下一波；胜利不重置牌库（与练习战相对）
+var endless_mode: bool = false
 ## 遭遇类型：普通 / 精英 / Boss（灰盒）
 var encounter_kind: int = EncounterKind.NORMAL
 ## 本波实际发放的基础金币（供 UI 显示）
@@ -90,7 +92,7 @@ func _init(seed_value: int = 0) -> void:
 		rng.randomize()
 
 
-func start_graybox(seed_value: int = 0) -> void:
+func start_graybox(seed_value: int = 0, endless: bool = false) -> void:
 	if seed_value != 0:
 		rng.seed = seed_value
 	BulletEffectRegistry.ensure_defaults()
@@ -120,11 +122,13 @@ func start_graybox(seed_value: int = 0) -> void:
 	wave_took_damage = false
 	wave_player_turns = 0
 	from_map_run = false
+	endless_mode = endless
 	encounter_kind = EncounterKind.NORMAL
 	last_reward_base_gold = 0
 	_set_phase(Phase.AWAIT_LOAD)
-	_log("战斗开始：白色弹药 ×%d · 第 %d 波。（可用开发者工具加入其它弹药）" % [
-		CombatConstants.STARTER_WHITE_COUNT, wave_index
+	var mode_label := "无限模式" if endless_mode else "练习战斗"
+	_log("%s：白色弹药 ×%d · 第 %d 波。（可用开发者工具加入其它弹药）" % [
+		mode_label, CombatConstants.STARTER_WHITE_COUNT, wave_index
 	])
 	_emit()
 
@@ -137,6 +141,7 @@ func start_from_run(payload: Dictionary, seed_value: int = 0) -> void:
 		rng.seed = int(payload["seed"])
 	BulletEffectRegistry.ensure_defaults()
 	from_map_run = true
+	endless_mode = false
 	encounter_kind = _parse_encounter(str(payload.get("encounter", "normal")))
 	last_reward_base_gold = 0
 	player_max_hp = int(payload.get("player_max_hp", CombatConstants.PLAYER_MAX_HP))
@@ -1087,8 +1092,8 @@ func _enter_won() -> void:
 		return
 	_set_phase(Phase.WON)
 	_log("胜利：敌人全灭。")
-	# 练习战：胜利后先把弹仓/弃牌/袋重置为开局练习牌库，再发奖励（选弹叠在初始袋上）
-	if not from_map_run:
+	# 练习战：胜利后重置为开局白弹再发奖；无限模式/地图 run 保留牌库
+	if not from_map_run and not endless_mode:
 		_reset_practice_ammo_to_starter()
 	_begin_reward()
 
