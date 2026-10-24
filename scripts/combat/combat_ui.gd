@@ -1,11 +1,11 @@
 extends Control
-## 灰盒战斗 UI：棋盘 + 大圆转轮（带六小圆）+ LOAD/FIRE/ROLL/UNLOAD + 检视袋网格/详情 + 胜利奖励 + 开发者工具。
+## 灰盒战斗 UI：棋盘 + 大圆转轮（带六小圆）+ LOAD/FIRE/ROLL/UNLOAD + 右侧常驻弹药袋 + 悬停/长按详情 + 胜利奖励 + 角落开发者工具。
 ## 转轮：大盘(_disk)带着六小圆整盘转；红击发圈与装弹标挂在 MagWheel 上不转。
 ## 击发点=正上固定；上弹口=左上固定；LOAD 装左上→转60°；装满后 reroll；FIRE 射正上→转60°。
 
-const CELL_W := 96
-const CELL_H := 86
-const WHEEL_SIZE := 280.0
+const CELL_W := 72
+const CELL_H := 68
+const WHEEL_SIZE := 260.0
 const CHAMBER_SIZE := 68.0
 const WHEEL_RADIUS := 92.0
 const DISK_BG_SIZE := 248.0
@@ -17,8 +17,11 @@ const ROLL_ANIM_PER_STEP := 0.06
 const ROLL_ANIM_MAX := 1.05
 const ROLL_VISUAL_EXTRA_TURNS := 1
 const LOAD_INSERT_PAUSE := 0.14
-const BAG_GRID_COLS := 4
-const BAG_CELL_MIN := Vector2(140, 88)
+const BAG_GRID_COLS := 2
+const BAG_CELL_MIN := Vector2(128, 78)
+const LONG_PRESS_SEC := 0.45
+const DETAIL_PANEL_W := 360.0
+const DETAIL_PANEL_H := 320.0
 
 const COL_PHASE := Color(1.0, 0.92, 0.45)
 const COL_HP_OK := Color(0.45, 0.95, 0.55)
@@ -35,9 +38,17 @@ var state: CombatState
 var _chamber_panels: Array[Panel] = []
 var _disk: Control = null
 var _disk_bg: Panel = null
-var _bag_open: bool = false
 var _dev_open: bool = false
 var _detail_open: bool = false
+var _detail_ammo_id: int = -1
+var _hover_ammo_id: int = -1
+var _long_press_ammo_id: int = -1
+var _long_press_timer: Timer = null
+var _detail_from_hover: bool = false
+var _detail_from_long_press: bool = false
+var _ammo_detail_title: Label = null
+var _bag_inv_fingerprint: String = ""
+var _bag_refreshing: bool = false
 var _firing: bool = false
 var _rolling: bool = false
 var _loading: bool = false
@@ -67,14 +78,13 @@ var _ammo_detail_body: RichTextLabel = null
 @onready var btn_fire: Button = %BtnFire
 @onready var btn_roll: Button = %BtnRoll
 @onready var btn_unload: Button = %BtnUnload
-@onready var btn_bag: Button = %BtnBag
 @onready var btn_dev: Button = %BtnDev
 @onready var btn_menu: Button = %BtnMenu
 @onready var result_label: Label = %ResultLabel
 @onready var btn_next_wave: Button = %BtnNextWave
 @onready var bag_panel: PanelContainer = %BagPanel
 @onready var bag_list: VBoxContainer = %BagList
-@onready var btn_bag_close: Button = %BtnBagClose
+@onready var bag_header_label: Label = %BagHeaderLabel
 @onready var dev_panel: PanelContainer = %DevPanel
 @onready var reward_panel: PanelContainer = %RewardPanel
 @onready var reward_title: Label = %RewardTitle
@@ -96,9 +106,7 @@ func _ready() -> void:
 	btn_fire.pressed.connect(_on_fire)
 	btn_roll.pressed.connect(_on_roll)
 	btn_unload.pressed.connect(_on_unload)
-	btn_bag.pressed.connect(_toggle_bag)
 	btn_dev.pressed.connect(_toggle_dev)
-	btn_bag_close.pressed.connect(func(): _set_bag_open(false))
 	btn_next_wave.pressed.connect(_on_next_wave)
 	btn_menu.pressed.connect(_on_menu_pressed)
 	btn_reward_skip.pressed.connect(_on_reward_skip)
@@ -107,14 +115,23 @@ func _ready() -> void:
 	version_label.text = "v%s" % GameVersion.STRING
 	mag_title.text = "弹夹转轮（大盘带六仓转 · 红圈正上击发固定 · ◀左上装弹 · LOAD一发一转 · 满后随机转）"
 	_style_overlay_panels()
+	_style_corner_buttons()
+	_ensure_long_press_timer()
 	_build_board_cells()
 	_build_wheel_chambers()
 	_build_ammo_detail_panel()
 	_wire_dev_buttons()
-	bag_panel.visible = false
+	bag_panel.visible = true
 	dev_panel.visible = false
 	reward_panel.visible = false
 	dimmer.visible = false
+	# 顶栏给左上角「返回主菜单」留空，避免叠字
+	var spacer := Control.new()
+	spacer.name = "TopBarCornerSpacer"
+	spacer.custom_minimum_size = Vector2(150, 0)
+	var top_bar: HBoxContainer = phase_label.get_parent()
+	top_bar.add_child(spacer)
+	top_bar.move_child(spacer, 0)
 	if RunState.is_in_map_run() and RunState.pending_combat_node_id >= 0:
 		state.start_from_run(RunState.combat_snapshot())
 		btn_menu.text = "放弃回地图"
@@ -137,6 +154,52 @@ func _style_overlay_panels() -> void:
 		style.content_margin_top = 4
 		style.content_margin_bottom = 4
 		panel.add_theme_stylebox_override("panel", style)
+	# 右侧常驻袋：暖色描边更醒目
+	var bag_style := StyleBoxFlat.new()
+	bag_style.bg_color = Color(0.14, 0.12, 0.1, 0.94)
+	bag_style.set_border_width_all(2)
+	bag_style.border_color = Color(0.92, 0.72, 0.35, 0.95)
+	bag_style.set_corner_radius_all(10)
+	bag_style.content_margin_left = 2
+	bag_style.content_margin_right = 2
+	bag_style.content_margin_top = 2
+	bag_style.content_margin_bottom = 2
+	bag_panel.add_theme_stylebox_override("panel", bag_style)
+	if bag_header_label != null:
+		bag_header_label.add_theme_color_override("font_color", Color(1.0, 0.92, 0.55))
+
+
+func _style_corner_buttons() -> void:
+	for btn in [btn_menu, btn_dev]:
+		_apply_light_button_font(btn)
+		var normal := StyleBoxFlat.new()
+		normal.bg_color = Color(0.22, 0.2, 0.16, 0.92)
+		normal.set_border_width_all(2)
+		normal.border_color = Color(0.85, 0.7, 0.35, 0.9)
+		normal.set_corner_radius_all(8)
+		normal.content_margin_left = 10
+		normal.content_margin_right = 10
+		normal.content_margin_top = 6
+		normal.content_margin_bottom = 6
+		var hover := normal.duplicate()
+		hover.bg_color = Color(0.32, 0.28, 0.2, 0.96)
+		var pressed := normal.duplicate()
+		pressed.bg_color = Color(0.16, 0.14, 0.12, 0.96)
+		btn.add_theme_stylebox_override("normal", normal)
+		btn.add_theme_stylebox_override("hover", hover)
+		btn.add_theme_stylebox_override("pressed", pressed)
+		btn.add_theme_stylebox_override("focus", hover)
+
+
+func _ensure_long_press_timer() -> void:
+	if _long_press_timer != null:
+		return
+	_long_press_timer = Timer.new()
+	_long_press_timer.name = "AmmoLongPressTimer"
+	_long_press_timer.one_shot = true
+	_long_press_timer.wait_time = LONG_PRESS_SEC
+	_long_press_timer.timeout.connect(_on_long_press_timeout)
+	add_child(_long_press_timer)
 
 
 func _on_dimmer_input(event: InputEvent) -> void:
@@ -144,10 +207,9 @@ func _on_dimmer_input(event: InputEvent) -> void:
 		# 奖励面板必须选完，点遮罩不关闭
 		if _reward_open:
 			return
-		if _detail_open:
-			_set_detail_open(false)
+		if _detail_open and not _detail_from_hover:
+			_hide_ammo_detail()
 			return
-		_set_bag_open(false)
 		if _dev_open:
 			_toggle_dev()
 
@@ -598,48 +660,29 @@ func _on_next_wave() -> void:
 	_set_reward_open(false)
 
 
-func _toggle_bag() -> void:
-	_set_bag_open(not _bag_open)
-
-
-func _set_bag_open(open: bool) -> void:
-	if open and _reward_open:
-		return
-	_bag_open = open
-	bag_panel.visible = open
-	if open:
-		_dev_open = false
-		dev_panel.visible = false
-		_set_detail_open(false)
-		_refresh_bag_list()
-	else:
-		_set_detail_open(false)
-	_update_dimmer()
-
-
 func _toggle_dev() -> void:
 	if (not _dev_open) and _reward_open:
 		return
 	_dev_open = not _dev_open
 	dev_panel.visible = _dev_open
 	if _dev_open:
-		_bag_open = false
-		bag_panel.visible = false
+		_hide_ammo_detail()
 	_update_dimmer()
 
 
 func _update_dimmer() -> void:
-	dimmer.visible = _bag_open or _dev_open or _reward_open or _detail_open
+	# 悬停详情不盖遮罩；仅开发面板 / 奖励 / 长按钉住的详情用遮罩
+	var detail_needs_dim := _detail_open and _detail_from_long_press and not _detail_from_hover
+	dimmer.visible = _dev_open or _reward_open or detail_needs_dim
 
 
 func _set_reward_open(open: bool) -> void:
 	_reward_open = open
 	reward_panel.visible = open
 	if open:
-		_bag_open = false
 		_dev_open = false
-		bag_panel.visible = false
 		dev_panel.visible = false
+		_hide_ammo_detail()
 		_refresh_reward_panel()
 	_update_dimmer()
 
@@ -788,16 +831,33 @@ func _on_reward_skip() -> void:
 		_refresh_reward_panel()
 
 
+func _bag_inventory_fingerprint(inv: Dictionary) -> String:
+	var keys: Array = inv.keys()
+	keys.sort()
+	var parts: PackedStringArray = PackedStringArray()
+	for k in keys:
+		var e: Dictionary = inv[k]
+		parts.append("%s:%s/%s/%s" % [
+			str(k), str(e.get("bag", 0)), str(e.get("mag", 0)), str(e.get("discard", 0))
+		])
+	return "%s|g%d" % ["|".join(parts), state.gold]
+
+
 func _refresh_bag_list() -> void:
+	var inv: Dictionary = state.ammo_inventory_by_id()
+	var fp := _bag_inventory_fingerprint(inv)
+	if fp == _bag_inv_fingerprint and bag_list.get_child_count() > 0:
+		return
+	_bag_inv_fingerprint = fp
+	_bag_refreshing = true
 	for c in bag_list.get_children():
 		c.queue_free()
-	var inv: Dictionary = state.ammo_inventory_by_id()
 	var bag_n: int = state.bag.size()
 	var mag_n: int = state.magazine.loaded_count() if state.magazine != null else 0
 	var disc_n: int = state.discard.size()
 	var total_n: int = bag_n + mag_n + disc_n
 	var title := Label.new()
-	title.text = "牌库拥有（袋+膛+弃 · 共 %d 发：袋 %d / 膛 %d / 弃 %d）｜金币 %d" % [
+	title.text = "共 %d 发（袋 %d · 膛 %d · 弃 %d）\n金币 %d" % [
 		total_n, bag_n, mag_n, disc_n, state.gold
 	]
 	title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -808,11 +868,12 @@ func _refresh_bag_list() -> void:
 		empty.text = "（牌库空：袋、膛、弃皆无）"
 		bag_list.add_child(empty)
 		var tip0 := Label.new()
-		tip0.text = "亮=仍在袋可抽；暗=已上膛或在弃牌。袋空仍会列出拥有弹种。点击格子查看弹药数据与效果。"
+		tip0.text = "亮=可抽；暗=已上膛/弃牌。悬停或长按看效果。"
 		tip0.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		tip0.add_theme_font_size_override("font_size", 13)
 		tip0.add_theme_color_override("font_color", Color(0.7, 0.75, 0.85))
 		bag_list.add_child(tip0)
+		_bag_refreshing = false
 		return
 	var order_ids: Array[int] = []
 	for k in inv.keys():
@@ -896,19 +957,81 @@ func _refresh_bag_list() -> void:
 		cell.mouse_filter = Control.MOUSE_FILTER_STOP
 		cell.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 		var aid: int = ammo_id
-		cell.gui_input.connect(func(ev: InputEvent): _on_bag_cell_input(ev, aid))
+		cell.mouse_entered.connect(func(): _on_bag_cell_hover_enter(aid, cell))
+		cell.mouse_exited.connect(func(): _on_bag_cell_hover_exit(aid))
+		cell.gui_input.connect(func(ev: InputEvent): _on_bag_cell_input(ev, aid, cell))
 		grid.add_child(cell)
 	var tip := Label.new()
-	tip.text = "亮格=仍有在袋可抽；暗格=该种已全部上膛或在弃牌；黄边=部分上膛。袋空仍显示牌库拥有。点击查看效果。网格不表示抽弹顺序。"
+	tip.text = "亮=可抽；暗=全在膛/弃；黄边=部分上膛。悬停/长按看效果。格序不是抽序。"
 	tip.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	tip.add_theme_font_size_override("font_size", 13)
 	tip.add_theme_color_override("font_color", Color(0.7, 0.75, 0.85))
 	bag_list.add_child(tip)
+	_bag_refreshing = false
+	if _detail_open and _hover_ammo_id >= 0:
+		# 刷新后尽量保持悬停详情
+		_show_ammo_detail(_hover_ammo_id, null, true, false)
 
 
-func _on_bag_cell_input(event: InputEvent, ammo_id: int) -> void:
-	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		_show_ammo_detail(ammo_id)
+func _on_bag_cell_hover_enter(ammo_id: int, cell: Control) -> void:
+	_hover_ammo_id = ammo_id
+	_show_ammo_detail(ammo_id, cell, true, false)
+
+
+func _on_bag_cell_hover_exit(ammo_id: int) -> void:
+	if _bag_refreshing:
+		return
+	if _hover_ammo_id == ammo_id:
+		_hover_ammo_id = -1
+	if _detail_from_hover and not _detail_from_long_press and _detail_ammo_id == ammo_id:
+		_hide_ammo_detail()
+
+
+func _on_bag_cell_input(event: InputEvent, ammo_id: int, cell: Control) -> void:
+	# 触屏长按：按下开始计时，抬起结束；桌面仍以悬停为主
+	if event is InputEventScreenTouch:
+		var st := event as InputEventScreenTouch
+		if st.pressed:
+			_begin_long_press(ammo_id, cell)
+		else:
+			_cancel_long_press(true)
+		return
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		var mb := event as InputEventMouseButton
+		# 仅在触控仿真 / 无悬停设备时用按住当长按；普通鼠标点击不钉住
+		if mb.pressed:
+			if DisplayServer.is_touchscreen_available() and _hover_ammo_id < 0:
+				_begin_long_press(ammo_id, cell)
+		else:
+			if _detail_from_long_press:
+				_cancel_long_press(true)
+
+
+func _begin_long_press(ammo_id: int, cell: Control) -> void:
+	_ensure_long_press_timer()
+	_long_press_ammo_id = ammo_id
+	_long_press_timer.stop()
+	_long_press_timer.start(LONG_PRESS_SEC)
+	# 记下锚定控件，timeout 时再弹
+	_long_press_timer.set_meta("cell", cell)
+
+
+func _cancel_long_press(hide_if_long: bool) -> void:
+	if _long_press_timer != null:
+		_long_press_timer.stop()
+	_long_press_ammo_id = -1
+	if hide_if_long and _detail_from_long_press:
+		_hide_ammo_detail()
+
+
+func _on_long_press_timeout() -> void:
+	var ammo_id := _long_press_ammo_id
+	if ammo_id < 0:
+		return
+	var cell: Control = null
+	if _long_press_timer != null and _long_press_timer.has_meta("cell"):
+		cell = _long_press_timer.get_meta("cell")
+	_show_ammo_detail(ammo_id, cell, false, true)
 
 
 func _build_ammo_detail_panel() -> void:
@@ -916,61 +1039,89 @@ func _build_ammo_detail_panel() -> void:
 	_ammo_detail_panel.name = "AmmoDetailPanel"
 	_ammo_detail_panel.visible = false
 	_ammo_detail_panel.z_index = 14
-	_ammo_detail_panel.set_anchors_preset(Control.PRESET_CENTER)
-	_ammo_detail_panel.offset_left = -300.0
-	_ammo_detail_panel.offset_top = -220.0
-	_ammo_detail_panel.offset_right = 300.0
-	_ammo_detail_panel.offset_bottom = 220.0
+	_ammo_detail_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_ammo_detail_panel.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	_ammo_detail_panel.offset_left = 0.0
+	_ammo_detail_panel.offset_top = 0.0
+	_ammo_detail_panel.offset_right = DETAIL_PANEL_W
+	_ammo_detail_panel.offset_bottom = DETAIL_PANEL_H
 	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.11, 0.12, 0.17, 0.98)
+	style.bg_color = Color(0.12, 0.11, 0.09, 0.98)
 	style.set_border_width_all(2)
-	style.border_color = Color(0.55, 0.7, 0.95, 0.95)
+	style.border_color = Color(0.95, 0.78, 0.4, 0.95)
 	style.set_corner_radius_all(10)
-	style.content_margin_left = 16
-	style.content_margin_right = 16
-	style.content_margin_top = 14
-	style.content_margin_bottom = 14
+	style.content_margin_left = 14
+	style.content_margin_right = 14
+	style.content_margin_top = 12
+	style.content_margin_bottom = 12
 	_ammo_detail_panel.add_theme_stylebox_override("panel", style)
 	var vbox := VBoxContainer.new()
-	vbox.add_theme_constant_override("separation", 10)
-	var header := HBoxContainer.new()
-	var title := Label.new()
-	title.name = "DetailTitle"
-	title.text = "弹药详情"
-	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	title.add_theme_font_size_override("font_size", 22)
-	var btn_close := Button.new()
-	btn_close.text = "关闭"
-	btn_close.custom_minimum_size = Vector2(100, 40)
-	btn_close.add_theme_font_size_override("font_size", 18)
-	btn_close.pressed.connect(func(): _set_detail_open(false))
-	header.add_child(title)
-	header.add_child(btn_close)
+	vbox.add_theme_constant_override("separation", 8)
+	_ammo_detail_title = Label.new()
+	_ammo_detail_title.name = "DetailTitle"
+	_ammo_detail_title.text = "弹药详情"
+	_ammo_detail_title.add_theme_font_size_override("font_size", 20)
+	_ammo_detail_title.add_theme_color_override("font_color", Color(1.0, 0.92, 0.55))
 	_ammo_detail_body = RichTextLabel.new()
 	_ammo_detail_body.name = "DetailBody"
 	_ammo_detail_body.bbcode_enabled = false
 	_ammo_detail_body.fit_content = false
 	_ammo_detail_body.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_ammo_detail_body.custom_minimum_size = Vector2(0, 280)
-	_ammo_detail_body.add_theme_font_size_override("normal_font_size", 16)
-	vbox.add_child(header)
+	_ammo_detail_body.custom_minimum_size = Vector2(0, 240)
+	_ammo_detail_body.add_theme_font_size_override("normal_font_size", 15)
+	_ammo_detail_body.add_theme_color_override("default_color", Color(0.96, 0.94, 0.88))
+	vbox.add_child(_ammo_detail_title)
 	vbox.add_child(_ammo_detail_body)
 	_ammo_detail_panel.add_child(vbox)
 	add_child(_ammo_detail_panel)
 
 
-func _set_detail_open(open: bool) -> void:
-	_detail_open = open
+func _hide_ammo_detail() -> void:
+	_detail_open = false
+	_detail_ammo_id = -1
+	_detail_from_hover = false
+	_detail_from_long_press = false
 	if _ammo_detail_panel != null:
-		_ammo_detail_panel.visible = open
+		_ammo_detail_panel.visible = false
 	_update_dimmer()
 
 
-func _show_ammo_detail(ammo_id: int) -> void:
-	if _ammo_detail_body == null:
+func _position_ammo_detail_near(cell: Control) -> void:
+	if _ammo_detail_panel == null:
 		return
+	var vp := get_viewport().get_visible_rect().size
+	var pos := Vector2(24, 80)
+	if cell != null and is_instance_valid(cell):
+		pos = cell.get_global_rect().position + Vector2(-DETAIL_PANEL_W - 12, 0)
+		if pos.x < 8:
+			pos.x = cell.get_global_rect().end.x + 12
+		if pos.y + DETAIL_PANEL_H > vp.y - 8:
+			pos.y = maxf(8.0, vp.y - DETAIL_PANEL_H - 8.0)
+		if pos.x + DETAIL_PANEL_W > vp.x - 8:
+			pos.x = maxf(8.0, vp.x - DETAIL_PANEL_W - 8.0)
+	_ammo_detail_panel.global_position = pos
+	_ammo_detail_panel.size = Vector2(DETAIL_PANEL_W, DETAIL_PANEL_H)
+
+
+func _show_ammo_detail(ammo_id: int, cell: Control = null, from_hover: bool = false, from_long_press: bool = false) -> void:
+	if _ammo_detail_body == null or _reward_open:
+		return
+	_detail_ammo_id = ammo_id
+	_detail_from_hover = from_hover
+	_detail_from_long_press = from_long_press
+	_detail_open = true
+	var title_name := "弹药详情"
+	if ammo_id == CombatConstants.INVALID_AMMO_ID:
+		title_name = CombatConstants.INVALID_AMMO_NAME
+	else:
+		var def: Dictionary = DataRegistry.get_ammo(ammo_id)
+		title_name = str(def.get("name", "弹药详情"))
+	if _ammo_detail_title != null:
+		_ammo_detail_title.text = title_name
 	_ammo_detail_body.text = DataRegistry.format_ammo_detail_text(ammo_id)
-	_set_detail_open(true)
+	_ammo_detail_panel.visible = true
+	_position_ammo_detail_near(cell)
+	_update_dimmer()
 
 
 func _wire_dev_buttons() -> void:
@@ -1037,8 +1188,7 @@ func _refresh() -> void:
 	_refresh_board()
 	if not _wheel_animating:
 		_refresh_mag()
-	if _bag_open:
-		_refresh_bag_list()
+	_refresh_bag_list()
 	match state.phase:
 		CombatState.Phase.WON:
 			if state.reward_pending:
@@ -1168,6 +1318,7 @@ func _refresh_hud_only() -> void:
 	btn_unload.disabled = true if (_loading or _firing or _rolling or _wheel_animating) else (busy or not state.can_unload())
 	btn_next_wave.disabled = busy or not state.can_start_next_wave()
 	_refresh_board()
+	_refresh_bag_list()
 
 
 func _refresh_mag_contents() -> void:

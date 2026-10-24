@@ -70,7 +70,7 @@ func is_enemy_enabled(enemy_id: int) -> bool:
 	return bool(get_enemy(enemy_id).get("enabled_in_combat", false))
 
 
-## 袋内点击详情：名称 / 基础伤害 / 效果（无效弹用本地常量）。
+## 袋内悬停/长按详情：名称 / 基础伤害 / 短摘要 / 完整效果（无效弹用本地常量）。
 func format_ammo_detail_text(ammo_id: int) -> String:
 	if ammo_id == CombatConstants.INVALID_AMMO_ID:
 		return "名称：%s\n基础伤害：0\n效果：\n%s" % [
@@ -89,9 +89,18 @@ func format_ammo_detail_text(ammo_id: int) -> String:
 	else:
 		dmg_s = "%s（%s）" % [str(dmg), mode if mode != "" else "fixed"]
 	var special := str(def.get("special", "无"))
+	var blurb := str(def.get("blurb", "")).strip_edges()
 	var tags = def.get("tags", [])
 	var tag_s := "、".join(tags) if tags is Array and tags.size() > 0 else "无"
-	return "名称：%s\n基础伤害：%s\n标签：%s\n效果：\n%s" % [nm, dmg_s, tag_s, special]
+	var lines: PackedStringArray = PackedStringArray()
+	lines.append("名称：%s" % nm)
+	lines.append("基础伤害：%s" % dmg_s)
+	lines.append("标签：%s" % tag_s)
+	if blurb != "":
+		lines.append("摘要：%s" % blurb)
+	lines.append("效果：")
+	lines.append(special if special != "" else "无")
+	return "\n".join(lines)
 
 ## 奖励三选一用短摘要：优先 ammo.json 的 blurb；否则从 special 截断。旁注勿整段。
 func format_ammo_reward_blurb(ammo_id: int, max_chars: int = 28) -> String:

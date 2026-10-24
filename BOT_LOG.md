@@ -1,5 +1,13 @@
 
 
+
+## 2026-10-24 — 战斗 HUD 布局（v0.2.24）
+
+- 任务：战斗中 UI——右侧常驻弹药袋、悬停/长按详情、回菜单与开发工具进角落。
+- 改动：`scenes/combat.tscn` 主区+右侧袋；`combat_ui.gd` 去掉模态检视袋；详情面板浮动；角落按钮。
+- 自测：`check_ui_charset.sh` OK；GUT 110/110；截图 `tools/out/combat_hud_v024.png` / `combat_hud_detail_v024.png`。
+- 状态：老大批准推送（2026-10-24 12:04 Asia/Shanghai），已 push main。
+
 ## 2026-10-23（v0.2.22）
 
 - 主菜单增加「更新日志」入口；点开遮罩面板，按新→旧列出各版要点。
