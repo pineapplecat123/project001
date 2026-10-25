@@ -2,6 +2,13 @@
   "version": 1,
   "entries": [
     {
+      "version": "0.2.29",
+      "date": "2026-10-25",
+      "items": [
+        "修进战斗卡死：DevInner 未设 unique_name，开发工具三列重建在 _ready 抛错导致开局未完成"
+      ]
+    },
+    {
       "version": "0.2.28",
       "date": "2026-10-25",
       "items": [

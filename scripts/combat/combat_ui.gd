@@ -1845,7 +1845,12 @@ func _wire_dev_buttons() -> void:
 
 func _rebuild_dev_tool_body() -> void:
 	## 三列：常规 | 弹药袋 | 敌人
-	var inner: VBoxContainer = %DevInner
+	var inner: VBoxContainer = get_node_or_null("%DevInner") as VBoxContainer
+	if inner == null and dev_panel != null:
+		inner = dev_panel.get_node_or_null("DevMargin/DevVBox/DevScroll/DevInner") as VBoxContainer
+	if inner == null:
+		push_error("DevInner missing; skip rebuild_dev_tool_body")
+		return
 	for c in inner.get_children():
 		inner.remove_child(c)
 		c.free()
