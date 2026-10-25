@@ -58,6 +58,12 @@ jobs:
       - name: Import project
         run: godot --headless --import
 
+      - name: Install fonttools for charset check
+        run: pip install --user fonttools
+
+      - name: Check UI charset / subset font coverage
+        run: bash tools/check_ui_charset.sh
+
       - name: Export Web
         run: |
           mkdir -p build/web

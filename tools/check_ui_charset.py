@@ -29,7 +29,7 @@ FONT_PATH = ROOT / "assets" / "fonts" / "NotoSansSC-UI.ttf"
 BASE = (
     "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
     " !\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"
-    "×·—–…｜【】（）「」『』《》、。，：；！？％＋－＝▼▲"
+    "×·—–…｜【】（）「」『』《》、。，：；！？％＋－＝▼▲→←◀▶↔"
     "０１２３４５６７８９"
 )
 

@@ -2,6 +2,14 @@
   "version": 1,
   "entries": [
     {
+      "version": "0.2.27",
+      "date": "2026-10-25",
+      "items": [
+        "修 UI 字体乱码：强制重建 NotoSansSC-UI 子集，箭头等符号纳入字库 BASE",
+        "发版/Pages 构建前强制 check_ui_charset，缺字不得导出"
+      ]
+    },
+    {
       "version": "0.2.26",
       "date": "2026-10-25",
       "items": [

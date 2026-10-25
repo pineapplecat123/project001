@@ -8,7 +8,7 @@ chars = set()
 base = (
     "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
     " !\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"
-    "×·—–…｜【】（）「」『』《》、。，：；！？％＋－＝▼▲"
+    "×·—–…｜【】（）「」『』《》、。，：；！？％＋－＝▼▲→←◀▶↔"
     "０１２３４５６７８９"
 )
 chars.update(base)
