@@ -15,7 +15,7 @@ func _log_has(cs: CombatState, needle: String) -> bool:
 
 
 func test_gold_triggers_extra_auto_load_and_fire() -> void:
-	## 金弹击发后应立刻额外自动装填射击一轮。
+	## 整匣打完后按本匣击发金数追加额外自动装填射击一轮。
 	var cs := CombatState.new(808)
 	cs.start_graybox(808)
 	cs.enemies[0].hp = 999
@@ -34,18 +34,19 @@ func test_gold_triggers_extra_auto_load_and_fire() -> void:
 	] as Array[int])
 	var hp0: int = cs.enemies[0].hp
 	assert_true(cs.do_fire())
-	# 金0 + 额外轮6白×3=18 + 主匣剩5白×3=15 → 33
+	# 主匣：金0 + 5白×3=15；整匣后额外轮从袋抽 6 白×3=18 → 33
 	var dealt: int = hp0 - cs.enemies[0].hp
 	assert_gte(dealt, 30, "gold extra round should deal additional white damage, dealt=%d" % dealt)
 	assert_true(_log_has(cs, "金色弹药"), "should log gold autofire")
+	assert_true(_log_has(cs, "整匣打完"), "extras should run after full magazine")
 	assert_eq(cs.phase, CombatState.Phase.AWAIT_LOAD)
 
 
-func test_gold_fires_extra_even_if_rest_of_mag_would_clear() -> void:
-	## 回归：旧逻辑把金拖到整匣打完，同匣后续白弹清场后会跳过额外轮。
+func test_gold_whites_fire_before_extras_then_clear() -> void:
+	## 金色整匣后触发：先打完同匣白弹；白弹清场后仍记录金色并尝试追加（场空则跳过）。
 	var cs := CombatState.new(820)
 	cs.start_graybox(820)
-	# 平民 10HP；金 + 4 白足够清场，但金应先触发额外轮造成可见日志
+	# 平民 10HP；金0 + 白弹清场
 	cs.bag.clear()
 	cs.discard.clear()
 	for _i in 6:
@@ -60,8 +61,13 @@ func test_gold_fires_extra_even_if_rest_of_mag_would_clear() -> void:
 	] as Array[int])
 	assert_eq(cs.enemies[0].hp, 10)
 	assert_true(cs.begin_fire())
-	var more: bool = cs.fire_next_shot()  # 金 → 立刻额外轮，额外轮白弹清场后停射
-	assert_false(more, "should abort fire sequence after clear during gold extra")
+	var more: bool = cs.fire_next_shot()  # 仅金：0 伤，计入待追加，不立刻额外轮
+	assert_true(more, "gold alone should not clear or finish")
+	assert_true(_log_has(cs, "已击发金"))
+	assert_false(_log_has(cs, "额外自动装填射击"), "extras must wait until magazine finishes")
+	assert_eq(cs.enemies[0].hp, 10)
+	while cs.phase == CombatState.Phase.FIRING:
+		cs.fire_next_shot()
 	assert_true(_log_has(cs, "金色弹药"))
 	assert_eq(cs.phase, CombatState.Phase.WON)
 	assert_true(cs.alive_enemies().is_empty())
@@ -524,3 +530,132 @@ func test_bw_transforms_to_tied_most_common() -> void:
 	cs.dev_force_load([10, 1, 1, 1, 1, 1] as Array[int])
 	var got: int = cs.magazine.fire_order()[0]
 	assert_true(got == CombatConstants.WHITE_AMMO_ID or got == FireResolver.ID_YELLOW)
+
+
+func test_endless_shop_required_every_5_waves() -> void:
+	## 无限：波 1–4 领奖后可直接下一波；波 5/10 须先逛店。
+	var cs := CombatState.new(905)
+	cs.start_graybox(905, true)
+	for w in [1, 2, 3, 4]:
+		_force_endless_win_at_wave(cs, w)
+		assert_true(cs.pick_reward_ammo(0), "wave %d pick" % w)
+		assert_false(cs.needs_endless_shop(), "wave %d no shop" % w)
+		assert_true(cs.endless_shop_done)
+		assert_true(cs.can_start_next_wave(), "wave %d next" % w)
+	_force_endless_win_at_wave(cs, 5)
+	assert_false(cs.endless_shop_done)
+	assert_true(cs.reward_pending)
+	assert_false(cs.can_start_next_wave())
+	assert_true(cs.pick_reward_ammo(0))
+	assert_true(cs.needs_endless_shop())
+	assert_false(cs.can_start_next_wave())
+	assert_false(cs.start_next_wave())
+	var bag_before: Array = cs.bag.duplicate()
+	var gold_before: int = cs.gold
+	cs.apply_shop_payload({"gold": gold_before + 3, "bag": bag_before})
+	assert_eq(cs.gold, gold_before + 3)
+	cs.mark_endless_shop_done()
+	assert_false(cs.needs_endless_shop())
+	assert_true(cs.can_start_next_wave())
+	assert_true(cs.start_next_wave())
+	assert_eq(cs.wave_index, 6)
+	# 波 10 同样须进店
+	_force_endless_win_at_wave(cs, 10)
+	assert_true(cs.skip_reward_for_gold())
+	assert_true(cs.needs_endless_shop())
+	assert_false(cs.can_start_next_wave())
+	cs.mark_endless_shop_done()
+	assert_true(cs.can_start_next_wave())
+
+
+func _force_endless_win_at_wave(cs: CombatState, wave: int) -> void:
+	cs.phase = CombatState.Phase.AWAIT_LOAD
+	cs._clear_reward_state()
+	cs.endless_shop_done = true
+	cs.wave_index = wave
+	cs.enemies.clear()
+	cs.dev_spawn_enemy(1, 8)
+	assert_gt(cs.alive_enemies().size(), 0)
+	cs.dev_kill_all_enemies()
+	assert_eq(cs.phase, CombatState.Phase.WON)
+	assert_true(cs.reward_pending)
+
+
+func test_endless_shop_payload_writes_bag() -> void:
+	var cs := CombatState.new(906)
+	cs.start_graybox(906, true)
+	_force_endless_win_at_wave(cs, 5)
+	assert_true(cs.skip_reward_for_gold())
+	assert_true(cs.needs_endless_shop())
+	var new_bag: Array = [1, 1, FireResolver.ID_GOLD]
+	cs.apply_shop_payload({"gold": 42, "bag": new_bag})
+	assert_eq(cs.gold, 42)
+	assert_eq(cs.bag.size(), 3)
+	assert_eq(cs.bag[2], FireResolver.ID_GOLD)
+	cs.mark_endless_shop_done()
+	assert_true(cs.start_next_wave())
+	assert_eq(cs.bag.size(), 3)
+
+
+func test_gold_extra_when_bag_empty_after_full_load() -> void:
+	## 袋空时装满匣再开火：整匣打完后弃牌洗回，额外轮应打出实质白伤（不再「白打」）。
+	var cs := CombatState.new(830)
+	cs.start_graybox(830)
+	cs.enemies[0].hp = 999
+	cs.enemies[0].max_hp = 999
+	cs.bag.clear()
+	cs.discard.clear()
+	cs.dev_force_load([
+		FireResolver.ID_GOLD,
+		CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID,
+	] as Array[int])
+	assert_eq(cs.bag.size(), 0)
+	var hp0: int = cs.enemies[0].hp
+	assert_true(cs.do_fire())
+	var dealt: int = hp0 - cs.enemies[0].hp
+	# 主匣 5×3=15 + 额外轮洗回后至少再来几发白（金0）；总额应明显高于仅主匣
+	assert_gte(dealt, 27, "empty-bag gold extras should deal substantial white dmg, dealt=%d" % dealt)
+	assert_true(_log_has(cs, "金色弹药"))
+	assert_true(_log_has(cs, "整匣打完") or _log_has(cs, "洗回"))
+
+
+func test_gold_extras_after_remaining_whites() -> void:
+	## 金在匣首：先结算同匣后续白弹伤害，额外轮在整匣结束后才出现。
+	var cs := CombatState.new(831)
+	cs.start_graybox(831)
+	cs.enemies[0].hp = 999
+	cs.enemies[0].max_hp = 999
+	cs.bag.clear()
+	cs.discard.clear()
+	for _i in 6:
+		cs.bag.append(CombatConstants.WHITE_AMMO_ID)
+	cs.dev_force_load([
+		FireResolver.ID_GOLD,
+		CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID,
+	] as Array[int])
+	var hp0: int = cs.enemies[0].hp
+	assert_true(cs.begin_fire())
+	cs.fire_next_shot()  # gold
+	assert_eq(cs.enemies[0].hp, hp0, "gold deals 0; extras not yet")
+	assert_false(_log_has(cs, "额外自动装填射击"))
+	# 先打 4 发白：仍未收束，额外轮未触发
+	for _i in 4:
+		assert_eq(cs.phase, CombatState.Phase.FIRING)
+		cs.fire_next_shot()
+	assert_eq(hp0 - cs.enemies[0].hp, 12, "four whites before last chamber")
+	assert_false(_log_has(cs, "额外自动装填射击"))
+	# 最后一发白 → 整匣收束并追加额外轮
+	cs.fire_next_shot()
+	while cs.phase == CombatState.Phase.FIRING:
+		cs.fire_next_shot()
+	var dealt: int = hp0 - cs.enemies[0].hp
+	assert_gte(dealt, 30, "extras after whites, dealt=%d" % dealt)
+	assert_true(_log_has(cs, "整匣打完"))

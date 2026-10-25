@@ -8,7 +8,8 @@ anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
-grow_vertical = 2
+grow_vertical = 1
+clip_contents = false
 script = ExtResource("1_ui")
 
 [node name="Margin" type="MarginContainer" parent="."]
@@ -17,237 +18,320 @@ anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
-grow_vertical = 2
+grow_vertical = 1
+clip_contents = false
 theme_override_constants/margin_left = 14
-theme_override_constants/margin_top = 28
+theme_override_constants/margin_top = 16
 theme_override_constants/margin_right = 14
-theme_override_constants/margin_bottom = 14
+theme_override_constants/margin_bottom = 10
 
-[node name="MainHBox" type="HBoxContainer" parent="Margin"]
+[node name="RootVBox" type="VBoxContainer" parent="Margin"]
 layout_mode = 2
-theme_override_constants/separation = 12
+clip_contents = false
+theme_override_constants/separation = 6
 
-[node name="LeftCol" type="VBoxContainer" parent="Margin/MainHBox"]
+[node name="TopSection" type="VBoxContainer" parent="Margin/RootVBox"]
 layout_mode = 2
-size_flags_horizontal = 3
-theme_override_constants/separation = 8
+size_flags_vertical = 0
+clip_contents = false
+theme_override_constants/separation = 2
 
-[node name="TopBar" type="HBoxContainer" parent="Margin/MainHBox/LeftCol"]
+[node name="TopBarPad" type="MarginContainer" parent="Margin/RootVBox/TopSection"]
 layout_mode = 2
-theme_override_constants/separation = 16
+clip_contents = false
+theme_override_constants/margin_top = 2
+theme_override_constants/margin_bottom = 2
 
-[node name="PhaseLabel" type="Label" parent="Margin/MainHBox/LeftCol/TopBar"]
+[node name="TopBar" type="HBoxContainer" parent="Margin/RootVBox/TopSection/TopBarPad"]
 unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 36)
+layout_mode = 2
+clip_contents = false
+theme_override_constants/separation = 14
+alignment = 1
+
+[node name="PhaseLabel" type="Label" parent="Margin/RootVBox/TopSection/TopBarPad/TopBar"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 34)
 layout_mode = 2
 size_flags_horizontal = 3
-theme_override_font_sizes/font_size = 20
+size_flags_vertical = 4
+clip_text = false
+theme_override_font_sizes/font_size = 17
 text = "阶段："
+vertical_alignment = 1
 
-[node name="HpLabel" type="Label" parent="Margin/MainHBox/LeftCol/TopBar"]
+[node name="HpLabel" type="Label" parent="Margin/RootVBox/TopSection/TopBarPad/TopBar"]
 unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 34)
 layout_mode = 2
-theme_override_font_sizes/font_size = 20
+size_flags_vertical = 4
+clip_text = false
+theme_override_font_sizes/font_size = 17
 text = "玩家 HP"
+vertical_alignment = 1
 
-[node name="BagLabel" type="Label" parent="Margin/MainHBox/LeftCol/TopBar"]
+[node name="BagLabel" type="Label" parent="Margin/RootVBox/TopSection/TopBarPad/TopBar"]
 unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 34)
 layout_mode = 2
-theme_override_font_sizes/font_size = 18
-text = "袋 0"
-
-[node name="DiscardLabel" type="Label" parent="Margin/MainHBox/LeftCol/TopBar"]
-unique_name_in_owner = true
-layout_mode = 2
-theme_override_font_sizes/font_size = 18
-text = "弃 0"
-
-[node name="GoldLabel" type="Label" parent="Margin/MainHBox/LeftCol/TopBar"]
-unique_name_in_owner = true
-layout_mode = 2
-theme_override_font_sizes/font_size = 18
-text = "金币 0"
-
-[node name="TurnLabel" type="Label" parent="Margin/MainHBox/LeftCol/TopBar"]
-unique_name_in_owner = true
-layout_mode = 2
-theme_override_font_sizes/font_size = 18
-text = "回合 1"
-
-[node name="BoardTitle" type="Label" parent="Margin/MainHBox/LeftCol"]
-layout_mode = 2
+size_flags_vertical = 4
+clip_text = false
 theme_override_font_sizes/font_size = 16
-text = "棋盘（左=玩家 · 右=来敌 · 黄边=邻接可攻击 · 大号数字=当前 HP）"
+text = "袋 0"
+vertical_alignment = 1
 
-[node name="BoardRow" type="HBoxContainer" parent="Margin/MainHBox/LeftCol"]
+[node name="DiscardLabel" type="Label" parent="Margin/RootVBox/TopSection/TopBarPad/TopBar"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 34)
+layout_mode = 2
+size_flags_vertical = 4
+clip_text = false
+theme_override_font_sizes/font_size = 16
+text = "弃 0"
+vertical_alignment = 1
+
+[node name="GoldLabel" type="Label" parent="Margin/RootVBox/TopSection/TopBarPad/TopBar"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 34)
+layout_mode = 2
+size_flags_vertical = 4
+clip_text = false
+theme_override_font_sizes/font_size = 16
+text = "金币 0"
+vertical_alignment = 1
+
+[node name="TurnLabel" type="Label" parent="Margin/RootVBox/TopSection/TopBarPad/TopBar"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 34)
+layout_mode = 2
+size_flags_vertical = 4
+clip_text = false
+theme_override_font_sizes/font_size = 16
+text = "回合 1"
+vertical_alignment = 1
+
+[node name="BoardTitle" type="Label" parent="Margin/RootVBox/TopSection"]
+custom_minimum_size = Vector2(0, 24)
+layout_mode = 2
+size_flags_horizontal = 3
+clip_text = false
+theme_override_font_sizes/font_size = 14
+text = "棋盘 / 地图（左玩家 · 右来敌 · 黄边=可攻击）"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="BoardRow" type="HBoxContainer" parent="Margin/RootVBox/TopSection"]
 unique_name_in_owner = true
 layout_mode = 2
+size_flags_horizontal = 4
 theme_override_constants/separation = 5
+alignment = 1
 
-[node name="MidRow" type="HBoxContainer" parent="Margin/MainHBox/LeftCol"]
+[node name="MidSpacer" type="Control" parent="Margin/RootVBox"]
 layout_mode = 2
+size_flags_vertical = 0
+custom_minimum_size = Vector2(0, 32)
+
+[node name="BottomSection" type="HBoxContainer" parent="Margin/RootVBox"]
+layout_mode = 2
+size_flags_vertical = 0
+size_flags_horizontal = 3
 theme_override_constants/separation = 24
 
-[node name="MagCol" type="VBoxContainer" parent="Margin/MainHBox/LeftCol/MidRow"]
+[node name="BottomLeftPad" type="Control" parent="Margin/RootVBox/BottomSection"]
 layout_mode = 2
-theme_override_constants/separation = 4
+size_flags_horizontal = 3
+size_flags_vertical = 0
+custom_minimum_size = Vector2(0, 0)
 
-[node name="MagTitle" type="Label" parent="Margin/MainHBox/LeftCol/MidRow/MagCol"]
-unique_name_in_owner = true
-custom_minimum_size = Vector2(260, 0)
+[node name="CombatBlock" type="HBoxContainer" parent="Margin/RootVBox/BottomSection"]
 layout_mode = 2
-theme_override_font_sizes/font_size = 15
-autowrap_mode = 3
+size_flags_horizontal = 0
+size_flags_vertical = 0
+theme_override_constants/separation = 22
+
+[node name="MagCol" type="VBoxContainer" parent="Margin/RootVBox/BottomSection/CombatBlock"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="MagTitle" type="Label" parent="Margin/RootVBox/BottomSection/CombatBlock/MagCol"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(220, 0)
+layout_mode = 2
+theme_override_font_sizes/font_size = 16
+autowrap_mode = 0
 text = "弹夹转轮"
 
-[node name="MagWheel" type="Control" parent="Margin/MainHBox/LeftCol/MidRow/MagCol"]
+[node name="MagWheel" type="Control" parent="Margin/RootVBox/BottomSection/CombatBlock/MagCol"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(260, 260)
+custom_minimum_size = Vector2(220, 220)
 layout_mode = 2
 
-[node name="FireMarker" type="Label" parent="Margin/MainHBox/LeftCol/MidRow/MagCol/MagWheel"]
+[node name="FireMarker" type="Label" parent="Margin/RootVBox/BottomSection/CombatBlock/MagCol/MagWheel"]
 unique_name_in_owner = true
 layout_mode = 0
-offset_left = 90.0
+offset_left = 70.0
 offset_top = -2.0
-offset_right = 170.0
+offset_right = 150.0
 offset_bottom = 28.0
 theme_override_colors/font_color = Color(1, 0.2, 0.15, 1)
 theme_override_font_sizes/font_size = 20
-text = "▼ 击发"
+text = ""
+visible = false
 horizontal_alignment = 1
 
-[node name="ActionCol" type="VBoxContainer" parent="Margin/MainHBox/LeftCol/MidRow"]
+[node name="ActionCol" type="VBoxContainer" parent="Margin/RootVBox/BottomSection/CombatBlock"]
 layout_mode = 2
 size_flags_vertical = 4
 theme_override_constants/separation = 10
 
-[node name="ActionHeader" type="Label" parent="Margin/MainHBox/LeftCol/MidRow/ActionCol"]
+[node name="ActionHeader" type="Label" parent="Margin/RootVBox/BottomSection/CombatBlock/ActionCol"]
 layout_mode = 2
-theme_override_font_sizes/font_size = 16
+theme_override_font_sizes/font_size = 15
 theme_override_colors/font_color = Color(0.95, 0.85, 0.35, 1)
 text = "—— 战斗操作 ——"
 
-[node name="BtnLoad" type="Button" parent="Margin/MainHBox/LeftCol/MidRow/ActionCol"]
+[node name="BtnLoad" type="Button" parent="Margin/RootVBox/BottomSection/CombatBlock/ActionCol"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(200, 44)
+custom_minimum_size = Vector2(76, 76)
 layout_mode = 2
 theme_override_font_sizes/font_size = 18
-text = "装填 LOAD"
+text = "装弹"
 
-[node name="BtnFire" type="Button" parent="Margin/MainHBox/LeftCol/MidRow/ActionCol"]
+[node name="BtnFire" type="Button" parent="Margin/RootVBox/BottomSection/CombatBlock/ActionCol"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(200, 44)
+custom_minimum_size = Vector2(76, 76)
 layout_mode = 2
 theme_override_font_sizes/font_size = 18
-text = "射击 FIRE"
+text = "射击"
 
-[node name="BtnRoll" type="Button" parent="Margin/MainHBox/LeftCol/MidRow/ActionCol"]
+[node name="BtnRoll" type="Button" parent="Margin/RootVBox/BottomSection/CombatBlock/ActionCol"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(200, 44)
+custom_minimum_size = Vector2(76, 76)
 layout_mode = 2
 theme_override_font_sizes/font_size = 18
-text = "重roll ROLL"
+text = "ROLL"
 
-[node name="BtnUnload" type="Button" parent="Margin/MainHBox/LeftCol/MidRow/ActionCol"]
+[node name="BtnUnload" type="Button" parent="Margin/RootVBox/BottomSection/CombatBlock/ActionCol"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(200, 44)
+custom_minimum_size = Vector2(76, 76)
 layout_mode = 2
 theme_override_font_sizes/font_size = 18
-text = "卸除 UNLOAD"
+text = "卸除"
 
-[node name="HintLabel" type="Label" parent="Margin/MainHBox/LeftCol/MidRow/ActionCol"]
-custom_minimum_size = Vector2(220, 0)
+[node name="HintLabel" type="Label" parent="Margin/RootVBox/BottomSection/CombatBlock/ActionCol"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(200, 0)
 layout_mode = 2
-theme_override_font_sizes/font_size = 14
+theme_override_font_sizes/font_size = 12
+theme_override_colors/font_color = Color(0.72, 0.74, 0.8, 1)
 autowrap_mode = 3
-text = "LOAD：逐发上弹并转 60°。ROLL：大盘旋转。FIRE：逐发 0.4 秒。右侧弹药袋悬停或长按可看数值与效果。"
+text = "红圈正上击发 · 左上装弹口 · LOAD一发一转 · 有弹即可 ROLL（不满匣也可）。"
 
-[node name="ResultLabel" type="Label" parent="Margin/MainHBox/LeftCol"]
+[node name="BagPanel" type="PanelContainer" parent="Margin/RootVBox/BottomSection"]
 unique_name_in_owner = true
-visible = false
+custom_minimum_size = Vector2(240, 280)
 layout_mode = 2
-theme_override_font_sizes/font_size = 28
-theme_override_colors/font_color = Color(1, 0.85, 0.2, 1)
-text = "结果"
-horizontal_alignment = 1
+size_flags_horizontal = 0
+size_flags_vertical = 0
 
-[node name="BtnNextWave" type="Button" parent="Margin/MainHBox/LeftCol"]
+[node name="BagMargin" type="MarginContainer" parent="Margin/RootVBox/BottomSection/BagPanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 8
+theme_override_constants/margin_top = 6
+theme_override_constants/margin_right = 8
+theme_override_constants/margin_bottom = 6
+
+[node name="BagVBox" type="VBoxContainer" parent="Margin/RootVBox/BottomSection/BagPanel/BagMargin"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="BagHeader" type="HBoxContainer" parent="Margin/RootVBox/BottomSection/BagPanel/BagMargin/BagVBox"]
+layout_mode = 2
+
+[node name="BagHeaderLabel" type="Label" parent="Margin/RootVBox/BottomSection/BagPanel/BagMargin/BagVBox/BagHeader"]
 unique_name_in_owner = true
-visible = false
-custom_minimum_size = Vector2(240, 48)
-layout_mode = 2
-size_flags_horizontal = 4
-theme_override_font_sizes/font_size = 20
-text = "下一波 NEXT"
-
-[node name="LogTitle" type="Label" parent="Margin/MainHBox/LeftCol"]
-layout_mode = 2
-theme_override_font_sizes/font_size = 16
-text = "战斗日志"
-
-[node name="LogBox" type="RichTextLabel" parent="Margin/MainHBox/LeftCol"]
-unique_name_in_owner = true
-layout_mode = 2
-size_flags_vertical = 3
-custom_minimum_size = Vector2(0, 130)
-theme_override_font_sizes/normal_font_size = 15
-theme_override_constants/line_separation = 4
-bbcode_enabled = false
-scroll_following = true
-fit_content = false
-
-[node name="BagPanel" type="PanelContainer" parent="Margin/MainHBox"]
-unique_name_in_owner = true
-custom_minimum_size = Vector2(320, 0)
-layout_mode = 2
-size_flags_vertical = 3
-
-[node name="BagMargin" type="MarginContainer" parent="Margin/MainHBox/BagPanel"]
-layout_mode = 2
-theme_override_constants/margin_left = 12
-theme_override_constants/margin_top = 12
-theme_override_constants/margin_right = 12
-theme_override_constants/margin_bottom = 10
-
-[node name="BagVBox" type="VBoxContainer" parent="Margin/MainHBox/BagPanel/BagMargin"]
-layout_mode = 2
-theme_override_constants/separation = 8
-
-[node name="BagHeader" type="HBoxContainer" parent="Margin/MainHBox/BagPanel/BagMargin/BagVBox"]
-layout_mode = 2
-
-[node name="BagHeaderLabel" type="Label" parent="Margin/MainHBox/BagPanel/BagMargin/BagVBox/BagHeader"]
-unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 28)
 layout_mode = 2
 size_flags_horizontal = 3
-theme_override_font_sizes/font_size = 18
+clip_text = false
+theme_override_font_sizes/font_size = 15
+vertical_alignment = 1
 theme_override_colors/font_color = Color(1.0, 0.92, 0.55, 1)
-text = "弹药袋（牌库）"
+text = "弹药袋"
 
-[node name="BagScroll" type="ScrollContainer" parent="Margin/MainHBox/BagPanel/BagMargin/BagVBox"]
+[node name="BagScroll" type="ScrollContainer" parent="Margin/RootVBox/BottomSection/BagPanel/BagMargin/BagVBox"]
 layout_mode = 2
 size_flags_vertical = 3
 horizontal_scroll_mode = 0
 
-[node name="BagList" type="VBoxContainer" parent="Margin/MainHBox/BagPanel/BagMargin/BagVBox/BagScroll"]
+[node name="BagList" type="VBoxContainer" parent="Margin/RootVBox/BottomSection/BagPanel/BagMargin/BagVBox/BagScroll"]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 theme_override_constants/separation = 6
 
+[node name="BagRightPad" type="Control" parent="Margin/RootVBox/BottomSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 0
+custom_minimum_size = Vector2(0, 0)
+
+[node name="FooterSection" type="VBoxContainer" parent="Margin/RootVBox"]
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_constants/separation = 2
+
+[node name="ResultLabel" type="Label" parent="Margin/RootVBox/FooterSection"]
+unique_name_in_owner = true
+visible = false
+layout_mode = 2
+theme_override_font_sizes/font_size = 26
+theme_override_colors/font_color = Color(1, 0.85, 0.2, 1)
+text = "结果"
+horizontal_alignment = 1
+
+[node name="BtnNextWave" type="Button" parent="Margin/RootVBox/FooterSection"]
+unique_name_in_owner = true
+visible = false
+custom_minimum_size = Vector2(240, 44)
+layout_mode = 2
+size_flags_horizontal = 4
+theme_override_font_sizes/font_size = 18
+text = "下一波 NEXT"
+
+[node name="LogTitle" type="Label" parent="Margin/RootVBox/FooterSection"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 13
+theme_override_colors/font_color = Color(0.65, 0.68, 0.75, 1)
+text = "战斗日志"
+
+[node name="LogBox" type="RichTextLabel" parent="Margin/RootVBox/FooterSection"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 3
+custom_minimum_size = Vector2(0, 72)
+theme_override_font_sizes/normal_font_size = 13
+theme_override_constants/line_separation = 2
+bbcode_enabled = false
+scroll_following = true
+fit_content = false
+
 [node name="BtnMenu" type="Button" parent="."]
 unique_name_in_owner = true
 z_index = 6
 layout_mode = 1
-anchors_preset = 0
+anchors_preset = 2
 anchor_left = 0.0
-anchor_top = 0.0
+anchor_top = 1.0
 anchor_right = 0.0
-anchor_bottom = 0.0
+anchor_bottom = 1.0
 offset_left = 8.0
-offset_top = 12.0
+offset_top = -48.0
 offset_right = 148.0
-offset_bottom = 48.0
+offset_bottom = -8.0
+grow_vertical = 0
 theme_override_font_sizes/font_size = 15
 text = "返回主菜单"
 
@@ -260,9 +344,9 @@ anchor_left = 0.0
 anchor_top = 1.0
 anchor_right = 0.0
 anchor_bottom = 1.0
-offset_left = 8.0
+offset_left = 156.0
 offset_top = -48.0
-offset_right = 148.0
+offset_right = 296.0
 offset_bottom = -8.0
 grow_vertical = 0
 theme_override_font_sizes/font_size = 15

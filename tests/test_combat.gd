@@ -855,3 +855,35 @@ func test_apply_roll_steps_match_post_load_spin_range() -> void:
 	assert_gte(steps, 1)
 	assert_lte(steps, 5)
 	assert_eq(cs.magazine.start_index, (before + steps) % CombatConstants.MAGAZINE_SIZE)
+
+
+func test_enemy_damaged_signal_emits_per_hit() -> void:
+	var cs := CombatState.new(911)
+	cs.start_graybox(911)
+	var hits: Array = []
+	cs.enemy_damaged.connect(func(cell: int, amount: int): hits.append([cell, amount]))
+	cs.dev_force_load([1, 1, 1, 1, 1, 1] as Array[int])
+	assert_true(cs.begin_fire())
+	assert_true(cs.fire_next_shot())
+	assert_gt(hits.size(), 0)
+	assert_gt(hits[0][1], 0)
+
+
+
+func test_partial_mag_can_start_roll() -> void:
+	## 不满匣（有弹即可）也可 ROLL；与「装满才自动 spin」区分。
+	var cs := CombatState.new(551)
+	cs.start_graybox(551)
+	cs.enemies[0].hp = 999
+	cs.enemies[0].max_hp = 999
+	cs.bag.clear()
+	cs.discard.clear()
+	for _i in 3:
+		cs.bag.append(CombatConstants.WHITE_AMMO_ID)
+	assert_true(cs.do_load())
+	assert_eq(cs.magazine.loaded_count(), 3)
+	assert_eq(cs.phase, CombatState.Phase.AWAIT_ACTION)
+	assert_true(cs.can_start_roll())
+	assert_true(cs.begin_roll())
+	assert_eq(cs.phase, CombatState.Phase.AWAIT_ACTION)
+	assert_true(cs.can_fire())

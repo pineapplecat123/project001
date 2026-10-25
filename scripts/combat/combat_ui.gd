@@ -2,13 +2,17 @@ extends Control
 ## 灰盒战斗 UI：棋盘 + 大圆转轮（带六小圆）+ LOAD/FIRE/ROLL/UNLOAD + 右侧常驻弹药袋 + 悬停/长按详情 + 胜利奖励 + 角落开发者工具。
 ## 转轮：大盘(_disk)带着六小圆整盘转；红击发圈与装弹标挂在 MagWheel 上不转。
 ## 击发点=正上固定；上弹口=左上固定；LOAD 装左上→转60°；装满后 reroll；FIRE 射正上→转60°。
+## 无限模式：每 5 波奖励后进商店（复用 ShopState）；受击飘字带弧线轨迹。
 
-const CELL_W := 72
-const CELL_H := 68
-const WHEEL_SIZE := 260.0
-const CHAMBER_SIZE := 68.0
-const WHEEL_RADIUS := 92.0
-const DISK_BG_SIZE := 248.0
+const ShopState = preload("res://scripts/shop/shop_state.gd")
+const ShopConstants = preload("res://scripts/shop/shop_constants.gd")
+
+const CELL_W := 92
+const CELL_H := 72
+const WHEEL_SIZE := 220.0
+const CHAMBER_SIZE := 58.0
+const WHEEL_RADIUS := 78.0
+const DISK_BG_SIZE := 210.0
 const FIRE_SHOT_DELAY := 0.4
 const FIRE_FLASH_HOLD := 0.2
 const STEP_ROT_DURATION := 0.18
@@ -17,11 +21,15 @@ const ROLL_ANIM_PER_STEP := 0.06
 const ROLL_ANIM_MAX := 1.05
 const ROLL_VISUAL_EXTRA_TURNS := 1
 const LOAD_INSERT_PAUSE := 0.14
-const BAG_GRID_COLS := 2
-const BAG_CELL_MIN := Vector2(128, 78)
+const BAG_GRID_COLS := 3
+const BAG_CELL_MIN := Vector2(56, 56)
+const ACTION_BTN_SIZE := 76.0
+const LOG_PANEL_MIN := Vector2(154, 280)
 const LONG_PRESS_SEC := 0.45
 const DETAIL_PANEL_W := 360.0
 const DETAIL_PANEL_H := 320.0
+const DMG_FLOAT_DURATION := 0.85
+const DMG_FLOAT_RISE := 78.0
 
 const COL_PHASE := Color(1.0, 0.92, 0.45)
 const COL_HP_OK := Color(0.45, 0.95, 0.55)
@@ -59,9 +67,22 @@ var _fire_flash_tween: Tween
 var _disk_tween: Tween
 var _fire_ring: Panel = null
 var _load_marker: Label = null
+var _muzzle_label: Label = null
+var _muzzle_panel: PanelContainer = null
 var _reward_open: bool = false
 var _ammo_detail_panel: PanelContainer = null
 var _ammo_detail_body: RichTextLabel = null
+var _shop: ShopState = ShopState.new()
+var _shop_open: bool = false
+var _shop_panel: PanelContainer = null
+var _shop_title: Label = null
+var _shop_gold_label: Label = null
+var _shop_hint: Label = null
+var _shop_stock: VBoxContainer = null
+var _shop_bag_list: VBoxContainer = null
+var _shop_msg: Label = null
+var _btn_shop_reroll: Button = null
+var _btn_shop_leave: Button = null
 
 @onready var phase_label: Label = %PhaseLabel
 @onready var hp_label: Label = %HpLabel
@@ -102,6 +123,7 @@ func _ready() -> void:
 	state.phase_changed.connect(func(_p): _refresh())
 	state.state_changed.connect(_refresh)
 	state.log_line.connect(_on_log)
+	state.enemy_damaged.connect(_on_enemy_damaged)
 	btn_load.pressed.connect(_on_load)
 	btn_fire.pressed.connect(_on_fire)
 	btn_roll.pressed.connect(_on_roll)
@@ -113,26 +135,25 @@ func _ready() -> void:
 	btn_reward_next.pressed.connect(_on_reward_continue)
 	dimmer.gui_input.connect(_on_dimmer_input)
 	version_label.text = "v%s" % GameVersion.STRING
-	mag_title.text = "弹夹转轮（大盘带六仓转 · 红圈正上击发固定 · ◀左上装弹 · LOAD一发一转 · 满后随机转）"
+	mag_title.text = "弹夹转轮"
+	var hint_lab: Label = get_node_or_null("%HintLabel") as Label
+	if hint_lab != null:
+		hint_lab.text = "红圈正上击发 · 左上装弹口 · LOAD一发一转 · 有弹即可 ROLL（不满匣也可）。悬停/长按弹药可看效果。"
 	_style_overlay_panels()
 	_style_corner_buttons()
 	_ensure_long_press_timer()
 	_build_board_cells()
 	_build_wheel_chambers()
 	_build_ammo_detail_panel()
+	_build_endless_shop_panel()
 	_wire_dev_buttons()
 	bag_panel.visible = true
 	dev_panel.visible = false
 	reward_panel.visible = false
 	dimmer.visible = false
-	# 顶栏给左上角「返回主菜单」留空，避免叠字；并给中文行高留余量防裁切
-	var spacer := Control.new()
-	spacer.name = "TopBarCornerSpacer"
-	spacer.custom_minimum_size = Vector2(150, 0)
-	var top_bar: HBoxContainer = phase_label.get_parent()
-	top_bar.add_child(spacer)
-	top_bar.move_child(spacer, 0)
 	_ensure_top_labels_uncropped()
+	_ensure_combat_layout()
+	_ensure_muzzle_hud()
 	if RunState.is_in_map_run() and RunState.pending_combat_node_id >= 0:
 		state.start_from_run(RunState.combat_snapshot())
 		btn_menu.text = "放弃回地图"
@@ -194,26 +215,352 @@ func _style_corner_buttons() -> void:
 
 
 func _ensure_top_labels_uncropped() -> void:
-	# Noto SC 字形常高出 Label 度量，贴顶会被视口裁掉；加大行距与最小高度
+	# Noto SC 字形常高出 Label 度量；优先加高控件，再补字形间距，避免半截字
+	var font_var := FontVariation.new()
+	var base := theme.get_default_font() if theme != null else null
+	if base == null:
+		base = ThemeDB.fallback_font
+	if base != null:
+		font_var.base_font = base
+		font_var.spacing_top = 10
+		font_var.spacing_bottom = 4
+	# 祖先链关闭裁切；溢出只向下长，避免 grow BOTH 把顶栏顶出视口（y 变负）
+	for n: Node in [
+		self,
+		get_node_or_null("Margin"),
+		get_node_or_null("Margin/RootVBox"),
+		get_node_or_null("Margin/RootVBox/TopSection"),
+		get_node_or_null("Margin/RootVBox/TopSection/TopBarPad"),
+		get_node_or_null("Margin/RootVBox/BottomSection"),
+	]:
+		if n is Control:
+			var c := n as Control
+			c.clip_contents = false
+	# Combat / Margin：顶边钉死，最小高度超出时只往下长
+	grow_vertical = Control.GROW_DIRECTION_END
+	var margin_c := get_node_or_null("Margin") as Control
+	if margin_c != null:
+		margin_c.grow_vertical = Control.GROW_DIRECTION_END
+	var top_bar: Control = get_node_or_null("%TopBar") as Control
+	if top_bar == null:
+		top_bar = get_node_or_null("Margin/RootVBox/TopSection/TopBarPad/TopBar") as Control
+	if top_bar != null:
+		top_bar.clip_contents = false
+		top_bar.custom_minimum_size = Vector2(
+			top_bar.custom_minimum_size.x,
+			maxf(top_bar.custom_minimum_size.y, 36.0)
+		)
+	var board_title: Label = get_node_or_null("Margin/RootVBox/TopSection/BoardTitle") as Label
 	var labels: Array[Label] = [
-		phase_label, hp_label, bag_label, discard_label, gold_label, turn_label, bag_header_label
+		phase_label, hp_label, bag_label, discard_label, gold_label, turn_label,
+		bag_header_label, board_title, mag_title
 	]
 	for lab in labels:
 		if lab == null:
 			continue
-		lab.add_theme_constant_override("line_spacing", 4)
+		if base != null:
+			lab.add_theme_font_override("font", font_var)
+		lab.add_theme_constant_override("line_spacing", 8)
 		lab.clip_text = false
-		var min_h := maxf(lab.get_minimum_size().y, 28.0)
+		lab.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		var floor_h := 34.0
+		if lab == mag_title:
+			floor_h = 24.0
+		elif lab == board_title:
+			floor_h = 24.0
+		elif lab == bag_header_label:
+			floor_h = 30.0
+		var min_h := maxf(lab.get_minimum_size().y, floor_h)
 		lab.custom_minimum_size = Vector2(lab.custom_minimum_size.x, min_h)
-	# 袋面板略加内边，避免标题贴边被裁
 	if bag_panel != null:
+		bag_panel.clip_contents = false
 		var style := bag_panel.get_theme_stylebox("panel")
 		if style is StyleBoxFlat:
 			var flat := (style as StyleBoxFlat).duplicate() as StyleBoxFlat
-			flat.content_margin_top = maxf(flat.content_margin_top, 8.0)
-			flat.content_margin_left = maxf(flat.content_margin_left, 6.0)
-			flat.content_margin_right = maxf(flat.content_margin_right, 6.0)
+			flat.content_margin_top = maxf(flat.content_margin_top, 12.0)
+			flat.content_margin_left = maxf(flat.content_margin_left, 8.0)
+			flat.content_margin_right = maxf(flat.content_margin_right, 8.0)
+			flat.content_margin_bottom = maxf(flat.content_margin_bottom, 6.0)
 			bag_panel.add_theme_stylebox_override("panel", flat)
+
+
+
+func _ensure_combat_layout() -> void:
+	## 棋盘居中；底部三块（轮盘+键 | 弹药袋 | 窄日志）均匀成簇，整组画面中央略靠左。
+	if board_row != null:
+		board_row.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		board_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	var board_title: Label = get_node_or_null("Margin/RootVBox/TopSection/BoardTitle") as Label
+	if board_title != null:
+		board_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		board_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var bottom: HBoxContainer = get_node_or_null("Margin/RootVBox/BottomSection") as HBoxContainer
+	if bottom == null:
+		return
+	# 整组（轮盘+袋+日志）相对棋盘再往下一点
+	var mid_sp: Control = get_node_or_null("Margin/RootVBox/MidSpacer") as Control
+	if mid_sp != null:
+		mid_sp.custom_minimum_size = Vector2(0, 32)
+	# 三块之间等距；外空白由左右 pad 吸收，不再用中间 EXPAND 拉开
+	bottom.add_theme_constant_override("separation", 18)
+	var left_pad: Control = bottom.get_node_or_null("BottomLeftPad") as Control
+	if left_pad == null:
+		left_pad = Control.new()
+		left_pad.name = "BottomLeftPad"
+		bottom.add_child(left_pad)
+	left_pad.visible = true
+	left_pad.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	left_pad.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	left_pad.size_flags_stretch_ratio = 0.85  # 略小于右侧 → 整组稍靠左
+	left_pad.custom_minimum_size = Vector2.ZERO
+	var combat_block: HBoxContainer = bottom.get_node_or_null("CombatBlock") as HBoxContainer
+	if combat_block != null:
+		combat_block.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+		combat_block.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+		combat_block.add_theme_constant_override("separation", 14)
+		var mag_col: VBoxContainer = combat_block.get_node_or_null("MagCol") as VBoxContainer
+		if mag_col != null:
+			mag_col.add_theme_constant_override("separation", 6)
+		_ensure_square_action_buttons(combat_block)
+	if bag_panel != null:
+		bag_panel.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+		bag_panel.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+		if bag_panel.get_parent() != bottom:
+			bag_panel.reparent(bottom)
+	_ensure_log_panel_on_right(bottom)
+	var right_pad: Control = bottom.get_node_or_null("BagRightPad") as Control
+	if right_pad == null:
+		right_pad = Control.new()
+		right_pad.name = "BagRightPad"
+		bottom.add_child(right_pad)
+	right_pad.visible = true
+	right_pad.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	right_pad.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	right_pad.size_flags_stretch_ratio = 1.15
+	right_pad.custom_minimum_size = Vector2.ZERO
+	# 顺序：左垫 | 轮盘块 | 袋 | 日志 | 右垫（无中间大空白）
+	var mid_pad: Control = bottom.get_node_or_null("LogMidPad") as Control
+	if mid_pad != null:
+		mid_pad.visible = false
+		mid_pad.size_flags_horizontal = 0
+		mid_pad.custom_minimum_size = Vector2.ZERO
+	var log_panel: Node = bottom.get_node_or_null("LogPanel")
+	var ordered: Array[Node] = []
+	ordered.append(left_pad)
+	if combat_block != null:
+		ordered.append(combat_block)
+	if bag_panel != null:
+		ordered.append(bag_panel)
+	if log_panel != null:
+		ordered.append(log_panel)
+	ordered.append(right_pad)
+	for i in ordered.size():
+		var n: Node = ordered[i]
+		if n.get_parent() == bottom:
+			bottom.move_child(n, i)
+	var footer: VBoxContainer = get_node_or_null("Margin/RootVBox/FooterSection") as VBoxContainer
+	if footer != null:
+		footer.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+		footer.add_theme_constant_override("separation", 4)
+
+
+
+func _ensure_square_action_buttons(combat_block: HBoxContainer) -> void:
+	## 装弹/射击/ROLL/卸除改为 2×2 方形大按钮，更好点按。
+	var action_col: VBoxContainer = combat_block.get_node_or_null("ActionCol") as VBoxContainer
+	if action_col == null:
+		return
+	action_col.add_theme_constant_override("separation", 8)
+	var grid: GridContainer = action_col.get_node_or_null("ActionGrid") as GridContainer
+	if grid == null:
+		grid = GridContainer.new()
+		grid.name = "ActionGrid"
+		grid.columns = 2
+		grid.add_theme_constant_override("h_separation", 8)
+		grid.add_theme_constant_override("v_separation", 8)
+		var insert_at := 0
+		for i in action_col.get_child_count():
+			if str(action_col.get_child(i).name) == "ActionHeader":
+				insert_at = i + 1
+				break
+		action_col.add_child(grid)
+		action_col.move_child(grid, insert_at)
+	var specs: Array = [
+		[btn_load, "装弹"],
+		[btn_fire, "射击"],
+		[btn_roll, "ROLL"],
+		[btn_unload, "卸除"],
+	]
+	for spec in specs:
+		var btn: Button = spec[0]
+		if btn == null:
+			continue
+		btn.text = str(spec[1])
+		btn.custom_minimum_size = Vector2(ACTION_BTN_SIZE, ACTION_BTN_SIZE)
+		btn.add_theme_font_size_override("font_size", 18)
+		btn.clip_text = false
+		_style_square_action_button(btn)
+		if btn.get_parent() != grid:
+			btn.reparent(grid)
+	var hint_lab: Label = get_node_or_null("%HintLabel") as Label
+	if hint_lab != null and hint_lab.get_parent() == action_col:
+		hint_lab.custom_minimum_size = Vector2(ACTION_BTN_SIZE * 2.0 + 8.0, 0)
+		hint_lab.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+
+
+func _style_square_action_button(btn: Button) -> void:
+	_apply_light_button_font(btn)
+	var normal := StyleBoxFlat.new()
+	normal.bg_color = Color(0.2, 0.24, 0.34, 0.98)
+	normal.set_border_width_all(2)
+	normal.border_color = Color(0.75, 0.82, 0.95, 0.95)
+	normal.set_corner_radius_all(10)
+	normal.content_margin_left = 6
+	normal.content_margin_right = 6
+	normal.content_margin_top = 6
+	normal.content_margin_bottom = 6
+	var hover := normal.duplicate()
+	hover.bg_color = Color(0.3, 0.36, 0.5, 1.0)
+	var pressed := normal.duplicate()
+	pressed.bg_color = Color(0.14, 0.18, 0.28, 1.0)
+	var disabled := normal.duplicate()
+	disabled.bg_color = Color(0.14, 0.15, 0.18, 0.9)
+	disabled.border_color = Color(0.4, 0.42, 0.48, 0.65)
+	btn.add_theme_stylebox_override("normal", normal)
+	btn.add_theme_stylebox_override("hover", hover)
+	btn.add_theme_stylebox_override("pressed", pressed)
+	btn.add_theme_stylebox_override("focus", hover)
+	btn.add_theme_stylebox_override("disabled", disabled)
+
+
+func _ensure_log_panel_on_right(bottom: HBoxContainer) -> void:
+	## 战斗日志窄条，与轮盘/袋一起居中成簇。
+	var log_panel: PanelContainer = bottom.get_node_or_null("LogPanel") as PanelContainer
+	if log_panel == null:
+		log_panel = PanelContainer.new()
+		log_panel.name = "LogPanel"
+		bottom.add_child(log_panel)
+	log_panel.custom_minimum_size = LOG_PANEL_MIN
+	# 固定窄宽；与轮盘/袋均匀成簇，不独自贴右
+	log_panel.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	log_panel.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.1, 0.11, 0.15, 0.92)
+	style.set_border_width_all(2)
+	style.border_color = Color(0.4, 0.48, 0.6, 0.85)
+	style.set_corner_radius_all(10)
+	style.content_margin_left = 8
+	style.content_margin_right = 8
+	style.content_margin_top = 6
+	style.content_margin_bottom = 6
+	log_panel.add_theme_stylebox_override("panel", style)
+	var margin: MarginContainer = log_panel.get_node_or_null("LogMargin") as MarginContainer
+	if margin == null:
+		margin = MarginContainer.new()
+		margin.name = "LogMargin"
+		log_panel.add_child(margin)
+	var vbox: VBoxContainer = margin.get_node_or_null("LogVBox") as VBoxContainer
+	if vbox == null:
+		vbox = VBoxContainer.new()
+		vbox.name = "LogVBox"
+		vbox.add_theme_constant_override("separation", 4)
+		margin.add_child(vbox)
+	var footer: Node = get_node_or_null("Margin/RootVBox/FooterSection")
+	var log_title: Label = null
+	if footer != null:
+		log_title = footer.get_node_or_null("LogTitle") as Label
+	if log_title == null:
+		log_title = vbox.get_node_or_null("LogTitle") as Label
+	if log_title == null:
+		log_title = Label.new()
+		log_title.name = "LogTitle"
+		log_title.text = "战斗日志"
+	if log_title.get_parent() != vbox:
+		log_title.reparent(vbox)
+		vbox.move_child(log_title, 0)
+	log_title.add_theme_font_size_override("font_size", 14)
+	log_title.add_theme_color_override("font_color", Color(0.75, 0.8, 0.9, 1))
+	if log_box != null:
+		if log_box.get_parent() != vbox:
+			log_box.reparent(vbox)
+		log_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		log_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		log_box.custom_minimum_size = Vector2(0, 220)
+	# 排序由 _ensure_combat_layout 统一处理；此处只保证窄宽、不 expand
+	var mid_pad: Control = bottom.get_node_or_null("LogMidPad") as Control
+	if mid_pad != null:
+		mid_pad.visible = false
+		mid_pad.size_flags_horizontal = 0
+		mid_pad.custom_minimum_size = Vector2.ZERO
+
+
+func _ensure_muzzle_hud() -> void:
+	if _muzzle_panel != null:
+		return
+	_muzzle_panel = PanelContainer.new()
+	_muzzle_panel.name = "MuzzleStatusPanel"
+	_muzzle_panel.z_index = 5
+	_muzzle_panel.visible = false
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.18, 0.08, 0.06, 0.92)
+	style.set_border_width_all(2)
+	style.border_color = Color(1.0, 0.45, 0.2, 1.0)
+	style.set_corner_radius_all(8)
+	style.content_margin_left = 12
+	style.content_margin_right = 12
+	style.content_margin_top = 8
+	style.content_margin_bottom = 8
+	_muzzle_panel.add_theme_stylebox_override("panel", style)
+	_muzzle_label = Label.new()
+	_muzzle_label.name = "MuzzleStatusLabel"
+	_muzzle_label.add_theme_font_size_override("font_size", 18)
+	_muzzle_label.add_theme_color_override("font_color", Color(1.0, 0.85, 0.35))
+	_muzzle_label.text = "枪口：—"
+	_muzzle_panel.add_child(_muzzle_label)
+	# 挂在弹夹列标题下，醒目
+	var mag_col: Node = mag_title.get_parent() if mag_title != null else self
+	if mag_col != null:
+		mag_col.add_child(_muzzle_panel)
+		if mag_title != null:
+			mag_col.move_child(_muzzle_panel, mag_title.get_index() + 1)
+	else:
+		add_child(_muzzle_panel)
+
+
+func _refresh_muzzle_hud() -> void:
+	if _muzzle_label == null or state == null:
+		return
+	var text := state.muzzle_status_text()
+	if text.is_empty():
+		_muzzle_label.text = "枪口：无"
+		_muzzle_label.add_theme_color_override("font_color", Color(0.65, 0.62, 0.58))
+		if _muzzle_panel != null:
+			var idle := StyleBoxFlat.new()
+			idle.bg_color = Color(0.14, 0.14, 0.16, 0.85)
+			idle.set_border_width_all(2)
+			idle.border_color = Color(0.45, 0.45, 0.5, 0.8)
+			idle.set_corner_radius_all(8)
+			idle.content_margin_left = 12
+			idle.content_margin_right = 12
+			idle.content_margin_top = 8
+			idle.content_margin_bottom = 8
+			_muzzle_panel.add_theme_stylebox_override("panel", idle)
+			_muzzle_panel.visible = true
+	else:
+		_muzzle_label.text = text + "（本回合后续弹附带）"
+		_muzzle_label.add_theme_color_override("font_color", Color(1.0, 0.88, 0.35))
+		if _muzzle_panel != null:
+			var hot := StyleBoxFlat.new()
+			hot.bg_color = Color(0.28, 0.1, 0.05, 0.95)
+			hot.set_border_width_all(3)
+			hot.border_color = Color(1.0, 0.55, 0.15, 1.0)
+			hot.set_corner_radius_all(8)
+			hot.content_margin_left = 12
+			hot.content_margin_right = 12
+			hot.content_margin_top = 8
+			hot.content_margin_bottom = 8
+			_muzzle_panel.add_theme_stylebox_override("panel", hot)
+			_muzzle_panel.visible = true
 
 
 func _ensure_long_press_timer() -> void:
@@ -229,8 +576,8 @@ func _ensure_long_press_timer() -> void:
 
 func _on_dimmer_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		# 奖励面板必须选完，点遮罩不关闭
-		if _reward_open:
+		# 奖励 / 无限商店必须主动操作，点遮罩不关闭
+		if _reward_open or _shop_open:
 			return
 		if _detail_open and not _detail_from_hover:
 			_hide_ammo_detail()
@@ -278,6 +625,7 @@ func _build_board_cells() -> void:
 
 func _build_wheel_chambers() -> void:
 	_chamber_panels.clear()
+	mag_wheel.custom_minimum_size = Vector2(WHEEL_SIZE, WHEEL_SIZE)
 	for c in mag_wheel.get_children():
 		if c != fire_marker:
 			c.queue_free()
@@ -309,7 +657,7 @@ func _build_wheel_chambers() -> void:
 	var hub := Panel.new()
 	hub.name = "Hub"
 	hub.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var hub_sz := 36.0
+	var hub_sz := 30.0
 	hub.position = Vector2(WHEEL_SIZE, WHEEL_SIZE) * 0.5 - Vector2(hub_sz, hub_sz) * 0.5
 	hub.size = Vector2(hub_sz, hub_sz)
 	var hub_style := StyleBoxFlat.new()
@@ -338,7 +686,7 @@ func _build_wheel_chambers() -> void:
 		label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		label.add_theme_font_size_override("font_size", 15)
+		label.add_theme_font_size_override("font_size", 13)
 		panel.add_child(label)
 		_disk.add_child(panel)
 		_chamber_panels.append(panel)
@@ -363,28 +711,24 @@ func _build_wheel_chambers() -> void:
 	_fire_ring.z_index = 4
 	mag_wheel.add_child(_fire_ring)
 
-	fire_marker.text = "▼ 击发"
-	fire_marker.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	fire_marker.add_theme_color_override("font_color", Color(1.0, 0.18, 0.12))
-	fire_marker.add_theme_font_size_override("font_size", 20)
-	fire_marker.position = Vector2(WHEEL_SIZE * 0.5 - 40.0, -10.0)
-	fire_marker.size = Vector2(80, 26)
-	fire_marker.z_index = 5
-	fire_marker.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	mag_wheel.move_child(fire_marker, mag_wheel.get_child_count() - 1)
+	# 只留红圈；去掉「▼ 击发」红字
+	if fire_marker != null:
+		fire_marker.visible = false
+		fire_marker.text = ""
+		fire_marker.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 	# 左上装弹口标（固定）
 	if _load_marker != null and is_instance_valid(_load_marker):
 		_load_marker.queue_free()
 	_load_marker = Label.new()
 	_load_marker.name = "LoadMarker"
-	_load_marker.text = "◀装"
+	_load_marker.text = "装→"
 	_load_marker.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_load_marker.add_theme_color_override("font_color", Color(0.45, 0.95, 0.75))
 	_load_marker.add_theme_font_size_override("font_size", 18)
 	# 左上仓位中心：angle = -PI/2 - PI/3 = -5PI/6
 	var load_angle := -PI / 2.0 - PI / 3.0
-	var load_center := Vector2(WHEEL_SIZE, WHEEL_SIZE) * 0.5 + Vector2(cos(load_angle), sin(load_angle)) * (WHEEL_RADIUS + 42.0)
+	var load_center := Vector2(WHEEL_SIZE, WHEEL_SIZE) * 0.5 + Vector2(cos(load_angle), sin(load_angle)) * (WHEEL_RADIUS + 36.0)
 	_load_marker.position = load_center - Vector2(28, 12)
 	_load_marker.size = Vector2(56, 24)
 	_load_marker.z_index = 5
@@ -659,6 +1003,8 @@ func _on_menu_pressed() -> void:
 func _on_reward_continue() -> void:
 	if state.from_map_run:
 		_return_to_map(true)
+	elif state.needs_endless_shop():
+		_open_endless_shop()
 	else:
 		_on_next_wave()
 
@@ -672,7 +1018,7 @@ func _return_to_map(victory: bool) -> void:
 
 
 func _on_next_wave() -> void:
-	if _busy():
+	if _busy() or _shop_open:
 		return
 	# 地图 run 战败：用下一波按钮返回地图并结束本局
 	if state.from_map_run and state.phase == CombatState.Phase.LOST:
@@ -686,7 +1032,7 @@ func _on_next_wave() -> void:
 
 
 func _toggle_dev() -> void:
-	if (not _dev_open) and _reward_open:
+	if (not _dev_open) and (_reward_open or _shop_open):
 		return
 	_dev_open = not _dev_open
 	dev_panel.visible = _dev_open
@@ -696,9 +1042,8 @@ func _toggle_dev() -> void:
 
 
 func _update_dimmer() -> void:
-	# 悬停详情不盖遮罩；仅开发面板 / 奖励 / 长按钉住的详情用遮罩
-	var detail_needs_dim := _detail_open and _detail_from_long_press and not _detail_from_hover
-	dimmer.visible = _dev_open or _reward_open or detail_needs_dim
+	# 悬停/长按弹药详情不盖遮罩；开发面板 / 奖励 / 无限商店用遮罩
+	dimmer.visible = _dev_open or _reward_open or _shop_open
 
 
 func _set_reward_open(open: bool) -> void:
@@ -759,18 +1104,321 @@ func _refresh_reward_panel() -> void:
 				reward_hint.text = "领取完毕。返回地图选择下一节点（本战不会再刷下一波）。无伤/三回合额外金灰盒暂未结算。"
 				btn_reward_next.text = "返回地图 RETURN"
 		else:
-			if state.endless_mode:
+			if state.endless_mode and state.needs_endless_shop():
+				reward_hint.text = "第 %d 波已清：请先进入商店（每 5 波一次），逛完后再开下一波。牌库跨波保留。" % state.wave_index
+				btn_reward_next.text = "进入商店 SHOP"
+			elif state.endless_mode:
 				reward_hint.text = "可继续下一波（无限模式：牌库与奖励弹药跨波保留）。无伤/三回合额外金灰盒暂未结算。"
+				btn_reward_next.text = "下一波 NEXT"
 			else:
 				reward_hint.text = "可继续下一波（练习战胜利后弹药已重置为开局牌库）。练习战无地图。无伤/三回合额外金灰盒暂未结算。"
-			btn_reward_next.text = "下一波 NEXT"
+				btn_reward_next.text = "下一波 NEXT"
 		btn_reward_skip.visible = false
 		btn_reward_next.visible = true
-		btn_reward_next.disabled = not state.can_start_next_wave()
+		if state.needs_endless_shop():
+			btn_reward_next.disabled = false
+		else:
+			btn_reward_next.disabled = not state.can_start_next_wave()
 	else:
 		reward_hint.text = ""
 		btn_reward_skip.visible = false
 		btn_reward_next.visible = false
+
+
+
+func _on_enemy_damaged(cell: int, amount: int) -> void:
+	_spawn_damage_float(cell, amount)
+
+
+func _spawn_damage_float(cell: int, amount: int) -> void:
+	## 从敌人格子弹出 -N，二次贝塞尔弧线上升并淡出。
+	if amount <= 0 or board_row == null:
+		return
+	if cell < 0 or cell >= board_row.get_child_count():
+		return
+	var panel: Control = board_row.get_child(cell) as Control
+	if panel == null:
+		return
+	var start_g: Vector2 = panel.get_global_rect().get_center()
+	start_g.x += randf_range(-28.0, 28.0)
+	start_g.y += randf_range(-18.0, 10.0)
+	var lab := Label.new()
+	lab.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	lab.z_index = 42
+	lab.text = "-%d" % amount
+	lab.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lab.add_theme_font_size_override("font_size", 24)
+	lab.add_theme_color_override("font_color", Color(1.0, 0.42, 0.22))
+	lab.add_theme_color_override("font_outline_color", Color(0.12, 0.04, 0.02, 0.95))
+	lab.add_theme_constant_override("outline_size", 5)
+	lab.modulate = Color(1, 1, 1, 1)
+	add_child(lab)
+	lab.reset_size()
+	var half := lab.size * 0.5
+	if half.x < 1.0:
+		half = Vector2(18, 12)
+	lab.global_position = start_g - half
+	var drift_x := randf_range(-64.0, 64.0)
+	if absf(drift_x) < 18.0:
+		drift_x = 22.0 if randf() > 0.5 else -22.0
+	var ctrl := start_g + Vector2(drift_x * 0.55, -DMG_FLOAT_RISE * 0.55)
+	var end_g := start_g + Vector2(drift_x, -DMG_FLOAT_RISE)
+	var tw := create_tween()
+	tw.set_parallel(true)
+	tw.tween_method(_damage_float_step.bind(lab, start_g, ctrl, end_g), 0.0, 1.0, DMG_FLOAT_DURATION).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tw.tween_property(lab, "modulate:a", 0.0, DMG_FLOAT_DURATION).set_delay(0.2)
+	tw.chain().tween_callback(lab.queue_free)
+
+
+func _damage_float_step(t: float, lab: Label, start_g: Vector2, ctrl: Vector2, end_g: Vector2) -> void:
+	if not is_instance_valid(lab):
+		return
+	var u := 1.0 - t
+	var p := u * u * start_g + 2.0 * u * t * ctrl + t * t * end_g
+	var h := lab.size * 0.5
+	if h.x < 1.0:
+		h = Vector2(18, 12)
+	lab.global_position = p - h
+
+
+func _build_endless_shop_panel() -> void:
+	if _shop_panel != null:
+		return
+	_shop_panel = PanelContainer.new()
+	_shop_panel.name = "EndlessShopPanel"
+	_shop_panel.visible = false
+	_shop_panel.z_index = 12
+	_shop_panel.set_anchors_preset(Control.PRESET_CENTER)
+	_shop_panel.offset_left = -380.0
+	_shop_panel.offset_top = -300.0
+	_shop_panel.offset_right = 380.0
+	_shop_panel.offset_bottom = 300.0
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.11, 0.12, 0.16, 0.97)
+	style.set_border_width_all(2)
+	style.border_color = Color(0.92, 0.72, 0.35, 0.95)
+	style.set_corner_radius_all(12)
+	style.content_margin_left = 14
+	style.content_margin_right = 14
+	style.content_margin_top = 12
+	style.content_margin_bottom = 12
+	_shop_panel.add_theme_stylebox_override("panel", style)
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 4)
+	margin.add_theme_constant_override("margin_right", 4)
+	margin.add_theme_constant_override("margin_top", 2)
+	margin.add_theme_constant_override("margin_bottom", 2)
+	_shop_panel.add_child(margin)
+	var root := VBoxContainer.new()
+	root.add_theme_constant_override("separation", 8)
+	margin.add_child(root)
+	_shop_title = Label.new()
+	_shop_title.text = "无限商店 · 灰盒"
+	_shop_title.add_theme_font_size_override("font_size", 22)
+	_shop_title.add_theme_color_override("font_color", COL_REWARD_TITLE)
+	root.add_child(_shop_title)
+	_shop_gold_label = Label.new()
+	_shop_gold_label.add_theme_color_override("font_color", COL_GOLD)
+	root.add_child(_shop_gold_label)
+	_shop_hint = Label.new()
+	_shop_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_shop_hint.add_theme_color_override("font_color", COL_REWARD_HINT)
+	root.add_child(_shop_hint)
+	var cols := HBoxContainer.new()
+	cols.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	cols.add_theme_constant_override("separation", 14)
+	root.add_child(cols)
+	var left := VBoxContainer.new()
+	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	left.add_theme_constant_override("separation", 6)
+	cols.add_child(left)
+	var stock_title := Label.new()
+	stock_title.text = "库存"
+	left.add_child(stock_title)
+	var stock_scroll := ScrollContainer.new()
+	stock_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	stock_scroll.custom_minimum_size = Vector2(0, 220)
+	left.add_child(stock_scroll)
+	_shop_stock = VBoxContainer.new()
+	_shop_stock.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	stock_scroll.add_child(_shop_stock)
+	var right := VBoxContainer.new()
+	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	right.add_theme_constant_override("separation", 6)
+	cols.add_child(right)
+	var bag_title := Label.new()
+	bag_title.text = "袋内可删"
+	right.add_child(bag_title)
+	var bag_scroll := ScrollContainer.new()
+	bag_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	bag_scroll.custom_minimum_size = Vector2(0, 220)
+	right.add_child(bag_scroll)
+	_shop_bag_list = VBoxContainer.new()
+	_shop_bag_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bag_scroll.add_child(_shop_bag_list)
+	_shop_msg = Label.new()
+	_shop_msg.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_shop_msg.add_theme_color_override("font_color", Color(0.85, 0.9, 1.0))
+	root.add_child(_shop_msg)
+	var actions := HBoxContainer.new()
+	actions.add_theme_constant_override("separation", 10)
+	root.add_child(actions)
+	_btn_shop_reroll = Button.new()
+	_btn_shop_reroll.custom_minimum_size = Vector2(220, 40)
+	_btn_shop_reroll.pressed.connect(_on_endless_shop_reroll)
+	_style_reward_action_button(_btn_shop_reroll)
+	actions.add_child(_btn_shop_reroll)
+	_btn_shop_leave = Button.new()
+	_btn_shop_leave.text = "离开商店 · 可下一波"
+	_btn_shop_leave.custom_minimum_size = Vector2(220, 40)
+	_btn_shop_leave.pressed.connect(_on_endless_shop_leave)
+	_style_reward_action_button(_btn_shop_leave)
+	actions.add_child(_btn_shop_leave)
+	add_child(_shop_panel)
+
+
+func _open_endless_shop() -> void:
+	if state == null or not state.needs_endless_shop():
+		return
+	if _shop_panel == null:
+		_build_endless_shop_panel()
+	_set_reward_open(false)
+	_dev_open = false
+	dev_panel.visible = false
+	_hide_ammo_detail()
+	var seed_v: int = state.wave_index * 9973 + state.gold * 13 + 17
+	_shop.begin(state.gold, state.bag, state.wave_index, seed_v)
+	_shop_open = true
+	_shop_panel.visible = true
+	_refresh_endless_shop_panel()
+	_update_dimmer()
+
+
+func _refresh_endless_shop_panel() -> void:
+	if _shop_panel == null or not _shop.open:
+		return
+	_shop_title.text = "无限商店 · 第 %d 波后" % state.wave_index
+	_shop_gold_label.text = "金币 %d" % _shop.gold
+	_shop_hint.text = "购买：单价 %d 金/发。重随：免费 %d 次，之后每次 %d 金。移除：本店递增（%d、再 +%d…），离店重置。逛完后才可下一波。" % [
+		ShopConstants.AMMO_PRICE,
+		ShopConstants.FREE_REROLLS,
+		ShopConstants.REROLL_COST,
+		ShopConstants.REMOVE_BASE_COST,
+		ShopConstants.REMOVE_COST_STEP,
+	]
+	var rc: int = _shop.reroll_cost_now()
+	if rc <= 0:
+		_btn_shop_reroll.text = "重随库存（免费剩余 %d）" % _shop.free_rerolls_left
+	else:
+		_btn_shop_reroll.text = "重随库存（%d 金）" % rc
+	_btn_shop_reroll.disabled = not _shop.can_reroll()
+	_shop_msg.text = _shop.last_message
+	_refresh_endless_shop_stock()
+	_refresh_endless_shop_bag()
+
+
+func _refresh_endless_shop_stock() -> void:
+	for c in _shop_stock.get_children():
+		c.queue_free()
+	var title := Label.new()
+	title.text = "库存（随机 · 无稀有度权重）"
+	_shop_stock.add_child(title)
+	for i in _shop.stock.size():
+		var ammo_id: int = _shop.stock[i]
+		var def: Dictionary = DataRegistry.get_ammo(ammo_id)
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 8)
+		var info := Label.new()
+		var price: int = _shop.ammo_price(ammo_id)
+		if _shop.sold[i]:
+			info.text = "%s · 已售出" % str(def.get("name", ammo_id))
+			info.add_theme_color_override("font_color", Color(0.55, 0.55, 0.6))
+		else:
+			info.text = "%s · %d 金" % [str(def.get("name", ammo_id)), price]
+		info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(info)
+		var btn := Button.new()
+		btn.text = "购买"
+		btn.custom_minimum_size = Vector2(88, 36)
+		btn.disabled = not _shop.can_buy(i)
+		var idx := i
+		btn.pressed.connect(func(): _on_endless_shop_buy(idx))
+		row.add_child(btn)
+		_shop_stock.add_child(row)
+
+
+func _refresh_endless_shop_bag() -> void:
+	for c in _shop_bag_list.get_children():
+		c.queue_free()
+	var title := Label.new()
+	title.text = "袋内可删（下次移除 %d 金 · 本店已删 %d 次）· 共 %d 发" % [
+		_shop.next_remove_cost(), _shop.removes_done, _shop.bag.size()
+	]
+	title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_shop_bag_list.add_child(title)
+	if _shop.bag.is_empty():
+		var empty := Label.new()
+		empty.text = "（空）"
+		_shop_bag_list.add_child(empty)
+		return
+	var counts: Dictionary = {}
+	var order: Array = []
+	for ammo_id in _shop.bag:
+		var idv: int = int(ammo_id)
+		if not counts.has(idv):
+			order.append(idv)
+			counts[idv] = 0
+		counts[idv] = int(counts[idv]) + 1
+	for ammo_id in order:
+		var def: Dictionary = DataRegistry.get_ammo(int(ammo_id))
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 8)
+		var info := Label.new()
+		info.text = "%s ×%d" % [str(def.get("name", ammo_id)), int(counts[ammo_id])]
+		info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(info)
+		var btn := Button.new()
+		btn.text = "移除 %d 金" % _shop.next_remove_cost()
+		btn.custom_minimum_size = Vector2(120, 36)
+		var aid: int = int(ammo_id)
+		btn.disabled = _shop.gold < _shop.next_remove_cost()
+		btn.pressed.connect(func(): _on_endless_shop_remove(aid))
+		row.add_child(btn)
+		_shop_bag_list.add_child(row)
+
+
+func _on_endless_shop_buy(slot: int) -> void:
+	if _shop.buy(slot):
+		_refresh_endless_shop_panel()
+
+
+func _on_endless_shop_remove(ammo_id: int) -> void:
+	var idx := _shop.bag.find(ammo_id)
+	if idx < 0:
+		return
+	if _shop.remove_at(idx):
+		_refresh_endless_shop_panel()
+
+
+func _on_endless_shop_reroll() -> void:
+	if _shop.reroll():
+		_refresh_endless_shop_panel()
+
+
+func _on_endless_shop_leave() -> void:
+	if not _shop.open:
+		return
+	var payload: Dictionary = _shop.end_session()
+	state.apply_shop_payload(payload)
+	state.mark_endless_shop_done()
+	_shop_open = false
+	if _shop_panel != null:
+		_shop_panel.visible = false
+	_update_dimmer()
+	# 离店后重新打开奖励面板，方便点「下一波」
+	if state.phase == CombatState.Phase.WON and state.reward_resolved:
+		_set_reward_open(true)
+	_refresh()
 
 
 func _apply_light_button_font(btn: Button) -> void:
@@ -852,11 +1500,15 @@ func _style_reward_choice_button(btn: Button, ammo_bg: Color) -> void:
 func _on_reward_pick(index: int) -> void:
 	if state.pick_reward_ammo(index):
 		_refresh_reward_panel()
+		if state.needs_endless_shop():
+			_open_endless_shop()
 
 
 func _on_reward_skip() -> void:
 	if state.skip_reward_for_gold():
 		_refresh_reward_panel()
+		if state.needs_endless_shop():
+			_open_endless_shop()
 
 
 func _bag_inventory_fingerprint(inv: Dictionary) -> String:
@@ -885,18 +1537,19 @@ func _refresh_bag_list() -> void:
 	var disc_n: int = state.discard.size()
 	var total_n: int = bag_n + mag_n + disc_n
 	var title := Label.new()
-	title.text = "共 %d 发（袋 %d · 膛 %d · 弃 %d）\n金币 %d" % [
+	title.text = "共%d · 袋%d · 膛%d\n弃%d · 金%d" % [
 		total_n, bag_n, mag_n, disc_n, state.gold
 	]
 	title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	title.add_theme_font_size_override("font_size", 16)
+	title.add_theme_font_size_override("font_size", 12)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	bag_list.add_child(title)
 	if inv.is_empty():
 		var empty := Label.new()
 		empty.text = "（牌库空：袋、膛、弃皆无）"
 		bag_list.add_child(empty)
 		var tip0 := Label.new()
-		tip0.text = "亮=可抽；暗=已上膛/弃牌。悬停或长按看效果。"
+		tip0.text = "悬停/长按看效果"
 		tip0.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		tip0.add_theme_font_size_override("font_size", 13)
 		tip0.add_theme_color_override("font_color", Color(0.7, 0.75, 0.85))
@@ -909,9 +1562,9 @@ func _refresh_bag_list() -> void:
 	order_ids.sort()
 	var grid := GridContainer.new()
 	grid.columns = BAG_GRID_COLS
-	grid.add_theme_constant_override("h_separation", 8)
-	grid.add_theme_constant_override("v_separation", 8)
-	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	grid.add_theme_constant_override("h_separation", 6)
+	grid.add_theme_constant_override("v_separation", 6)
+	grid.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	bag_list.add_child(grid)
 	for ammo_id in order_ids:
 		var entry: Dictionary = inv[ammo_id]
@@ -923,9 +1576,12 @@ func _refresh_bag_list() -> void:
 		var colors := _ammo_colors(ammo_id)
 		var cell := PanelContainer.new()
 		cell.custom_minimum_size = BAG_CELL_MIN
+		cell.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		cell.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		cell.clip_contents = true
 		var cell_style := StyleBoxFlat.new()
 		cell_style.bg_color = colors["bg"]
-		cell_style.set_corner_radius_all(8)
+		cell_style.set_corner_radius_all(999)
 		cell_style.set_border_width_all(2)
 		cell_style.border_color = Color(0.15, 0.15, 0.18, 0.7)
 		if ammo_id == CombatConstants.INVALID_AMMO_ID:
@@ -940,48 +1596,35 @@ func _refresh_bag_list() -> void:
 		elif in_bag == 0 and in_mag == 0 and in_disc > 0:
 			# 全在弃牌：蓝灰描边，袋空仍可见拥有
 			cell_style.border_color = Color(0.45, 0.55, 0.75)
-		cell_style.content_margin_left = 8
-		cell_style.content_margin_right = 8
-		cell_style.content_margin_top = 8
-		cell_style.content_margin_bottom = 8
+		cell_style.content_margin_left = 2
+		cell_style.content_margin_right = 2
+		cell_style.content_margin_top = 2
+		cell_style.content_margin_bottom = 2
 		cell.add_theme_stylebox_override("panel", cell_style)
 		# 仍有在袋 → 正常；全上膛或全弃 → 变暗（仍列出）
 		if in_bag == 0 and (in_mag > 0 or in_disc > 0):
 			cell.modulate = Color(0.55, 0.55, 0.58, 1.0)
 		else:
 			cell.modulate = Color.WHITE
-		var v := VBoxContainer.new()
-		v.add_theme_constant_override("separation", 2)
-		var name_l := Label.new()
 		var full_name: String
 		if ammo_id == CombatConstants.INVALID_AMMO_ID:
 			full_name = CombatConstants.INVALID_AMMO_NAME
 		else:
 			full_name = str(def.get("name", "未知#%d" % ammo_id))
 		var short := full_name.replace("子弹", "").replace("弹药", "")
-		name_l.text = short
-		name_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		name_l.add_theme_color_override("font_color", colors["fg"])
-		name_l.add_theme_font_size_override("font_size", 16)
-		var cnt_l := Label.new()
-		cnt_l.text = "共×%d" % total
-		cnt_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		cnt_l.add_theme_color_override("font_color", colors["fg"])
-		cnt_l.add_theme_font_size_override("font_size", 20)
-		var split_l := Label.new()
-		split_l.text = "袋%d · 膛%d · 弃%d" % [in_bag, in_mag, in_disc]
-		split_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		split_l.add_theme_font_size_override("font_size", 12)
-		if in_mag > 0:
-			split_l.add_theme_color_override("font_color", Color(0.35, 0.35, 0.4) if in_bag == 0 else Color(0.45, 0.35, 0.1))
-		elif in_bag == 0 and in_disc > 0:
-			split_l.add_theme_color_override("font_color", Color(0.4, 0.48, 0.62))
-		else:
-			split_l.add_theme_color_override("font_color", colors["fg"].darkened(0.15))
-		v.add_child(name_l)
-		v.add_child(cnt_l)
-		v.add_child(split_l)
-		cell.add_child(v)
+		if short.is_empty():
+			short = str(ammo_id)
+		var glyph := short.substr(0, 1)
+		var lbl := Label.new()
+		lbl.text = "%s×%d" % [glyph, total]
+		lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		lbl.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		lbl.clip_text = true
+		lbl.add_theme_color_override("font_color", colors["fg"])
+		lbl.add_theme_font_size_override("font_size", 11)
+		cell.add_child(lbl)
 		cell.mouse_filter = Control.MOUSE_FILTER_STOP
 		cell.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 		var aid: int = ammo_id
@@ -990,10 +1633,11 @@ func _refresh_bag_list() -> void:
 		cell.gui_input.connect(func(ev: InputEvent): _on_bag_cell_input(ev, aid, cell))
 		grid.add_child(cell)
 	var tip := Label.new()
-	tip.text = "亮=可抽；暗=全在膛/弃；黄边=部分上膛。悬停/长按看效果。格序不是抽序。"
+	tip.text = "悬停/长按看效果"
 	tip.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	tip.add_theme_font_size_override("font_size", 13)
+	tip.add_theme_font_size_override("font_size", 11)
 	tip.add_theme_color_override("font_color", Color(0.7, 0.75, 0.85))
+	tip.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	bag_list.add_child(tip)
 	_bag_refreshing = false
 	if _detail_open and _hover_ammo_id >= 0:
@@ -1217,6 +1861,7 @@ func _refresh() -> void:
 	if not _wheel_animating:
 		_refresh_mag()
 	_refresh_bag_list()
+	_refresh_muzzle_hud()
 	match state.phase:
 		CombatState.Phase.WON:
 			if state.reward_pending:
@@ -1228,6 +1873,8 @@ func _refresh() -> void:
 			elif state.reward_resolved:
 				if state.from_map_run:
 					result_label.text = "奖励已领取 · 请返回地图"
+				elif state.needs_endless_shop():
+					result_label.text = "奖励已领取 · 请先逛商店"
 				else:
 					result_label.text = "奖励已领取 · 可开下一波"
 				if _reward_open:
@@ -1347,6 +1994,7 @@ func _refresh_hud_only() -> void:
 	btn_next_wave.disabled = busy or not state.can_start_next_wave()
 	_refresh_board()
 	_refresh_bag_list()
+	_refresh_muzzle_hud()
 
 
 func _refresh_mag_contents() -> void:

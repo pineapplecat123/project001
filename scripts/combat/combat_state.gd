@@ -25,6 +25,8 @@ enum EncounterKind {
 signal phase_changed(phase: int)
 signal log_line(text: String)
 signal state_changed
+## UI：敌人实际扣血时抛出（cell + 本次伤害），用于飘字
+signal enemy_damaged(cell: int, amount: int)
 
 var phase: int = Phase.AWAIT_LOAD
 var player_hp: int = CombatConstants.PLAYER_MAX_HP
@@ -53,6 +55,8 @@ var wave_player_turns: int = 0
 var from_map_run: bool = false
 ## 无限模式：可一直下一波；胜利不重置牌库（与练习战相对）
 var endless_mode: bool = false
+## 无限模式：本波奖励后若需进店，false 表示还没逛完
+var endless_shop_done: bool = true
 ## 遭遇类型：普通 / 精英 / Boss（灰盒）
 var encounter_kind: int = EncounterKind.NORMAL
 ## 本波实际发放的基础金币（供 UI 显示）
@@ -123,6 +127,7 @@ func start_graybox(seed_value: int = 0, endless: bool = false) -> void:
 	wave_player_turns = 0
 	from_map_run = false
 	endless_mode = endless
+	endless_shop_done = true
 	encounter_kind = EncounterKind.NORMAL
 	last_reward_base_gold = 0
 	_set_phase(Phase.AWAIT_LOAD)
@@ -142,6 +147,7 @@ func start_from_run(payload: Dictionary, seed_value: int = 0) -> void:
 	BulletEffectRegistry.ensure_defaults()
 	from_map_run = true
 	endless_mode = false
+	endless_shop_done = true
 	encounter_kind = _parse_encounter(str(payload.get("encounter", "normal")))
 	last_reward_base_gold = 0
 	player_max_hp = int(payload.get("player_max_hp", CombatConstants.PLAYER_MAX_HP))
@@ -216,6 +222,30 @@ func _reset_fire_session() -> void:
 	last_fired_slot = -1
 
 
+
+func muzzle_status_parts() -> PackedStringArray:
+	## UI 用：当前枪口已挂效果（中文短名）。
+	var parts: PackedStringArray = PackedStringArray()
+	if _muzzle_pierce:
+		parts.append("穿透")
+	if _muzzle_gas:
+		parts.append("汽油")
+	if _muzzle_fire:
+		parts.append("火")
+	if _muzzle_water:
+		parts.append("水")
+	if _muzzle_thunder:
+		parts.append("雷")
+	return parts
+
+
+func muzzle_status_text() -> String:
+	var parts := muzzle_status_parts()
+	if parts.is_empty():
+		return ""
+	return "枪口：" + " · ".join(parts)
+
+
 func _reset_muzzle() -> void:
 	## 回合结束重置枪口：状态弹挂上的效果本回合内持续附带到后续击发。
 	_muzzle_pierce = false
@@ -251,6 +281,12 @@ func _log(text: String) -> void:
 
 func _emit() -> void:
 	state_changed.emit()
+
+
+func _notify_enemy_damage(e: EnemyInstance, amount: int) -> void:
+	if e == null or amount <= 0:
+		return
+	enemy_damaged.emit(e.cell, amount)
 
 
 func _shuffle(arr: Array[int]) -> void:
@@ -639,12 +675,11 @@ func fire_next_shot() -> bool:
 	_fire_index += 1
 	_remove_dead()
 
-	# 金色：击发后立刻额外自动装填射击一轮（不拖到整匣打完，避免被同匣后续弹清场后跳过）
-	# 「弹夹内有几发金就几轮」只计本匣击发的金，额外轮内的金不再叠加轮数。
-	if ammo_id == FireResolver.ID_GOLD and not alive_enemies().is_empty():
-		_log("金色弹药：额外自动装填射击")
-		_auto_load_and_fire_once()
-		_remove_dead()
+	# 金色：本匣击发计入待追加轮数；整匣打完（或中途清场归袋）后再额外自动装填射击。
+	# 额外轮内的金色不再叠加轮数。
+	if ammo_id == FireResolver.ID_GOLD:
+		_pending_gold_autofires += 1
+		_log("金色弹药：本匣已击发金 ×%d（整匣后再额外轮）。" % _pending_gold_autofires)
 
 	_emit()
 
@@ -686,6 +721,7 @@ func _hit_enemy_with_elements(
 	e: EnemyInstance, dmg: int, ammo_id: int, gas: bool, fire: bool, water: bool, thunder: bool
 ) -> int:
 	var dealt: int = e.apply_hit(dmg)
+	_notify_enemy_damage(e, dealt)
 	_log("击发[%s] → %s 格%d 伤害%d（HP %d/%d）%s" % [
 		_ammo_name(ammo_id), e.name_zh, e.cell, dealt, e.hp, e.max_hp,
 		(" " + e.status_text()) if e.status_text() != "" else ""
@@ -704,6 +740,7 @@ func _hit_enemy_with_elements(
 			# 已燃烧时，本应施加的汽油直接转化为伤害
 			var convert := dealt if dealt > 0 else dmg
 			var extra: int = e.apply_hit(convert)
+			_notify_enemy_damage(e, extra)
 			dealt += extra
 			_log("  → 已燃烧，汽油转化为伤害 %d" % extra)
 		else:
@@ -738,6 +775,7 @@ func _ignite_gas_cluster(start: EnemyInstance) -> void:
 			continue
 		var g := e.gas_stacks
 		var boom: int = e.apply_damage(g)
+		_notify_enemy_damage(e, boom)
 		e.burn_stacks += g
 		e.gas_stacks = 0
 		_log("  → %s 汽油引爆伤害%d，燃烧%d" % [e.name_zh, boom, e.burn_stacks])
@@ -812,8 +850,9 @@ func _consume_hammer_chamber(expected_id: int) -> void:
 
 
 func _finish_fire() -> void:
-	## 整匣打完（或无剩余实弹）后的收束。金色已在击发当发处理。
+	## 整匣打完（或无剩余实弹）后的收束。金色按本匣击发数在此追加额外轮。
 	magazine.clear()
+	_run_pending_gold_autofires("整匣打完")
 	_log("射击结算完毕，总伤害 %d。" % _fire_total_damage)
 	_reset_fire_session()
 	_pending_gold_autofires = 0
@@ -826,7 +865,7 @@ func _finish_fire() -> void:
 
 
 func _abort_fire_cleared() -> void:
-	## 连射中途敌人全灭：停射、未击发归袋、清枪口、进胜利（不跑怪回合）。
+	## 连射中途敌人全灭：停射、未击发归袋；已击发金色仍尝试追加额外轮，再清枪口进胜利。
 	var returned := 0
 	if magazine != null and not magazine.is_empty():
 		for id in magazine.slots:
@@ -834,6 +873,8 @@ func _abort_fire_cleared() -> void:
 				returned += 1
 		_return_magazine_to_bag()
 	_log("射击中途清场，未击发 %d 发归还弹药袋。总伤害 %d。" % [returned, _fire_total_damage])
+	# 未击发已归袋，袋有弹；若场上已空则额外轮会跳过。
+	_run_pending_gold_autofires("中途清场后")
 	_reset_fire_session()
 	_pending_gold_autofires = 0
 	_reset_muzzle()
@@ -841,10 +882,25 @@ func _abort_fire_cleared() -> void:
 	_emit()
 
 
+func _run_pending_gold_autofires(reason: String) -> void:
+	## 按本匣已击发金数追加额外自动装填射击轮；额外轮内金不叠轮。
+	if _pending_gold_autofires <= 0:
+		return
+	var n: int = _pending_gold_autofires
+	_log("金色弹药：%s，追加 %d 轮额外自动装填射击。" % [reason, n])
+	for i in n:
+		if alive_enemies().is_empty():
+			_log("金色额外轮：战场已清空，剩余 %d 轮跳过。" % (n - i))
+			break
+		_auto_load_and_fire_once()
+		_remove_dead()
+	_pending_gold_autofires = 0
+
+
 func _auto_load_and_fire_once() -> bool:
 	## 金色额外轮：从袋抽满匣并立刻同步打完（无 UI 延迟）。枪口跨轮保留。
-	## 额外轮内的金色不再叠加新轮（轮数=本匣击发金数）。中途清场则停并归还未击发。
-	## 必须暂存主匣剩余弹，避免 load_sequence 冲掉尚未击发的主匣弹药。
+	## 额外轮内的金色不再叠加新轮。中途清场则停并归还未击发。
+	## 暂存调用方匣状态，避免 load_sequence 冲掉尚未恢复的主匣弹药。
 	_reshuffle_if_needed_for_load()
 	var draw_n: int = mini(CombatConstants.MAGAZINE_SIZE, bag.size())
 	if draw_n <= 0:
@@ -997,6 +1053,7 @@ func _run_enemy_turn() -> void:
 		if e.burn_stacks > 0:
 			var b: int = e.burn_stacks
 			var dealt: int = e.apply_damage(b)
+			_notify_enemy_damage(e, dealt)
 			e.burn_stacks = maxi(0, e.burn_stacks - 1)
 			_log("%s 燃烧结算伤害%d，燃烧剩余%d" % [e.name_zh, dealt, e.burn_stacks])
 	_remove_dead()
@@ -1042,6 +1099,7 @@ func _tick_bleed_end_of_enemy_turn() -> void:
 			continue
 		var stacks: int = e.bleed_stacks
 		var dealt: int = e.apply_damage(stacks)
+		_notify_enemy_damage(e, dealt)
 		e.bleed_stacks = maxi(0, e.bleed_stacks - 1)
 		_log("%s 流血结算伤害%d（层%d→%d）" % [e.name_zh, dealt, stacks, e.bleed_stacks])
 
@@ -1095,6 +1153,11 @@ func _enter_won() -> void:
 	# 练习战：胜利后重置为开局白弹再发奖；无限模式/地图 run 保留牌库
 	if not from_map_run and not endless_mode:
 		_reset_practice_ammo_to_starter()
+	# 无限：每 5 波（5/10/15…）奖励后须进商店，逛完才可下一波
+	if endless_mode and wave_index > 0 and wave_index % 5 == 0:
+		endless_shop_done = false
+	else:
+		endless_shop_done = true
 	_begin_reward()
 
 
@@ -1198,9 +1261,28 @@ func _hook_fast_clear_bonus_gold() -> int:
 	return CombatConstants.REWARD_FAST_CLEAR_EXTRA_GOLD
 
 
+func needs_endless_shop() -> bool:
+	return endless_mode and phase == Phase.WON and reward_resolved and not reward_pending and not endless_shop_done
+
+
+func mark_endless_shop_done() -> void:
+	endless_shop_done = true
+	_emit()
+
+
+func apply_shop_payload(payload: Dictionary) -> void:
+	## 无限模式离店：写回金币与袋（匣/弃牌不变）。
+	gold = int(payload.get("gold", gold))
+	bag.clear()
+	for x in payload.get("bag", []):
+		bag.append(int(x))
+	_emit()
+
+
 func can_start_next_wave() -> bool:
-	## 奖励结算完成后才可下一波（不重置弹药袋）。
-	return phase == Phase.WON and reward_resolved and not reward_pending
+
+	## 奖励结算完成后才可下一波（不重置弹药袋）；无限逢 5 波须先逛完商店。
+	return phase == Phase.WON and reward_resolved and not reward_pending and endless_shop_done
 
 
 ## 清场后开始下一波：随机/轮换现有启用敌人，不回主菜单、不重置弹药袋。

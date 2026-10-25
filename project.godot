@@ -22,14 +22,11 @@ RunState="*res://scripts/run/run_state.gd"
 
 [display]
 
-window/size/viewport_width=1152
-window/size/viewport_height=648
 window/stretch/mode="canvas_items"
 
 [editor_plugins]
 
 enabled=PackedStringArray("res://addons/gut/plugin.cfg")
-
 
 [gui]
 
