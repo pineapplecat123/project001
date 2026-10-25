@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 从系统 Noto Sans CJK SC 重建 UI 子集字体。先跑 collect 逻辑见同目录说明。
+# 从系统 Noto Sans CJK SC 重建 UI 子集字体。
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="${NOTO_CJK_TTC:-/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc}"
@@ -16,3 +16,5 @@ pyftsubset "$SRC" \
   --name-IDs='*' --name-legacy --name-languages='*' \
   --recalc-bounds --recalc-average-width
 echo "Wrote $OUT ($(wc -c < "$OUT") bytes)"
+# Web：关闭压缩并为全字库 preload，避免 Pages 乱码
+python3 "$ROOT/tools/patch_font_import_for_web.py"

@@ -25,8 +25,8 @@ enum EncounterKind {
 signal phase_changed(phase: int)
 signal log_line(text: String)
 signal state_changed
-## UI：敌人实际扣血时抛出（cell + 本次伤害），用于飘字
-signal enemy_damaged(cell: int, amount: int)
+## UI：敌人实际扣血时抛出（cell + 伤害 + 状态标签；直伤 kind 为空），用于飘字
+signal enemy_damaged(cell: int, amount: int, kind: String)
 
 var phase: int = Phase.AWAIT_LOAD
 var player_hp: int = CombatConstants.PLAYER_MAX_HP
@@ -77,6 +77,10 @@ var _muzzle_fire: bool = false
 var _muzzle_water: bool = false
 var _muzzle_thunder: bool = false
 var _pending_gold_autofires: int = 0
+## UI 逐步表现：为 true 时整匣结束后不立刻跑金色额外轮/怪回合，由 UI 消费。
+var pace_after_fire: bool = false
+var _post_fire_enemy_pending: bool = false
+var _in_gold_extra_round: bool = false
 
 ## 逐步装填会话（UI：装一发→转 60°→再装；do_load 仍可一次装满）
 var _load_session_active: bool = false
@@ -110,7 +114,6 @@ func start_graybox(seed_value: int = 0, endless: bool = false) -> void:
 	magazine = Magazine.new()
 	enemies.clear()
 	wave_index = 1
-	_spawn_wave_enemies([CombatConstants.CIVILIAN_ENEMY_ID])
 	turn_index = 0
 	needs_reshuffle_next_load = false
 	last_log.clear()
@@ -121,6 +124,8 @@ func start_graybox(seed_value: int = 0, endless: bool = false) -> void:
 	_reset_fire_session()
 	_reset_muzzle()
 	_pending_gold_autofires = 0
+	_post_fire_enemy_pending = false
+	_in_gold_extra_round = false
 	_reset_load_session()
 	_clear_reward_state()
 	wave_took_damage = false
@@ -130,6 +135,11 @@ func start_graybox(seed_value: int = 0, endless: bool = false) -> void:
 	endless_shop_done = true
 	encounter_kind = EncounterKind.NORMAL
 	last_reward_base_gold = 0
+	if endless_mode:
+		_configure_endless_wave_encounter()
+		_spawn_wave_enemies()
+	else:
+		_spawn_wave_enemies([CombatConstants.CIVILIAN_ENEMY_ID])
 	_set_phase(Phase.AWAIT_LOAD)
 	var mode_label := "无限模式" if endless_mode else "练习战斗"
 	_log("%s：白色弹药 ×%d · 第 %d 波。（可用开发者工具加入其它弹药）" % [
@@ -283,10 +293,10 @@ func _emit() -> void:
 	state_changed.emit()
 
 
-func _notify_enemy_damage(e: EnemyInstance, amount: int) -> void:
+func _notify_enemy_damage(e: EnemyInstance, amount: int, kind: String = "") -> void:
 	if e == null or amount <= 0:
 		return
-	enemy_damaged.emit(e.cell, amount)
+	enemy_damaged.emit(e.cell, amount, kind)
 
 
 func _shuffle(arr: Array[int]) -> void:
@@ -704,11 +714,17 @@ func _apply_shot_to_enemies(
 	var total := 0
 	if pierce:
 		var dmg := base_dmg
+		var chain_origin: EnemyInstance = null
 		for e in targets:
 			if dmg <= 0:
 				break
 			total += _hit_enemy_with_elements(e, dmg, ammo_id, gas, fire, water, thunder)
+			# 穿透：以首个「有湿」目标为导电起点（含水本发刚挂上的湿）
+			if thunder and chain_origin == null and e.wet_stacks > 0:
+				chain_origin = e
 			dmg -= 1
+		if thunder and chain_origin != null:
+			total += _thunder_chain(chain_origin, base_dmg, gas, fire, water)
 	else:
 		var e: EnemyInstance = targets[0]
 		total += _hit_enemy_with_elements(e, base_dmg, ammo_id, gas, fire, water, thunder)
@@ -718,21 +734,22 @@ func _apply_shot_to_enemies(
 
 
 func _hit_enemy_with_elements(
-	e: EnemyInstance, dmg: int, ammo_id: int, gas: bool, fire: bool, water: bool, thunder: bool
+	e: EnemyInstance, dmg: int, ammo_id: int, gas: bool, fire: bool, water: bool, thunder: bool,
+	damage_kind: String = ""
 ) -> int:
 	var dealt: int = e.apply_hit(dmg)
-	_notify_enemy_damage(e, dealt)
+	_notify_enemy_damage(e, dealt, damage_kind)
 	_log("击发[%s] → %s 格%d 伤害%d（HP %d/%d）%s" % [
 		_ammo_name(ammo_id), e.name_zh, e.cell, dealt, e.hp, e.max_hp,
 		(" " + e.status_text()) if e.status_text() != "" else ""
 	])
-	if not e.is_alive():
-		return dealt
-	# 水：湿，覆盖燃烧
+	# 水：湿须在死亡早退前挂上，否则同发雷击无法以本发湿启动导电
 	if water:
 		e.wet_stacks = maxi(e.wet_stacks, dealt if dealt > 0 else dmg)
 		e.burn_stacks = 0
 		_log("  → 施加湿 %d（燃烧被覆盖）" % e.wet_stacks)
+	if not e.is_alive():
+		return dealt
 	# 汽油
 	if gas:
 		if e.burn_stacks > 0:
@@ -740,7 +757,7 @@ func _hit_enemy_with_elements(
 			# 已燃烧时，本应施加的汽油直接转化为伤害
 			var convert := dealt if dealt > 0 else dmg
 			var extra: int = e.apply_hit(convert)
-			_notify_enemy_damage(e, extra)
+			_notify_enemy_damage(e, extra, "汽油")
 			dealt += extra
 			_log("  → 已燃烧，汽油转化为伤害 %d" % extra)
 		else:
@@ -775,7 +792,7 @@ func _ignite_gas_cluster(start: EnemyInstance) -> void:
 			continue
 		var g := e.gas_stacks
 		var boom: int = e.apply_damage(g)
-		_notify_enemy_damage(e, boom)
+		_notify_enemy_damage(e, boom, "汽油")
 		e.burn_stacks += g
 		e.gas_stacks = 0
 		_log("  → %s 汽油引爆伤害%d，燃烧%d" % [e.name_zh, boom, e.burn_stacks])
@@ -805,7 +822,10 @@ func _thunder_chain(origin: EnemyInstance, dmg: int, gas: bool, fire: bool, wate
 			if other.wet_stacks <= 0:
 				continue
 			visited[other] = true
-			total += _hit_enemy_with_elements(other, dmg, FireResolver.ID_THUNDER, gas, fire, water, false)
+			_log("  → 导电传导 → %s 格%d" % [other.name_zh, other.cell])
+			total += _hit_enemy_with_elements(
+				other, dmg, FireResolver.ID_THUNDER, gas, fire, water, false, "导电"
+			)
 			queue.append(other)
 	return total
 
@@ -852,9 +872,28 @@ func _consume_hammer_chamber(expected_id: int) -> void:
 func _finish_fire() -> void:
 	## 整匣打完（或无剩余实弹）后的收束。金色按本匣击发数在此追加额外轮。
 	magazine.clear()
-	_run_pending_gold_autofires("整匣打完")
+	if _in_gold_extra_round:
+		_in_gold_extra_round = false
+		_log("金色额外轮射击完毕。总伤害 %d。" % _fire_total_damage)
+		_reset_fire_session()
+		_set_phase(Phase.AWAIT_ACTION)
+		_emit()
+		return
 	_log("射击结算完毕，总伤害 %d。" % _fire_total_damage)
 	_reset_fire_session()
+	if pace_after_fire:
+		# 保留枪口与待追加金，供 UI 播额外轮；怪回合延后。离开 FIRING 以免动画环再次 finish。
+		if _check_end_after_player():
+			_pending_gold_autofires = 0
+			_reset_muzzle()
+			_post_fire_enemy_pending = false
+			_emit()
+			return
+		_post_fire_enemy_pending = true
+		_set_phase(Phase.AWAIT_ACTION)
+		_emit()
+		return
+	_run_pending_gold_autofires("整匣打完")
 	_pending_gold_autofires = 0
 	_reset_muzzle()  # 本回合射击结束，重置枪口
 	if _check_end_after_player():
@@ -873,12 +912,74 @@ func _abort_fire_cleared() -> void:
 				returned += 1
 		_return_magazine_to_bag()
 	_log("射击中途清场，未击发 %d 发归还弹药袋。总伤害 %d。" % [returned, _fire_total_damage])
+	_in_gold_extra_round = false
 	# 未击发已归袋，袋有弹；若场上已空则额外轮会跳过。
+	if pace_after_fire:
+		_reset_fire_session()
+		# 场已空：额外轮无目标，直接清金/枪口进胜利
+		_pending_gold_autofires = 0
+		_reset_muzzle()
+		_post_fire_enemy_pending = false
+		_enter_won()
+		_emit()
+		return
 	_run_pending_gold_autofires("中途清场后")
 	_reset_fire_session()
 	_pending_gold_autofires = 0
 	_reset_muzzle()
 	_enter_won()
+	_emit()
+
+
+func pending_gold_autofires() -> int:
+	return _pending_gold_autofires
+
+
+func post_fire_enemy_pending() -> bool:
+	return _post_fire_enemy_pending
+
+
+## UI：消耗一轮金色额外——从袋装填（不播怪回合）。成功后 phase=AWAIT_ACTION，匣已装好。
+func begin_gold_extra_load() -> bool:
+	if _pending_gold_autofires <= 0:
+		return false
+	if alive_enemies().is_empty():
+		_log("金色额外轮：战场已清空，剩余 %d 轮跳过。" % _pending_gold_autofires)
+		_pending_gold_autofires = 0
+		return false
+	_reshuffle_if_needed_for_load()
+	var draw_n: int = mini(CombatConstants.MAGAZINE_SIZE, bag.size())
+	if draw_n <= 0:
+		_log("金色额外轮：无弹药可装。")
+		_pending_gold_autofires = 0
+		return false
+	var drawn: Array[int] = _draw_random_from_bag(draw_n)
+	var prev := last_load_ids.duplicate()
+	last_load_ids = drawn.duplicate()
+	var resolved := _resolve_black_white_with_prev(drawn, prev)
+	magazine.load_sequence(resolved)
+	if bag.is_empty():
+		needs_reshuffle_next_load = true
+	_pending_gold_autofires -= 1
+	_in_gold_extra_round = true
+	_log("金色弹药：额外自动装填射击（剩余待追加 %d）。" % _pending_gold_autofires)
+	_set_phase(Phase.AWAIT_ACTION)
+	_emit()
+	return true
+
+
+## UI：射击表现与金色额外轮都结束后，再跑怪回合（含流血）。
+func resolve_post_fire_enemy_turn() -> void:
+	if not _post_fire_enemy_pending:
+		return
+	_post_fire_enemy_pending = false
+	# 此时金色额外轮应已打完；清枪口
+	_pending_gold_autofires = 0
+	_reset_muzzle()
+	if _check_end_after_player():
+		_emit()
+		return
+	_run_enemy_turn()
 	_emit()
 
 
@@ -1053,7 +1154,7 @@ func _run_enemy_turn() -> void:
 		if e.burn_stacks > 0:
 			var b: int = e.burn_stacks
 			var dealt: int = e.apply_damage(b)
-			_notify_enemy_damage(e, dealt)
+			_notify_enemy_damage(e, dealt, "燃烧")
 			e.burn_stacks = maxi(0, e.burn_stacks - 1)
 			_log("%s 燃烧结算伤害%d，燃烧剩余%d" % [e.name_zh, dealt, e.burn_stacks])
 	_remove_dead()
@@ -1080,8 +1181,10 @@ func _run_enemy_turn() -> void:
 	if alive_enemies().is_empty():
 		_enter_won()
 		return
-	# Boss 独特效果：每怪物回合向袋塞无效弹（灰盒暂定）
-	if encounter_kind == EncounterKind.BOSS:
+	# 超级僵尸：每怪物回合在身后召唤一只僵尸
+	_try_super_zombie_summons()
+	# 地图 Boss（非无限超级僵尸）：每怪物回合向袋塞无效弹
+	if encounter_kind == EncounterKind.BOSS and not endless_mode:
 		_inject_invalid_ammo(CombatConstants.BOSS_INVALID_PER_ENEMY_TURN, "回合末")
 	# ROLL 不清空弹匣：匣内仍有弹 → 可继续 FIRE/ROLL/UNLOAD；仅空匣才要求装填
 	if magazine.is_empty():
@@ -1099,9 +1202,31 @@ func _tick_bleed_end_of_enemy_turn() -> void:
 			continue
 		var stacks: int = e.bleed_stacks
 		var dealt: int = e.apply_damage(stacks)
-		_notify_enemy_damage(e, dealt)
+		_notify_enemy_damage(e, dealt, "流血")
 		e.bleed_stacks = maxi(0, e.bleed_stacks - 1)
 		_log("%s 流血结算伤害%d（层%d→%d）" % [e.name_zh, dealt, stacks, e.bleed_stacks])
+
+
+func _try_super_zombie_summons() -> void:
+	## 超级僵尸每回合在自己后面（更高格号）召唤一只僵尸。
+	var bosses: Array = []
+	for e in alive_enemies():
+		if e.def_id == CombatConstants.SUPER_ZOMBIE_ENEMY_ID:
+			bosses.append(e)
+	for boss in bosses:
+		var behind: int = boss.cell + 1
+		if behind >= CombatConstants.BOARD_SIZE:
+			_log("%s 身后无空位，召唤失败。" % boss.name_zh)
+			continue
+		if occupied_cells().has(behind):
+			_log("%s 身后格 %d 已占用，召唤失败。" % [boss.name_zh, behind])
+			continue
+		var def: Dictionary = DataRegistry.get_enemy(CombatConstants.ZOMBIE_ENEMY_ID)
+		if def.is_empty():
+			continue
+		var z := EnemyInstance.new(def, behind)
+		enemies.append(z)
+		_log("%s 召唤僵尸于格 %d。" % [boss.name_zh, behind])
 
 
 func _move_enemy(e: EnemyInstance) -> void:
@@ -1291,11 +1416,15 @@ func start_next_wave() -> bool:
 		return false
 	wave_index += 1
 	enemies.clear()
+	if endless_mode:
+		_configure_endless_wave_encounter()
 	_spawn_wave_enemies()
 	lose_reason = LoseReason.NONE
 	_reset_fire_session()
 	_reset_muzzle()
 	_pending_gold_autofires = 0
+	_post_fire_enemy_pending = false
+	_in_gold_extra_round = false
 	_reset_load_session()
 	_clear_reward_state()
 	wave_took_damage = false
@@ -1306,11 +1435,27 @@ func start_next_wave() -> bool:
 	return true
 
 
+func _configure_endless_wave_encounter() -> void:
+	## 无限：普通波全僵尸（数量随波升，封顶）；每 10 波超级僵尸 Boss。
+	if wave_index > 0 and wave_index % 10 == 0:
+		encounter_kind = EncounterKind.BOSS
+	else:
+		encounter_kind = EncounterKind.NORMAL
+
+
 func _spawn_wave_enemies(force_ids: Array = []) -> void:
 	var ids: Array[int] = []
 	if force_ids.size() > 0:
 		for x in force_ids:
 			ids.append(int(x))
+	elif endless_mode:
+		if encounter_kind == EncounterKind.BOSS:
+			ids.append(CombatConstants.SUPER_ZOMBIE_ENEMY_ID)
+		else:
+			var zcount: int = mini(wave_index, CombatConstants.ENDLESS_MAX_ZOMBIES_PER_WAVE)
+			zcount = maxi(1, zcount)
+			for _i in zcount:
+				ids.append(CombatConstants.ZOMBIE_ENEMY_ID)
 	elif encounter_kind == EncounterKind.BOSS:
 		ids.append(CombatConstants.BOSS_BODY_ENEMY_ID)
 	else:
@@ -1380,6 +1525,11 @@ func reward_base_gold_for_encounter() -> int:
 ## 按遭遇类型缩放现有敌人（不新增敌人表行）。
 func _make_scaled_enemy(def: Dictionary, cell: int) -> EnemyInstance:
 	var e := EnemyInstance.new(def, cell)
+	# 无限超级僵尸用表内数值，不再套 Boss 倍率
+	if endless_mode and int(def.get("id", 0)) == CombatConstants.SUPER_ZOMBIE_ENEMY_ID:
+		return e
+	if endless_mode and int(def.get("id", 0)) == CombatConstants.ZOMBIE_ENEMY_ID:
+		return e
 	match encounter_kind:
 		EncounterKind.ELITE:
 			e.max_hp = maxi(1, int(round(float(e.max_hp) * CombatConstants.ELITE_HP_MULT)))
@@ -1429,6 +1579,13 @@ func dev_remove_ammo(ammo_id: int, count: int = 1) -> void:
 		else:
 			i += 1
 	_log("[开发] 移除 %s 后袋内 %d" % [_ammo_name(ammo_id), bag.size()])
+	_emit()
+
+
+func dev_clear_bag() -> void:
+	var n: int = bag.size()
+	bag.clear()
+	_log("[开发] 清空弹药袋（移除 %d）" % n)
 	_emit()
 
 

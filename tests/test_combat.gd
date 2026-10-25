@@ -861,7 +861,7 @@ func test_enemy_damaged_signal_emits_per_hit() -> void:
 	var cs := CombatState.new(911)
 	cs.start_graybox(911)
 	var hits: Array = []
-	cs.enemy_damaged.connect(func(cell: int, amount: int): hits.append([cell, amount]))
+	cs.enemy_damaged.connect(func(cell: int, amount: int, kind: String=""): hits.append([cell, amount, kind]))
 	cs.dev_force_load([1, 1, 1, 1, 1, 1] as Array[int])
 	assert_true(cs.begin_fire())
 	assert_true(cs.fire_next_shot())

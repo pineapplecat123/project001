@@ -15,6 +15,7 @@ const WHEEL_RADIUS := 78.0
 const DISK_BG_SIZE := 210.0
 const FIRE_SHOT_DELAY := 0.4
 const FIRE_FLASH_HOLD := 0.2
+const POST_FIRE_STATUS_DELAY := 0.45
 const STEP_ROT_DURATION := 0.18
 const ROLL_ANIM_BASE := 0.45
 const ROLL_ANIM_PER_STEP := 0.06
@@ -162,6 +163,7 @@ func _ready() -> void:
 		state.start_graybox(0, endless)
 		btn_menu.text = "返回主菜单"
 		btn_next_wave.text = "下一波 NEXT"
+	state.pace_after_fire = true
 	_refresh()
 
 
@@ -876,7 +878,29 @@ func _run_fire_sequence() -> void:
 	if not state.begin_fire():
 		return
 	_firing = true
-	# 红圈固定正上；盘面先对齐当前击发仓；动画期间禁止 _refresh_mag 抢跑对齐
+	await _animate_fire_shots()
+	# 金色额外轮：装→射，沿用同一套击发节奏（非整匣瞬结）
+	while state.pending_gold_autofires() > 0:
+		if not state.begin_gold_extra_load():
+			break
+		_apply_disk_rotation(float(state.magazine.start_index))
+		_refresh_mag_contents()
+		_refresh_hud_only()
+		await get_tree().create_timer(FIRE_SHOT_DELAY).timeout
+		if not state.begin_fire():
+			break
+		await _animate_fire_shots()
+	# 射击序列结束 → 可见间隔 → 再结算怪回合（含流血等状态伤）
+	if state.post_fire_enemy_pending():
+		await get_tree().create_timer(POST_FIRE_STATUS_DELAY).timeout
+		state.resolve_post_fire_enemy_turn()
+	_apply_disk_rotation(float(state.magazine.start_index))
+	_firing = false
+	_refresh()
+
+
+func _animate_fire_shots() -> void:
+	## 红圈固定正上；盘面先对齐当前击发仓；动画期间禁止 _refresh_mag 抢跑对齐
 	_apply_disk_rotation(float(state.magazine.start_index))
 	_refresh_mag_contents()
 	_refresh_hud_only()
@@ -911,8 +935,6 @@ func _run_fire_sequence() -> void:
 			_wheel_animating = false
 			break
 	_apply_disk_rotation(float(state.magazine.start_index))
-	_firing = false
-	_refresh()
 
 
 ## 在正上击发点（红圈下）打出发黄闪；chamber 在盘上此时应对准正上。
@@ -1126,12 +1148,12 @@ func _refresh_reward_panel() -> void:
 
 
 
-func _on_enemy_damaged(cell: int, amount: int) -> void:
-	_spawn_damage_float(cell, amount)
+func _on_enemy_damaged(cell: int, amount: int, kind: String = "") -> void:
+	_spawn_damage_float(cell, amount, kind)
 
 
-func _spawn_damage_float(cell: int, amount: int) -> void:
-	## 从敌人格子弹出 -N，二次贝塞尔弧线上升并淡出。
+func _spawn_damage_float(cell: int, amount: int, kind: String = "") -> void:
+	## 从敌人格弹出 -N；状态伤（流血/燃烧/导电/汽油）带状态名。二次贝塞尔弧线上升并淡出。
 	if amount <= 0 or board_row == null:
 		return
 	if cell < 0 or cell >= board_row.get_child_count():
@@ -1145,10 +1167,23 @@ func _spawn_damage_float(cell: int, amount: int) -> void:
 	var lab := Label.new()
 	lab.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	lab.z_index = 42
-	lab.text = "-%d" % amount
+	if kind == "":
+		lab.text = "-%d" % amount
+	else:
+		lab.text = "%s\n-%d" % [kind, amount]
 	lab.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	lab.add_theme_font_size_override("font_size", 24)
-	lab.add_theme_color_override("font_color", Color(1.0, 0.42, 0.22))
+	lab.add_theme_font_size_override("font_size", 22 if kind == "" else 18)
+	var col := Color(1.0, 0.42, 0.22)
+	match kind:
+		"流血":
+			col = Color(0.95, 0.2, 0.28)
+		"燃烧":
+			col = Color(1.0, 0.55, 0.15)
+		"导电":
+			col = Color(0.95, 0.9, 0.25)
+		"汽油":
+			col = Color(0.75, 0.95, 0.35)
+	lab.add_theme_color_override("font_color", col)
 	lab.add_theme_color_override("font_outline_color", Color(0.12, 0.04, 0.02, 0.95))
 	lab.add_theme_constant_override("outline_size", 5)
 	lab.modulate = Color(1, 1, 1, 1)
@@ -1797,16 +1832,40 @@ func _show_ammo_detail(ammo_id: int, cell: Control = null, from_hover: bool = fa
 
 
 func _wire_dev_buttons() -> void:
-	%DevAddWhite.pressed.connect(func(): state.dev_add_ammo(CombatConstants.WHITE_AMMO_ID, 1))
-	%DevRemoveWhite.pressed.connect(func(): state.dev_remove_ammo(CombatConstants.WHITE_AMMO_ID, 1))
-	%DevKill.pressed.connect(func(): state.dev_kill_all_enemies())
-	%DevGold.pressed.connect(func(): state.dev_add_gold(10))
-	%DevHpUp.pressed.connect(func(): state.dev_set_player_hp(state.player_hp + 5))
-	%DevHpDown.pressed.connect(func(): state.dev_set_player_hp(state.player_hp - 5))
-	%DevEnemyHp.pressed.connect(func(): state.dev_set_front_enemy_hp(1))
-	%DevTPAdj.pressed.connect(func(): state.dev_teleport_front_enemy(1))
-	%DevTPFar.pressed.connect(func(): state.dev_teleport_front_enemy(9))
-	%DevForceLoad.pressed.connect(func():
+	%DevClose.pressed.connect(func(): _toggle_dev())
+	_rebuild_dev_tool_body()
+	# 加宽开发面板以容纳三列
+	dev_panel.custom_minimum_size = Vector2(920, 520)
+	dev_panel.set_anchors_preset(Control.PRESET_CENTER)
+	dev_panel.offset_left = -460.0
+	dev_panel.offset_top = -280.0
+	dev_panel.offset_right = 460.0
+	dev_panel.offset_bottom = 280.0
+
+
+func _rebuild_dev_tool_body() -> void:
+	## 三列：常规 | 弹药袋 | 敌人
+	var inner: VBoxContainer = %DevInner
+	for c in inner.get_children():
+		inner.remove_child(c)
+		c.free()
+	var cols := HBoxContainer.new()
+	cols.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	cols.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	cols.add_theme_constant_override("separation", 12)
+	inner.add_child(cols)
+	var col_general := _dev_make_column("常规")
+	var col_ammo := _dev_make_column("弹药袋")
+	var col_enemy := _dev_make_column("敌人")
+	cols.add_child(col_general["root"])
+	cols.add_child(col_ammo["root"])
+	cols.add_child(col_enemy["root"])
+	# —— 常规 ——
+	_dev_add_btn(col_general["box"], "金币 +10", func(): state.dev_add_gold(10))
+	_dev_add_btn(col_general["box"], "玩家 HP +5", func(): state.dev_set_player_hp(state.player_hp + 5))
+	_dev_add_btn(col_general["box"], "玩家 HP -5", func(): state.dev_set_player_hp(state.player_hp - 5))
+	_dev_add_btn(col_general["box"], "前敌 HP→1", func(): state.dev_set_front_enemy_hp(1))
+	_dev_add_btn(col_general["box"], "强制装 6 白", func():
 		var ids: Array[int] = [
 			CombatConstants.WHITE_AMMO_ID, CombatConstants.WHITE_AMMO_ID,
 			CombatConstants.WHITE_AMMO_ID, CombatConstants.WHITE_AMMO_ID,
@@ -1814,27 +1873,68 @@ func _wire_dev_buttons() -> void:
 		]
 		state.dev_force_load(ids)
 	)
-	%DevSkipEnemy.pressed.connect(func(): state.dev_skip_enemy_turn())
-	%DevClose.pressed.connect(func(): _toggle_dev())
-	%DevAddYellow.pressed.connect(func(): state.dev_add_ammo(FireResolver.ID_YELLOW, 1))
-	%DevAddBlack.pressed.connect(func(): state.dev_add_ammo(FireResolver.ID_BLACK, 1))
-	%DevAddGreen.pressed.connect(func(): state.dev_add_ammo(FireResolver.ID_GREEN, 1))
-	%DevAddPurple.pressed.connect(func(): state.dev_add_ammo(FireResolver.ID_PURPLE, 1))
-	%DevAddRed.pressed.connect(func(): state.dev_add_ammo(FireResolver.ID_RED, 1))
-	%DevAddBlue.pressed.connect(func(): state.dev_add_ammo(FireResolver.ID_BLUE, 1))
-	%DevAddGold.pressed.connect(func(): state.dev_add_ammo(FireResolver.ID_GOLD, 1))
-	%DevAddPink.pressed.connect(func(): state.dev_add_ammo(FireResolver.ID_PINK, 1))
-	%DevAddBW.pressed.connect(func(): state.dev_add_ammo(FireResolver.ID_BW, 1))
-	%DevAddPierce.pressed.connect(func(): state.dev_add_ammo(FireResolver.ID_PIERCE, 1))
-	%DevAddGas.pressed.connect(func(): state.dev_add_ammo(FireResolver.ID_GAS, 1))
-	%DevAddFire.pressed.connect(func(): state.dev_add_ammo(FireResolver.ID_FIRE, 1))
-	%DevAddWater.pressed.connect(func(): state.dev_add_ammo(FireResolver.ID_WATER, 1))
-	%DevAddThunder.pressed.connect(func(): state.dev_add_ammo(FireResolver.ID_THUNDER, 1))
-	%DevSpawnCivilian.pressed.connect(func(): state.dev_spawn_enemy(1))
-	%DevSpawnBandit.pressed.connect(func(): state.dev_spawn_enemy(2))
-	%DevSpawnBear.pressed.connect(func(): state.dev_spawn_enemy(3))
-	%DevSpawnSkeleton.pressed.connect(func(): state.dev_spawn_enemy(4))
-	%DevSpawnStone.pressed.connect(func(): state.dev_spawn_enemy(5))
+	_dev_add_btn(col_general["box"], "跳过怪回合", func(): state.dev_skip_enemy_turn())
+	# —— 弹药 ——
+	_dev_add_btn(col_ammo["box"], "清空弹药袋", func(): state.dev_clear_bag())
+	for item in DataRegistry.all_ammo():
+		var aid: int = int(item.get("id", 0))
+		var aname: String = str(item.get("name", aid))
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 4)
+		col_ammo["box"].add_child(row)
+		var lab := Label.new()
+		lab.text = aname
+		lab.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		lab.clip_text = true
+		row.add_child(lab)
+		var b_add := Button.new()
+		b_add.text = "+"
+		b_add.custom_minimum_size = Vector2(36, 28)
+		b_add.pressed.connect(func(id := aid): state.dev_add_ammo(id, 1))
+		row.add_child(b_add)
+		var b_sub := Button.new()
+		b_sub.text = "-"
+		b_sub.custom_minimum_size = Vector2(36, 28)
+		b_sub.pressed.connect(func(id := aid): state.dev_remove_ammo(id, 1))
+		row.add_child(b_sub)
+	# —— 敌人 ——
+	_dev_add_btn(col_enemy["box"], "一键杀敌", func(): state.dev_kill_all_enemies())
+	_dev_add_btn(col_enemy["box"], "瞬移邻近", func(): state.dev_teleport_front_enemy(1))
+	_dev_add_btn(col_enemy["box"], "瞬移远端", func(): state.dev_teleport_front_enemy(CombatConstants.BOARD_SIZE - 1))
+	for item in DataRegistry.all_enemies():
+		var eid: int = int(item.get("id", 0))
+		var ename: String = str(item.get("name", eid))
+		_dev_add_btn(col_enemy["box"], "添加%s" % ename, func(id := eid): state.dev_spawn_enemy(id))
+
+
+func _dev_make_column(title: String) -> Dictionary:
+	var root := VBoxContainer.new()
+	root.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	root.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	root.add_theme_constant_override("separation", 6)
+	var t := Label.new()
+	t.text = title
+	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	t.add_theme_color_override("font_color", Color(0.95, 0.85, 0.45))
+	root.add_child(t)
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.custom_minimum_size = Vector2(260, 360)
+	root.add_child(scroll)
+	var box := VBoxContainer.new()
+	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	box.add_theme_constant_override("separation", 4)
+	scroll.add_child(box)
+	return {"root": root, "box": box}
+
+
+func _dev_add_btn(parent: Control, label: String, cb: Callable) -> void:
+	var b := Button.new()
+	b.text = label
+	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	b.pressed.connect(cb)
+	parent.add_child(b)
 
 
 func _refresh() -> void:

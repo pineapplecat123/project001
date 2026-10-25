@@ -65,6 +65,28 @@
       ],
       "type": "小怪",
       "enabled_in_combat": false
+    },
+    {
+      "id": 6,
+      "name": "僵尸",
+      "hp": 40,
+      "atk": 1,
+      "mobility": 1,
+      "special": "无",
+      "tags": [],
+      "type": "小怪",
+      "enabled_in_combat": false
+    },
+    {
+      "id": 7,
+      "name": "超级僵尸",
+      "hp": 100,
+      "atk": 1,
+      "mobility": 1,
+      "special": "每回合在自己后面召唤一个僵尸",
+      "tags": [],
+      "type": "Boss",
+      "enabled_in_combat": false
     }
   ]
 }

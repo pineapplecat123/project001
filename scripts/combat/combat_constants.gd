@@ -7,6 +7,8 @@ const MAGAZINE_SIZE := 6
 const PLAYER_MAX_HP := 20
 const WHITE_AMMO_ID := 1
 const CIVILIAN_ENEMY_ID := 1
+const ZOMBIE_ENEMY_ID := 6
+const SUPER_ZOMBIE_ENEMY_ID := 7
 ## 灰盒开局弹药袋：若干发白色（足够打完平民并演示抽弃洗）。
 const STARTER_WHITE_COUNT := 12
 
@@ -50,3 +52,6 @@ const FIRE_PORT_OFFSET_STEPS := 0
 const LOAD_PORT_OFFSET_STEPS := 5
 ## begin_load 时 start_index，使仓 0 对准上弹口：(1+5)%6=0
 const LOAD_SESSION_INITIAL_START := 1
+
+## 无限模式刷怪
+const ENDLESS_MAX_ZOMBIES_PER_WAVE := 8

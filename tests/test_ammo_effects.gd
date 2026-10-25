@@ -151,6 +151,9 @@ func test_endless_win_keeps_bag() -> void:
 	cs.start_graybox(840, true)
 	assert_eq(cs.from_map_run, false)
 	assert_true(cs.endless_mode)
+	# 僵尸 40HP；本测只验证袋保留，压到 10HP 以便 4 白清场
+	cs.enemies[0].hp = 10
+	cs.enemies[0].max_hp = 10
 	cs.dev_force_load([1, 1, 1, 1, 1, 1] as Array[int])
 	cs.bag.clear()
 	cs.bag.append(FireResolver.ID_GOLD)
@@ -160,7 +163,7 @@ func test_endless_win_keeps_bag() -> void:
 	while cs.phase == CombatState.Phase.FIRING:
 		cs.fire_next_shot()
 		shots += 1
-	# 平民 10HP / 白弹 3 → 约 4 发清场，剩 2 归袋
+	# 10HP / 白弹 3 → 约 4 发清场，剩 2 归袋
 	assert_eq(shots, 4)
 	assert_eq(cs.phase, CombatState.Phase.WON)
 	assert_eq(cs.discard.size(), 4)
@@ -659,3 +662,137 @@ func test_gold_extras_after_remaining_whites() -> void:
 	var dealt: int = hp0 - cs.enemies[0].hp
 	assert_gte(dealt, 30, "extras after whites, dealt=%d" % dealt)
 	assert_true(_log_has(cs, "整匣打完"))
+
+
+func test_wet_then_thunder_chains() -> void:
+	## 先水后雷：两只相邻已湿敌人，雷击应从首目标导电到后排。
+	var cs := CombatState.new(850)
+	cs.start_graybox(850)
+	cs.enemies.clear()
+	cs.dev_spawn_enemy(1, 1)
+	cs.dev_spawn_enemy(1, 2)
+	for e in cs.enemies:
+		e.hp = 80
+		e.max_hp = 80
+	cs.dev_force_load([
+		FireResolver.ID_WATER,
+		FireResolver.ID_WATER,
+		FireResolver.ID_THUNDER,
+		CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID,
+	] as Array[int])
+	cs.magazine.set_start(0)
+	assert_true(cs.begin_fire())
+	assert_true(cs.fire_next_shot())  # water front
+	assert_true(cs.fire_next_shot())  # water — muzzle water hits front again; need both wet
+	# 手动保证后排也湿（两发都打前排）；再补湿后排
+	cs.enemies_sorted_by_cell()[1].wet_stacks = maxi(cs.enemies_sorted_by_cell()[1].wet_stacks, 2)
+	assert_gt(cs.enemies_sorted_by_cell()[0].wet_stacks, 0)
+	var back: EnemyInstance = cs.enemies_sorted_by_cell()[1]
+	var hp_back0: int = back.hp
+	assert_true(cs.fire_next_shot())  # thunder
+	assert_lt(back.hp, hp_back0, "wet front should conduct thunder to wet back")
+
+
+func test_same_shot_water_and_thunder_conducts() -> void:
+	## 同发含水+雷（枪口水+雷弹）：命中后湿须已挂上才能启动导电。
+	var cs := CombatState.new(841)
+	cs.start_graybox(841)
+	cs.enemies.clear()
+	cs.dev_spawn_enemy(1, 1)
+	cs.dev_spawn_enemy(1, 2)
+	for e in cs.enemies:
+		e.hp = 80
+		e.max_hp = 80
+		e.wet_stacks = 0
+	# 后排预湿；前排靠本发水分获得湿再导电
+	cs.enemies_sorted_by_cell()[1].wet_stacks = 3
+	cs.dev_force_load([
+		FireResolver.ID_WATER,
+		FireResolver.ID_THUNDER,
+		CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID,
+	] as Array[int])
+	cs.magazine.set_start(0)
+	assert_true(cs.begin_fire())
+	assert_true(cs.fire_next_shot())  # water mounts muzzle
+	var back: EnemyInstance = cs.enemies_sorted_by_cell()[1]
+	var hp0: int = back.hp
+	assert_true(cs.fire_next_shot())  # thunder + muzzle water
+	assert_gt(cs.enemies_sorted_by_cell()[0].wet_stacks, 0)
+	assert_lt(back.hp, hp0, "same-shot water+thunder must conduct via newly applied wet")
+
+
+func test_pierce_thunder_chains_from_wet() -> void:
+	## 穿透+雷：首个湿目标应启动导电。
+	var cs := CombatState.new(842)
+	cs.start_graybox(842)
+	cs.enemies.clear()
+	cs.dev_spawn_enemy(1, 1)
+	cs.dev_spawn_enemy(1, 2)
+	cs.dev_spawn_enemy(1, 3)
+	for e in cs.enemies:
+		e.hp = 80
+		e.max_hp = 80
+		e.wet_stacks = 2
+	cs._muzzle_pierce = true
+	cs.dev_force_load([
+		FireResolver.ID_THUNDER,
+		CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID,
+	] as Array[int])
+	cs.magazine.set_start(0)
+	var sorted: Array = cs.enemies_sorted_by_cell()
+	var mid_hp0: int = sorted[1].hp
+	assert_true(cs.begin_fire())
+	assert_true(cs.fire_next_shot())
+	# 穿透伤 + 导电伤，中排应比仅穿透更低；至少被传导打到
+	assert_lt(sorted[1].hp, mid_hp0)
+
+
+func test_endless_spawns_zombies_and_boss_super() -> void:
+	var cs := CombatState.new(843)
+	cs.start_graybox(843, true)
+	assert_true(cs.endless_mode)
+	assert_eq(cs.enemies.size(), 1)
+	assert_eq(cs.enemies[0].def_id, CombatConstants.ZOMBIE_ENEMY_ID)
+	# 推进到第 10 波 Boss
+	cs.phase = CombatState.Phase.WON
+	cs.reward_resolved = true
+	cs.reward_pending = false
+	cs.endless_shop_done = true
+	cs.wave_index = 9
+	assert_true(cs.start_next_wave())
+	assert_eq(cs.wave_index, 10)
+	assert_eq(cs.encounter_kind, CombatState.EncounterKind.BOSS)
+	assert_eq(cs.enemies.size(), 1)
+	assert_eq(cs.enemies[0].def_id, CombatConstants.SUPER_ZOMBIE_ENEMY_ID)
+	assert_eq(cs.enemies[0].max_hp, 100)
+
+
+func test_super_zombie_summons_behind() -> void:
+	var cs := CombatState.new(844)
+	cs.start_graybox(844, true)
+	cs.enemies.clear()
+	cs.dev_spawn_enemy(CombatConstants.SUPER_ZOMBIE_ENEMY_ID, 5)
+	assert_eq(cs.enemies.size(), 1)
+	cs.do_load()
+	cs.do_unload()  # 怪回合：先移动再召唤于身后
+	var boss: EnemyInstance = null
+	var zombies := 0
+	var zcell := -1
+	for e in cs.enemies:
+		if e.def_id == CombatConstants.SUPER_ZOMBIE_ENEMY_ID:
+			boss = e
+		elif e.def_id == CombatConstants.ZOMBIE_ENEMY_ID:
+			zombies += 1
+			zcell = e.cell
+	assert_eq(zombies, 1, "super zombie should summon one zombie behind")
+	assert_ne(boss, null)
+	assert_eq(zcell, boss.cell + 1)
