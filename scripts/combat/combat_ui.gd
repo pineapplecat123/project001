@@ -32,6 +32,11 @@ const DETAIL_PANEL_W := 360.0
 const DETAIL_PANEL_H := 320.0
 const DMG_FLOAT_DURATION := 0.85
 const DMG_FLOAT_RISE := 78.0
+const DMG_FLOAT_FONT_MIN := 16
+const DMG_FLOAT_FONT_MAX := 40
+const SHAKE_MIN_PX := 2.0
+const SHAKE_MAX_PX := 18.0
+const SHAKE_DURATION := 0.22
 
 const COL_PHASE := Color(1.0, 0.92, 0.45)
 const COL_HP_OK := Color(0.45, 0.95, 0.55)
@@ -75,6 +80,15 @@ var _fire_ring: Panel = null
 var _load_marker: Label = null
 var _muzzle_label: Label = null
 var _muzzle_panel: PanelContainer = null
+var _muzzle_tip_panel: PanelContainer = null
+var _muzzle_tip_body: RichTextLabel = null
+var _muzzle_tip_open: bool = false
+var _muzzle_tip_from_hover: bool = false
+var _muzzle_tip_from_long_press: bool = false
+var _long_press_kind: String = ""  ## "ammo" | "muzzle"
+var _board_base_pos: Vector2 = Vector2.ZERO
+var _board_shake_tween: Tween
+var _board_shake_ready: bool = false
 var _reward_open: bool = false
 var _ammo_detail_panel: PanelContainer = null
 var _ammo_detail_body: RichTextLabel = null
@@ -131,6 +145,7 @@ func _ready() -> void:
 	state.state_changed.connect(_refresh)
 	state.log_line.connect(_on_log)
 	state.enemy_damaged.connect(_on_enemy_damaged)
+	state.gold_gained.connect(_on_gold_gained)
 	btn_load.pressed.connect(_on_load)
 	# btn_manual_load wired in _ensure_square_action_buttons
 	btn_fire.pressed.connect(_on_fire)
@@ -523,6 +538,7 @@ func _ensure_muzzle_hud() -> void:
 	_muzzle_panel.name = "MuzzleStatusPanel"
 	_muzzle_panel.z_index = 5
 	_muzzle_panel.visible = false
+	_muzzle_panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0.18, 0.08, 0.06, 0.92)
 	style.set_border_width_all(2)
@@ -535,6 +551,7 @@ func _ensure_muzzle_hud() -> void:
 	_muzzle_panel.add_theme_stylebox_override("panel", style)
 	_muzzle_label = Label.new()
 	_muzzle_label.name = "MuzzleStatusLabel"
+	_muzzle_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_muzzle_label.add_theme_font_size_override("font_size", 18)
 	_muzzle_label.add_theme_color_override("font_color", Color(1.0, 0.85, 0.35))
 	_muzzle_label.text = "枪口：—"
@@ -547,6 +564,10 @@ func _ensure_muzzle_hud() -> void:
 			mag_col.move_child(_muzzle_panel, mag_title.get_index() + 1)
 	else:
 		add_child(_muzzle_panel)
+	_muzzle_panel.mouse_entered.connect(_on_muzzle_hover_enter)
+	_muzzle_panel.mouse_exited.connect(_on_muzzle_hover_exit)
+	_muzzle_panel.gui_input.connect(_on_muzzle_gui_input)
+	_build_muzzle_tip_panel()
 
 
 func _refresh_muzzle_hud() -> void:
@@ -583,6 +604,8 @@ func _refresh_muzzle_hud() -> void:
 			hot.content_margin_bottom = 8
 			_muzzle_panel.add_theme_stylebox_override("panel", hot)
 			_muzzle_panel.visible = true
+	if _muzzle_tip_open:
+		_refresh_muzzle_tip_body()
 
 
 func _ensure_long_press_timer() -> void:
@@ -1144,6 +1167,7 @@ func _toggle_dev() -> void:
 	dev_panel.visible = _dev_open
 	if _dev_open:
 		_hide_ammo_detail()
+		_hide_muzzle_tip()
 	_update_dimmer()
 
 
@@ -1159,6 +1183,7 @@ func _set_reward_open(open: bool) -> void:
 		_dev_open = false
 		dev_panel.visible = false
 		_hide_ammo_detail()
+		_hide_muzzle_tip()
 		_refresh_reward_panel()
 	_update_dimmer()
 
@@ -1236,6 +1261,11 @@ func _on_enemy_damaged(cell: int, amount: int, kind: String = "") -> void:
 	_spawn_damage_float(cell, amount, kind)
 
 
+func _on_gold_gained(cell: int, amount: int) -> void:
+	## 贪婪掉金：金色 +N，动画与伤害飘字相同。
+	_spawn_damage_float(cell, amount, "金币")
+
+
 func _spawn_damage_float(cell: int, amount: int, kind: String = "") -> void:
 	## 从敌人格弹出 -N；状态伤（流血/燃烧/导电/汽油）带状态名。二次贝塞尔弧线上升并淡出。
 	if amount <= 0 or board_row == null:
@@ -1251,12 +1281,15 @@ func _spawn_damage_float(cell: int, amount: int, kind: String = "") -> void:
 	var lab := Label.new()
 	lab.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	lab.z_index = 42
-	if kind == "":
+	if kind == "金币":
+		lab.text = "+%d" % amount
+	elif kind == "":
 		lab.text = "-%d" % amount
 	else:
 		lab.text = "%s\n-%d" % [kind, amount]
 	lab.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	lab.add_theme_font_size_override("font_size", 22 if kind == "" else 18)
+	var font_sz: int = _float_font_size_for(amount, kind != "" and kind != "金币")
+	lab.add_theme_font_size_override("font_size", font_sz)
 	var col := Color(1.0, 0.42, 0.22)
 	match kind:
 		"流血":
@@ -1267,7 +1300,11 @@ func _spawn_damage_float(cell: int, amount: int, kind: String = "") -> void:
 			col = Color(0.95, 0.9, 0.25)
 		"汽油":
 			col = Color(0.75, 0.95, 0.35)
+		"金币":
+			col = Color(1.0, 0.84, 0.25)
 	lab.add_theme_color_override("font_color", col)
+	if kind != "金币":
+		_shake_board_for_damage(amount)
 	lab.add_theme_color_override("font_outline_color", Color(0.12, 0.04, 0.02, 0.95))
 	lab.add_theme_constant_override("outline_size", 5)
 	lab.modulate = Color(1, 1, 1, 1)
@@ -1287,6 +1324,44 @@ func _spawn_damage_float(cell: int, amount: int, kind: String = "") -> void:
 	tw.tween_method(_damage_float_step.bind(lab, start_g, ctrl, end_g), 0.0, 1.0, DMG_FLOAT_DURATION).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 	tw.tween_property(lab, "modulate:a", 0.0, DMG_FLOAT_DURATION).set_delay(0.2)
 	tw.chain().tween_callback(lab.queue_free)
+
+
+func _float_font_size_for(amount: int, has_kind_label: bool) -> int:
+	## 飘字字号随数值放大；带状态名时略小一档以免换行撑爆。
+	var a: float = float(maxi(amount, 1))
+	var t: float = clampf((a - 1.0) / 24.0, 0.0, 1.0)
+	var base: int = int(round(lerpf(float(DMG_FLOAT_FONT_MIN), float(DMG_FLOAT_FONT_MAX), t)))
+	if has_kind_label:
+		base = maxi(DMG_FLOAT_FONT_MIN, base - 4)
+	return base
+
+
+func _ensure_board_shake_base() -> void:
+	if board_row == null:
+		return
+	if not _board_shake_ready:
+		_board_base_pos = board_row.position
+		_board_shake_ready = true
+
+
+func _shake_board_for_damage(amount: int) -> void:
+	## 击中抖动：伤害越大振幅越大，夹在 SHAKE_MIN/MAX，不把棋盘抖出屏。
+	if board_row == null or amount <= 0:
+		return
+	_ensure_board_shake_base()
+	var t: float = clampf(float(amount) / 24.0, 0.0, 1.0)
+	var amp: float = lerpf(SHAKE_MIN_PX, SHAKE_MAX_PX, t)
+	if _board_shake_tween != null:
+		_board_shake_tween.kill()
+	board_row.position = _board_base_pos
+	_board_shake_tween = create_tween()
+	var steps := 5
+	for i in steps:
+		var fall: float = 1.0 - float(i) / float(steps)
+		var ox := randf_range(-amp, amp) * fall
+		var oy := randf_range(-amp * 0.55, amp * 0.55) * fall
+		_board_shake_tween.tween_property(board_row, "position", _board_base_pos + Vector2(ox, oy), SHAKE_DURATION / float(steps))
+	_board_shake_tween.tween_property(board_row, "position", _board_base_pos, 0.04)
 
 
 func _damage_float_step(t: float, lab: Label, start_g: Vector2, ctrl: Vector2, end_g: Vector2) -> void:
@@ -1766,6 +1841,7 @@ func _on_bag_cell_input(event: InputEvent, ammo_id: int, cell: Control) -> void:
 
 func _begin_long_press(ammo_id: int, cell: Control) -> void:
 	_ensure_long_press_timer()
+	_long_press_kind = "ammo"
 	_long_press_ammo_id = ammo_id
 	_long_press_timer.stop()
 	_long_press_timer.start(LONG_PRESS_SEC)
@@ -1782,6 +1858,9 @@ func _cancel_long_press(hide_if_long: bool) -> void:
 
 
 func _on_long_press_timeout() -> void:
+	if _long_press_kind == "muzzle":
+		_show_muzzle_tip(false, true)
+		return
 	var ammo_id := _long_press_ammo_id
 	if ammo_id < 0:
 		return
@@ -1833,6 +1912,129 @@ func _build_ammo_detail_panel() -> void:
 	add_child(_ammo_detail_panel)
 
 
+func _build_muzzle_tip_panel() -> void:
+	if _muzzle_tip_panel != null:
+		return
+	_muzzle_tip_panel = PanelContainer.new()
+	_muzzle_tip_panel.name = "MuzzleTipPanel"
+	_muzzle_tip_panel.visible = false
+	_muzzle_tip_panel.z_index = 15
+	_muzzle_tip_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_muzzle_tip_panel.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.12, 0.1, 0.08, 0.98)
+	style.set_border_width_all(2)
+	style.border_color = Color(1.0, 0.7, 0.3, 0.95)
+	style.set_corner_radius_all(10)
+	style.content_margin_left = 14
+	style.content_margin_right = 14
+	style.content_margin_top = 12
+	style.content_margin_bottom = 12
+	_muzzle_tip_panel.add_theme_stylebox_override("panel", style)
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 6)
+	var title := Label.new()
+	title.text = "枪口伤害修正"
+	title.add_theme_font_size_override("font_size", 18)
+	title.add_theme_color_override("font_color", Color(1.0, 0.9, 0.5))
+	_muzzle_tip_body = RichTextLabel.new()
+	_muzzle_tip_body.name = "MuzzleTipBody"
+	_muzzle_tip_body.bbcode_enabled = false
+	_muzzle_tip_body.fit_content = true
+	_muzzle_tip_body.scroll_active = false
+	_muzzle_tip_body.custom_minimum_size = Vector2(300, 0)
+	_muzzle_tip_body.add_theme_font_size_override("normal_font_size", 15)
+	_muzzle_tip_body.add_theme_color_override("default_color", Color(0.96, 0.94, 0.88))
+	vbox.add_child(title)
+	vbox.add_child(_muzzle_tip_body)
+	_muzzle_tip_panel.add_child(vbox)
+	add_child(_muzzle_tip_panel)
+
+
+func _refresh_muzzle_tip_body() -> void:
+	if _muzzle_tip_body == null or state == null:
+		return
+	_muzzle_tip_body.text = state.muzzle_damage_tip_text()
+
+
+func _position_muzzle_tip() -> void:
+	if _muzzle_tip_panel == null or _muzzle_panel == null:
+		return
+	var vp := get_viewport().get_visible_rect().size
+	var r := _muzzle_panel.get_global_rect()
+	_muzzle_tip_panel.reset_size()
+	var sz := _muzzle_tip_panel.size
+	if sz.x < 10.0:
+		sz = Vector2(320, 220)
+	var pos := Vector2(r.position.x, r.end.y + 8.0)
+	if pos.x + sz.x > vp.x - 8.0:
+		pos.x = maxf(8.0, vp.x - sz.x - 8.0)
+	if pos.y + sz.y > vp.y - 8.0:
+		pos.y = maxf(8.0, r.position.y - sz.y - 8.0)
+	_muzzle_tip_panel.global_position = pos
+
+
+func _show_muzzle_tip(from_hover: bool = false, from_long_press: bool = false) -> void:
+	if _muzzle_tip_panel == null or state == null or _reward_open or _shop_open or _sin_pick_open:
+		return
+	_hide_ammo_detail()
+	_muzzle_tip_from_hover = from_hover
+	_muzzle_tip_from_long_press = from_long_press
+	_muzzle_tip_open = true
+	_refresh_muzzle_tip_body()
+	_muzzle_tip_panel.visible = true
+	_position_muzzle_tip()
+
+
+func _hide_muzzle_tip() -> void:
+	_muzzle_tip_open = false
+	_muzzle_tip_from_hover = false
+	_muzzle_tip_from_long_press = false
+	if _muzzle_tip_panel != null:
+		_muzzle_tip_panel.visible = false
+
+
+func _on_muzzle_hover_enter() -> void:
+	_show_muzzle_tip(true, false)
+
+
+func _on_muzzle_hover_exit() -> void:
+	if _muzzle_tip_from_hover and not _muzzle_tip_from_long_press:
+		_hide_muzzle_tip()
+
+
+func _on_muzzle_gui_input(event: InputEvent) -> void:
+	if event is InputEventScreenTouch:
+		if event.pressed:
+			_begin_muzzle_long_press()
+			_show_muzzle_tip(true, false)
+		else:
+			_cancel_muzzle_long_press()
+	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		if event.pressed:
+			if DisplayServer.is_touchscreen_available():
+				_begin_muzzle_long_press()
+			_show_muzzle_tip(true, false)
+		else:
+			_cancel_muzzle_long_press()
+
+
+func _begin_muzzle_long_press() -> void:
+	_ensure_long_press_timer()
+	_long_press_kind = "muzzle"
+	_long_press_ammo_id = -1
+	_long_press_timer.stop()
+	_long_press_timer.start(LONG_PRESS_SEC)
+
+
+func _cancel_muzzle_long_press() -> void:
+	if _long_press_timer != null and _long_press_kind == "muzzle":
+		_long_press_timer.stop()
+	_long_press_kind = ""
+	if _muzzle_tip_from_long_press:
+		_hide_muzzle_tip()
+
+
 func _hide_ammo_detail() -> void:
 	_detail_open = false
 	_detail_ammo_id = -1
@@ -1863,6 +2065,7 @@ func _position_ammo_detail_near(cell: Control) -> void:
 func _show_ammo_detail(ammo_id: int, cell: Control = null, from_hover: bool = false, from_long_press: bool = false) -> void:
 	if _ammo_detail_body == null or _reward_open:
 		return
+	_hide_muzzle_tip()
 	_detail_ammo_id = ammo_id
 	_detail_from_hover = from_hover
 	_detail_from_long_press = from_long_press
@@ -1925,9 +2128,9 @@ func _build_sin_pick_panel() -> void:
 	row.alignment = BoxContainer.ALIGNMENT_CENTER
 	row.add_theme_constant_override("separation", 12)
 	vbox.add_child(row)
-	_sin_add_choice_btn(row, "愤怒", "伤3 · 枪口愤怒叠伤\n装3自伤6", FireResolver.ID_WRATH, Color(0.75, 0.18, 0.18))
-	_sin_add_choice_btn(row, "傲慢", "伤2 · 枪口傲慢整局\n装3拉近敌人", FireResolver.ID_PRIDE, Color(0.55, 0.35, 0.85))
-	_sin_add_choice_btn(row, "贪婪", "伤2 · 枪口贪婪掉金\n装3金币-6", FireResolver.ID_GREED, Color(0.2, 0.65, 0.35))
+	_sin_add_choice_btn(row, "愤怒", "伤3 · 枪口愤怒叠伤\n装≥3自伤6", FireResolver.ID_WRATH, Color(0.75, 0.18, 0.18))
+	_sin_add_choice_btn(row, "傲慢", "伤2 · 枪口傲慢本场\n装≥3拉近敌人", FireResolver.ID_PRIDE, Color(0.55, 0.35, 0.85))
+	_sin_add_choice_btn(row, "贪婪", "伤2 · 枪口贪婪掉金\n装≥3金币-6", FireResolver.ID_GREED, Color(0.2, 0.65, 0.35))
 	add_child(_sin_panel)
 
 

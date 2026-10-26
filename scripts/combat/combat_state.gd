@@ -27,6 +27,8 @@ signal log_line(text: String)
 signal state_changed
 ## UI：敌人实际扣血时抛出（cell + 伤害 + 状态标签；直伤 kind 为空），用于飘字
 signal enemy_damaged(cell: int, amount: int, kind: String)
+## UI：贪婪掉金时抛出（cell + 掉落金币量），用于金色飘字
+signal gold_gained(cell: int, amount: int)
 
 var phase: int = Phase.AWAIT_LOAD
 var player_hp: int = CombatConstants.PLAYER_MAX_HP
@@ -76,7 +78,7 @@ var _muzzle_gas: bool = false
 var _muzzle_fire: bool = false
 var _muzzle_water: bool = false
 var _muzzle_thunder: bool = false
-## 罪孽枪口层数：愤怒/贪婪回合末清；傲慢整局保留。
+## 罪孽枪口层数：愤怒/贪婪回合末清；傲慢本场保留，战斗结束/失败/新开/下一波清零。
 var _muzzle_wrath: int = 0
 var _muzzle_pride: int = 0
 var _muzzle_greed: int = 0
@@ -273,8 +275,67 @@ func muzzle_status_text() -> String:
 	return "枪口：" + " · ".join(parts)
 
 
+func muzzle_outgoing_multiplier() -> float:
+	## UI / 测试：当前输出罪孽倍率（愤怒×傲慢相乘）。
+	return _outgoing_sin_multiplier()
+
+
+func muzzle_incoming_multiplier() -> float:
+	## UI / 测试：傲慢抬高的受伤倍率。
+	return _incoming_pride_multiplier()
+
+
+static func _format_damage_mult(m: float) -> String:
+	var r := snappedf(m, 0.01)
+	if is_equal_approx(r, float(int(round(r)))):
+		return "×%d" % int(round(r))
+	return "×%.2f" % r
+
+
+func muzzle_damage_tip_text() -> String:
+	## 枪口悬停/长按：玩家可读的伤害修正说明；结算侧四舍五入。
+	var lines: PackedStringArray = PackedStringArray()
+	lines.append("枪口伤害修正")
+	var wrath := _muzzle_wrath
+	var pride := _muzzle_pride
+	var greed := _muzzle_greed
+	var out_m := _outgoing_sin_multiplier()
+	var in_m := _incoming_pride_multiplier()
+	var has_dmg_mod := wrath > 0 or pride > 0
+	if wrath > 0:
+		var wm := float(1 + wrath)
+		lines.append("愤怒×%d：输出 %s（每层 +100%%）" % [wrath, _format_damage_mult(wm)])
+	if pride > 0:
+		lines.append("傲慢×%d：输出 %s（每层 +25%%；受伤同乘）" % [pride, _format_damage_mult(in_m)])
+	if has_dmg_mod:
+		lines.append("合成输出倍率：%s" % _format_damage_mult(out_m))
+		lines.append("结算：底伤×倍率后四舍五入为整数")
+		var sample_raw := 3
+		var sample := _scale_outgoing_damage(sample_raw)
+		lines.append("例：底伤 %d → 实际 %d" % [sample_raw, sample])
+	else:
+		lines.append("当前无修正（×1）")
+		lines.append("结算：无倍率，底伤不变")
+	if greed > 0:
+		lines.append("贪婪×%d：造成伤害时每层 30%% 掉等额金（不改倍率）" % greed)
+	var elems: PackedStringArray = PackedStringArray()
+	if _muzzle_pierce:
+		elems.append("穿透")
+	if _muzzle_gas:
+		elems.append("汽油")
+	if _muzzle_fire:
+		elems.append("火")
+	if _muzzle_water:
+		elems.append("水")
+	if _muzzle_thunder:
+		elems.append("雷")
+	if not elems.is_empty():
+		lines.append("元素附带：%s（不改倍率）" % " · ".join(elems))
+	return "\n".join(lines)
+
+
 func _reset_muzzle() -> void:
-	## 射击收束时清元素枪口；罪孽层数另管（愤怒/贪婪回合末，傲慢整局）。
+	## 射击收束时清元素枪口；罪孽层数另管（愤怒/贪婪回合末，傲慢本场、战后清）。
 	_muzzle_pierce = false
 	_muzzle_gas = false
 	_muzzle_fire = false
@@ -290,11 +351,14 @@ func _clear_turn_sin_muzzle() -> void:
 	_muzzle_greed = 0
 
 
-func _clear_all_sin_muzzle(include_pride: bool = false) -> void:
+func _clear_all_sin_muzzle(include_pride: bool = true) -> void:
+	## 战斗结束/新开/下一波：清全部罪孽枪口。include_pride 保留兼容；默认与口头「战后清傲慢」一致，始终清零。
 	_muzzle_wrath = 0
 	_muzzle_greed = 0
-	if include_pride:
-		_muzzle_pride = 0
+	_muzzle_pride = 0
+	if not include_pride:
+		# 旧调用若显式 false 也不再保留傲慢（口头：离场必须清）
+		pass
 
 
 func _apply_sin_choice(sin_ammo_id: int, refill_bag: bool = true) -> void:
@@ -352,9 +416,10 @@ func _incoming_pride_multiplier() -> float:
 
 
 func _scale_outgoing_damage(raw: int) -> int:
+	## 罪孽输出倍率后四舍五入为整数伤害（与枪口提示一致）。
 	if raw <= 0:
 		return 0
-	var scaled: int = int(floor(float(raw) * _outgoing_sin_multiplier() + 0.0001))
+	var scaled: int = int(round(float(raw) * _outgoing_sin_multiplier()))
 	return maxi(scaled, 0)
 
 
@@ -379,7 +444,7 @@ func _mount_sin_muzzle_from(flags: Dictionary) -> void:
 		_log("  → 枪口【愤怒】+1（现 %d）" % _muzzle_wrath)
 	if bool(flags.get("pride", false)):
 		_muzzle_pride += 1
-		_log("  → 枪口【傲慢】+1（现 %d，整局）" % _muzzle_pride)
+		_log("  → 枪口【傲慢】+1（现 %d，本场）" % _muzzle_pride)
 	if bool(flags.get("greed", false)):
 		_muzzle_greed += 1
 		_log("  → 枪口【贪婪】+1（现 %d）" % _muzzle_greed)
@@ -394,25 +459,25 @@ func _count_ammo_in(ids: Array, ammo_id: int) -> int:
 
 
 func _resolve_sin_pack_on_load(loaded: Array) -> void:
-	## 一次装填恰好 3 发同种罪孽 → 触发负面。在装填完成时结算。
+	## 一次装填同种罪孽 ≥3 发 → 触发负面（口头：3 个或以上；含手装提交/整匣装完）。
 	var wrath_n := _count_ammo_in(loaded, FireResolver.ID_WRATH)
 	var pride_n := _count_ammo_in(loaded, FireResolver.ID_PRIDE)
 	var greed_n := _count_ammo_in(loaded, FireResolver.ID_GREED)
-	if wrath_n == 3:
+	if wrath_n >= 3:
 		player_hp = maxi(0, player_hp - 6)
 		wave_took_damage = true
-		_log("罪孽[愤怒]：本匣恰好 3 发愤怒 → 玩家自伤 6（HP %d/%d）。" % [player_hp, player_max_hp])
+		_log("罪孽[愤怒]：本匣愤怒 ×%d（≥3）→ 玩家自伤 6（HP %d/%d）。" % [wrath_n, player_hp, player_max_hp])
 		if player_hp <= 0:
 			_lose_hp()
-	if pride_n == 3:
-		_pull_enemies_to_face()
-	if greed_n == 3:
+	if pride_n >= 3:
+		_pull_enemies_to_face(pride_n)
+	if greed_n >= 3:
 		gold -= 6
-		_log("罪孽[贪婪]：本匣恰好 3 发贪婪 → 金币 -6（现 %d）。" % gold)
+		_log("罪孽[贪婪]：本匣贪婪 ×%d（≥3）→ 金币 -6（现 %d）。" % [greed_n, gold])
 
 
-func _pull_enemies_to_face() -> void:
-	## 傲慢装 3：全体敌人尽量贴到玩家面前（格 1、2、3…）。
+func _pull_enemies_to_face(pride_n: int = 3) -> void:
+	## 傲慢装 ≥3：全体敌人尽量贴到玩家面前（格 1、2、3…）。
 	var alive: Array = alive_enemies()
 	alive.sort_custom(func(a, b): return a.cell < b.cell)
 	var next_cell: int = CombatConstants.PLAYER_CELL + 1
@@ -422,16 +487,18 @@ func _pull_enemies_to_face() -> void:
 		e.cell = next_cell
 		next_cell += 1
 		_log("罪孽[傲慢]：%s 被拉至格 %d。" % [e.name_zh, e.cell])
-	_log("罪孽[傲慢]：本匣恰好 3 发傲慢 → 敌人拉至面前。")
+	_log("罪孽[傲慢]：本匣傲慢 ×%d（≥3）→ 敌人拉至面前。" % pride_n)
 
 
-func _try_greed_gold_drop(dealt: int) -> void:
+func _try_greed_gold_drop(dealt: int, cell: int = -1) -> void:
 	if dealt <= 0 or _muzzle_greed <= 0:
 		return
 	for _i in _muzzle_greed:
 		if rng.randf() < 0.30:
 			gold += dealt
 			_log("  → 贪婪掉金 +%d（现 %d）" % [dealt, gold])
+			if cell >= 0:
+				gold_gained.emit(cell, dealt)
 
 
 func _set_phase(p: int) -> void:
@@ -775,8 +842,11 @@ func _resolve_black_white_with_prev(drawn: Array[int], prev_load: Array[int]) ->
 func _lose_ammo_exhausted() -> void:
 	## 仅当袋+弃+膛皆空且无法洗回时触发（正常对局袋空会在下回合洗回，不应走到这里）。
 	lose_reason = LoseReason.AMMO_EXHAUSTED
+	_clear_all_sin_muzzle(true)
+	_reset_muzzle()
 	_set_phase(Phase.LOST)
 	_log("失败：弹药耗尽（袋、弃牌与弹夹皆空，无法洗回）。")
+	_emit()
 
 
 ## ROLL 不耗弹：下回合 LOAD 前把膛内剩余弹归还弹药袋（不进弃牌堆）。
@@ -802,8 +872,11 @@ func _reshuffle_if_needed_for_load() -> void:
 
 func _lose_hp() -> void:
 	lose_reason = LoseReason.HP
+	_clear_all_sin_muzzle(true)
+	_reset_muzzle()
 	_set_phase(Phase.LOST)
 	_log("失败：玩家血量归零，整局结束。")
+	_emit()
 
 
 func _reshuffle_discard_into_bag() -> void:
@@ -931,7 +1004,7 @@ func _hit_enemy_with_elements(
 ) -> int:
 	var dealt: int = e.apply_hit(dmg)
 	_notify_enemy_damage(e, dealt, damage_kind)
-	_try_greed_gold_drop(dealt)
+	_try_greed_gold_drop(dealt, e.cell)
 	_log("击发[%s] → %s 格%d 伤害%d（HP %d/%d）%s" % [
 		_ammo_name(ammo_id), e.name_zh, e.cell, dealt, e.hp, e.max_hp,
 		(" " + e.status_text()) if e.status_text() != "" else ""
@@ -1362,7 +1435,7 @@ func _run_enemy_turn() -> void:
 	for e in order:
 		_move_enemy(e)
 		if can_attack_player(e):
-			var incoming: int = int(floor(float(e.atk) * _incoming_pride_multiplier() + 0.0001))
+			var incoming: int = int(round(float(e.atk) * _incoming_pride_multiplier()))
 			player_hp = maxi(0, player_hp - incoming)
 			if incoming > 0:
 				wave_took_damage = true

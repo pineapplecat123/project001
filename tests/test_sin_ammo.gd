@@ -1,5 +1,5 @@
 extends GutTest
-## 罪孽：开局 10+5、装 3 负面、枪口叠层、敌人数值与超僵面前召唤。
+## 罪孽：开局 10+5、装≥3 负面、枪口叠层、敌人数值与超僵面前召唤。
 
 
 func before_each() -> void:
@@ -259,4 +259,106 @@ func test_win_clears_all_sin_muzzle_including_pride() -> void:
 	assert_eq(cs._muzzle_wrath, 0)
 	assert_eq(cs._muzzle_greed, 0)
 	assert_eq(cs._muzzle_fire, false)
+
+
+func test_pride_pack_four_or_more_also_pulls() -> void:
+	## 口头：≥3 触发；4 发傲慢也应拉近。
+	var cs := CombatState.new(930)
+	cs.start_graybox(930, false, FireResolver.ID_PRIDE)
+	cs.enemies.clear()
+	cs.dev_spawn_enemy(1, 7)
+	cs.dev_spawn_enemy(1, 9)
+	cs.bag.clear()
+	for id in [FireResolver.ID_PRIDE, FireResolver.ID_PRIDE, FireResolver.ID_PRIDE, FireResolver.ID_PRIDE,
+			CombatConstants.WHITE_AMMO_ID, CombatConstants.WHITE_AMMO_ID]:
+		cs.bag.append(id)
+	assert_true(cs.do_load())
+	var cells: Array = []
+	for e in cs.enemies_sorted_by_cell():
+		cells.append(e.cell)
+	assert_eq(cells, [1, 2])
+
+
+func test_manual_load_three_pride_then_fire_pulls() -> void:
+	## 手装 3 傲慢后提交会话（开火），也应拉近。袋内仅傲慢，避免随机抽偏。
+	var cs := CombatState.new(931)
+	cs.start_graybox(931, false, FireResolver.ID_PRIDE)
+	cs.enemies.clear()
+	cs.dev_spawn_enemy(1, 8)
+	cs.bag.clear()
+	for _i in 5:
+		cs.bag.append(FireResolver.ID_PRIDE)
+	assert_true(cs.begin_load())
+	for _i in 3:
+		var r: Dictionary = cs.load_next_chamber()
+		assert_true(bool(r.get("ok", false)))
+		if not bool(r.get("done", false)):
+			cs.apply_load_rotate()
+	assert_true(cs.is_busy_loading(), "3/6 手装后会话应仍进行")
+	assert_eq(cs.enemies[0].cell, 8, "提交前尚未拉近")
+	assert_true(cs.begin_fire(), "开火应提交装填会话")
+	assert_eq(cs.enemies[0].cell, 1)
+
+
+func test_outgoing_damage_rounds_half_up() -> void:
+	## 傲慢×1 → ×1.25；底伤 3 → 3.75 → 四舍五入 4（旧 floor 会得 3）。
+	var cs := CombatState.new(932)
+	cs.start_graybox(932, false, FireResolver.ID_PRIDE)
+	cs._muzzle_pride = 1
+	assert_eq(cs._scale_outgoing_damage(3), 4)
+	assert_eq(cs.muzzle_outgoing_multiplier(), 1.25)
+	cs._muzzle_wrath = 1
+	# ×2 × 1.25 = 2.5；3×2.5=7.5 → 8
+	assert_eq(cs._scale_outgoing_damage(3), 8)
+
+
+func test_muzzle_damage_tip_no_mod_and_with_stacks() -> void:
+	var cs := CombatState.new(933)
+	cs.start_graybox(933, false, FireResolver.ID_WRATH)
+	var tip0 := cs.muzzle_damage_tip_text()
+	assert_true(tip0.contains("无修正") or tip0.contains("×1"))
+	cs._muzzle_wrath = 2
+	cs._muzzle_pride = 1
+	var tip := cs.muzzle_damage_tip_text()
+	assert_true(tip.contains("愤怒"))
+	assert_true(tip.contains("傲慢"))
+	assert_true(tip.contains("合成输出倍率"))
+	assert_true(tip.contains("四舍五入"))
+
+
+func test_lose_clears_pride_muzzle() -> void:
+	var cs := CombatState.new(934)
+	cs.start_graybox(934, false, FireResolver.ID_PRIDE)
+	cs._muzzle_pride = 4
+	cs._muzzle_wrath = 2
+	cs.player_hp = 0
+	cs._lose_hp()
+	assert_eq(cs.phase, CombatState.Phase.LOST)
+	assert_eq(cs._muzzle_pride, 0)
+	assert_eq(cs._muzzle_wrath, 0)
+
+
+func test_next_wave_clears_pride() -> void:
+	var cs := CombatState.new(935)
+	cs.start_graybox(935, true, FireResolver.ID_PRIDE)
+	cs._muzzle_pride = 3
+	cs.dev_kill_all_enemies()
+	assert_eq(cs._muzzle_pride, 0)
+	assert_true(cs.skip_reward_for_gold())
+	assert_true(cs.start_next_wave())
+	assert_eq(cs._muzzle_pride, 0)
+
+
+func test_greed_gold_gained_signal_emits_amount() -> void:
+	var cs := CombatState.new(936)
+	cs.start_graybox(936, false, FireResolver.ID_GREED)
+	cs._muzzle_greed = 10
+	cs.rng.seed = 1
+	var got: Array = []
+	cs.gold_gained.connect(func(cell, amount): got.append([cell, amount]))
+	# 强制多次掉金：层数高 + 固定种子
+	cs._try_greed_gold_drop(6, 3)
+	assert_gt(got.size(), 0, "should emit at least one gold float")
+	assert_eq(got[0][0], 3)
+	assert_eq(got[0][1], 6)
 
