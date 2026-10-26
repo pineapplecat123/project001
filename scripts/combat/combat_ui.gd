@@ -2091,7 +2091,8 @@ func _refresh() -> void:
 	gold_label.add_theme_color_override("font_color", COL_GOLD)
 	turn_label.text = "回合 %d · 第 %d 波 · %s" % [state.turn_index, state.wave_index, ("无限" if state.endless_mode else state.encounter_label())]
 	turn_label.add_theme_color_override("font_color", COL_TURN)
-	var busy := _busy() or state.is_busy_firing() or state.is_busy_loading()
+	# 动画/射击中才锁按钮；手装会话进行中不锁，以便继续手装或中途开火
+	var busy := _busy() or state.is_busy_firing()
 	btn_load.disabled = busy or not state.can_load()
 	if btn_manual_load != null:
 		btn_manual_load.disabled = busy or not state.can_manual_load()
@@ -2228,13 +2229,14 @@ func _refresh_hud_only() -> void:
 	gold_label.add_theme_color_override("font_color", COL_GOLD)
 	turn_label.text = "回合 %d · 第 %d 波 · %s" % [state.turn_index, state.wave_index, ("无限" if state.endless_mode else state.encounter_label())]
 	turn_label.add_theme_color_override("font_color", COL_TURN)
-	var busy := _busy() or state.is_busy_firing() or state.is_busy_loading()
-	btn_load.disabled = true if (_loading or _firing or _rolling or _wheel_animating) else (busy or not state.can_load())
+	# 与 _refresh 一致：手装会话本身不锁 手装/开火
+	var busy := _busy() or state.is_busy_firing()
+	btn_load.disabled = busy or not state.can_load()
 	if btn_manual_load != null:
-		btn_manual_load.disabled = true if (_loading or _firing or _rolling or _wheel_animating) else (busy or not state.can_manual_load())
-	btn_fire.disabled = true if (_loading or _firing or _rolling or _wheel_animating) else (busy or not state.can_fire())
-	btn_roll.disabled = true if (_loading or _firing or _rolling or _wheel_animating) else (busy or not state.can_start_roll())
-	btn_unload.disabled = true if (_loading or _firing or _rolling or _wheel_animating) else (busy or not state.can_unload())
+		btn_manual_load.disabled = busy or not state.can_manual_load()
+	btn_fire.disabled = busy or not state.can_fire()
+	btn_roll.disabled = busy or not state.can_start_roll()
+	btn_unload.disabled = busy or not state.can_unload()
 	btn_next_wave.disabled = busy or not state.can_start_next_wave()
 	_refresh_board()
 	_refresh_bag_list()

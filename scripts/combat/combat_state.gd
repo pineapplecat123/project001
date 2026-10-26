@@ -82,6 +82,8 @@ var _muzzle_pride: int = 0
 var _muzzle_greed: int = 0
 ## 本局所选罪孽弹药 id（愤怒/傲慢/贪婪之一）
 var selected_sin_ammo_id: int = FireResolver.ID_WRATH
+## 本场战斗内袋重置次数；每次重置灌袋 = 10 平庸 + 5 罪孽 + 本计数发额外罪孽。开局/下场清零。
+var bag_reset_count: int = 0
 var _pending_gold_autofires: int = 0
 ## UI 逐步表现：为 true 时整匣结束后不立刻跑金色额外轮/怪回合，由 UI 消费。
 var pace_after_fire: bool = false
@@ -114,6 +116,7 @@ func start_graybox(seed_value: int = 0, endless: bool = false, sin_ammo_id: int 
 	player_hp = player_max_hp
 	bag.clear()
 	discard.clear()
+	bag_reset_count = 0
 	_apply_sin_choice(sin_ammo_id, false)
 	_fill_starter_bag()
 	_shuffle(bag)
@@ -189,6 +192,7 @@ func start_from_run(payload: Dictionary, seed_value: int = 0) -> void:
 	last_load_ids.clear()
 	_reset_fire_session()
 	_reset_muzzle()
+	_clear_all_sin_muzzle(true)
 	_pending_gold_autofires = 0
 	_reset_load_session()
 	_clear_reward_state()
@@ -298,21 +302,32 @@ func _apply_sin_choice(sin_ammo_id: int, refill_bag: bool = true) -> void:
 		sin_ammo_id = FireResolver.ID_WRATH
 	selected_sin_ammo_id = sin_ammo_id
 	if refill_bag:
+		# 开局选罪孽：基准 10+5，不计入战斗内重置加成
+		bag_reset_count = 0
 		_fill_starter_bag()
 		_shuffle(bag)
 		_emit()
 
 
-func _fill_starter_bag() -> void:
+func _fill_starter_bag(extra_sin: int = 0) -> void:
+	## 灌入 10 平庸 + (5+extra_sin) 本局罪孽。extra_sin 仅战斗内重置使用。
 	bag.clear()
 	for _i in CombatConstants.STARTER_WHITE_COUNT:
 		bag.append(CombatConstants.WHITE_AMMO_ID)
-	for _i in CombatConstants.STARTER_SIN_COUNT:
+	var sin_n: int = CombatConstants.STARTER_SIN_COUNT + maxi(extra_sin, 0)
+	for _i in sin_n:
 		bag.append(selected_sin_ammo_id)
 
 
+func _reset_bag_in_combat() -> void:
+	## 战斗内袋重置：次数 +1，灌 10 平庸 + 5 罪孽 + 次数发额外罪孽。
+	bag_reset_count += 1
+	_fill_starter_bag(bag_reset_count)
+	_shuffle(bag)
+
+
 func choose_sin(sin_ammo_id: int) -> void:
-	## UI：开局选定罪孽后灌入 10 平庸 + 5 罪孽。
+	## UI：开局选定罪孽后灌入 10 平庸 + 5 罪孽（不含战斗内重置加成）。
 	_apply_sin_choice(sin_ammo_id, true)
 	_log("选定罪孽：%s。弹药袋：平庸 ×%d + %s ×%d。" % [
 		_ammo_name(selected_sin_ammo_id), CombatConstants.STARTER_WHITE_COUNT,
@@ -550,16 +565,39 @@ func can_manual_load() -> bool:
 	return can_load() and not bag.is_empty()
 
 
+func _has_ammo_ready_to_act() -> bool:
+	return magazine != null and not magazine.is_empty()
+
+
+func _can_act_with_partial_load() -> bool:
+	## 手装中途：匣内已有弹时可提交会话后开火 / ROLL / 卸除。
+	return phase == Phase.AWAIT_LOAD and _load_session_active and _has_ammo_ready_to_act()
+
+
 func can_fire() -> bool:
-	return phase == Phase.AWAIT_ACTION and not magazine.is_empty()
+	if not _has_ammo_ready_to_act():
+		return false
+	return phase == Phase.AWAIT_ACTION or _can_act_with_partial_load()
 
 
 func can_unload() -> bool:
-	return phase == Phase.AWAIT_ACTION and not magazine.is_empty()
+	if not _has_ammo_ready_to_act():
+		return false
+	return phase == Phase.AWAIT_ACTION or _can_act_with_partial_load()
 
 
 func can_start_roll() -> bool:
-	return phase == Phase.AWAIT_ACTION and magazine.loaded_count() >= 1
+	if magazine == null or magazine.loaded_count() < 1:
+		return false
+	return phase == Phase.AWAIT_ACTION or _can_act_with_partial_load()
+
+
+## 手装中途提交：结束装填会话、保留已装弹，进入 AWAIT_ACTION。
+func commit_load_session_if_active() -> bool:
+	if not _load_session_active:
+		return false
+	_complete_load_session()
+	return true
 
 
 func is_busy_firing() -> bool:
@@ -779,6 +817,7 @@ func _reshuffle_discard_into_bag() -> void:
 func begin_fire() -> bool:
 	if not can_fire():
 		return false
+	commit_load_session_if_active()
 	_reset_fire_session()
 	_fire_queue = magazine.fire_order()
 	_fire_damages = FireResolver.compute_shot_damages(_fire_queue, pink_bonus)
@@ -1231,6 +1270,7 @@ func do_fire() -> bool:
 func apply_roll() -> int:
 	if not can_start_roll():
 		return -1
+	commit_load_session_if_active()
 	var before := magazine.start_index
 	var steps: int = magazine.random_roll(rng)
 	if magazine.loaded_count() <= 1:
@@ -1263,6 +1303,7 @@ func begin_roll() -> bool:
 func do_unload() -> bool:
 	if not can_unload():
 		return false
+	commit_load_session_if_active()
 	var removed: Array[int] = magazine.unload_all()
 	var had_pink := false
 	for id in removed:
@@ -1447,8 +1488,10 @@ func _enter_won() -> void:
 		return
 	_set_phase(Phase.WON)
 	_log("胜利：敌人全灭。")
-	# 练习战：胜利后重置为开局白弹再发奖；无限模式/地图 run 保留牌库
-	if not from_map_run and not endless_mode:
+	# 枪口（含罪孽层）一律清掉；练习/无限同场：战斗内袋重置（累加额外罪孽）再发奖；地图 run 保留构筑袋
+	_clear_all_sin_muzzle(true)
+	_reset_muzzle()
+	if not from_map_run:
 		_reset_practice_ammo_to_starter()
 	# 无限：每 5 波（5/10/15…）奖励后须进商店，逛完才可下一波
 	if endless_mode and wave_index > 0 and wave_index % 5 == 0:
@@ -1459,19 +1502,21 @@ func _enter_won() -> void:
 
 
 func _reset_practice_ammo_to_starter() -> void:
-	## 练习战专用：匣/弃清空，袋恢复 10 平庸 + 5 本局罪孽。
+	## 练习战 / 无限同场跨波：匣/弃清空；战斗内袋重置（10+5+本场重置次数发额外罪孽）；枪口全清。
 	magazine = Magazine.new()
 	discard.clear()
-	_fill_starter_bag()
-	_shuffle(bag)
+	_reset_bag_in_combat()
 	needs_reshuffle_next_load = false
 	last_load_ids.clear()
 	_reset_fire_session()
 	_reset_muzzle()
+	_clear_all_sin_muzzle(true)
 	_pending_gold_autofires = 0
 	_reset_load_session()
-	_log("练习战：弹药已重置为开局牌库（平庸 ×%d + %s ×%d）。" % [
-		CombatConstants.STARTER_WHITE_COUNT, _ammo_name(selected_sin_ammo_id), CombatConstants.STARTER_SIN_COUNT
+	var mode_label := "无限模式" if endless_mode else "练习战"
+	var sin_n: int = CombatConstants.STARTER_SIN_COUNT + bag_reset_count
+	_log("%s：弹药已重置（平庸 ×%d + %s ×%d，含战斗内重置加成 ×%d）。" % [
+		mode_label, CombatConstants.STARTER_WHITE_COUNT, _ammo_name(selected_sin_ammo_id), sin_n, bag_reset_count
 	])
 
 
@@ -1578,11 +1623,11 @@ func apply_shop_payload(payload: Dictionary) -> void:
 
 func can_start_next_wave() -> bool:
 
-	## 奖励结算完成后才可下一波（不重置弹药袋）；无限逢 5 波须先逛完商店。
+	## 奖励结算完成后才可下一波；无限逢 5 波须先逛完商店。袋已在胜利时重置（地图 run 除外）。
 	return phase == Phase.WON and reward_resolved and not reward_pending and endless_shop_done
 
 
-## 清场后开始下一波：随机/轮换现有启用敌人，不回主菜单、不重置弹药袋。
+## 清场后开始下一波：随机/轮换现有启用敌人；不回主菜单。袋沿用胜利重置+奖励后的状态；枪口全清。
 func start_next_wave() -> bool:
 	if not can_start_next_wave():
 		return false
@@ -1594,6 +1639,7 @@ func start_next_wave() -> bool:
 	lose_reason = LoseReason.NONE
 	_reset_fire_session()
 	_reset_muzzle()
+	_clear_all_sin_muzzle(true)
 	_pending_gold_autofires = 0
 	_post_fire_enemy_pending = false
 	_in_gold_extra_round = false

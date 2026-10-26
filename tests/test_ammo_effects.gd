@@ -119,16 +119,18 @@ func test_fire_stops_when_enemies_cleared_mid_magazine() -> void:
 	assert_eq(shots, 4, "should stop after killing shot, shots=%d" % shots)
 	assert_eq(cs.phase, CombatState.Phase.WON)
 	assert_true(cs.alive_enemies().is_empty())
-	# 练习战胜利重置：弃牌清空，已击发不保留在 discard
+	# 练习战胜利重置：弃牌清空；袋 = 10+5+1（本场第 1 次战斗内重置）
 	assert_eq(cs.discard.size(), 0)
-	assert_eq(cs.bag.size(), CombatConstants.STARTER_BAG_TOTAL)
+	assert_eq(cs.bag.size(), CombatConstants.STARTER_BAG_TOTAL + 1)
+	assert_eq(cs.bag_reset_count, 1)
 
 
 func test_practice_win_resets_bag_and_magazine() -> void:
-	## 练习战胜利后：弹仓/弃牌清空，袋恢复练习初始白弹（再叠加奖励选择）。
+	## 练习战胜利后：弹仓/弃牌清空；袋 = 10+5+本场重置次数额外罪孽（再叠加奖励）。
 	var cs := CombatState.new(811)
 	cs.start_graybox(811)
 	assert_eq(cs.from_map_run, false)
+	assert_eq(cs.bag_reset_count, 0)
 	cs.dev_force_load([1, 1, 1, 1, 1, 1] as Array[int])
 	cs.bag.clear()
 	cs.bag.append(FireResolver.ID_GOLD)
@@ -137,7 +139,8 @@ func test_practice_win_resets_bag_and_magazine() -> void:
 	assert_eq(cs.phase, CombatState.Phase.WON)
 	assert_true(cs.magazine.is_empty())
 	assert_eq(cs.discard.size(), 0, "practice win should clear discard")
-	assert_eq(cs.bag.size(), CombatConstants.STARTER_BAG_TOTAL)
+	assert_eq(cs.bag_reset_count, 1)
+	assert_eq(cs.bag.size(), CombatConstants.STARTER_BAG_TOTAL + 1)
 	var white_n := 0
 	var sin_n := 0
 	for id in cs.bag:
@@ -146,20 +149,20 @@ func test_practice_win_resets_bag_and_magazine() -> void:
 		elif int(id) == cs.selected_sin_ammo_id:
 			sin_n += 1
 	assert_eq(white_n, CombatConstants.STARTER_WHITE_COUNT)
-	assert_eq(sin_n, CombatConstants.STARTER_SIN_COUNT)
+	assert_eq(sin_n, CombatConstants.STARTER_SIN_COUNT + 1)
 	assert_true(cs.pick_reward_ammo(0))
-	assert_eq(cs.bag.size(), CombatConstants.STARTER_BAG_TOTAL + 1)
+	assert_eq(cs.bag.size(), CombatConstants.STARTER_BAG_TOTAL + 2)
 
 
 
 
-func test_endless_win_keeps_bag() -> void:
-	## 无限模式胜利：不重置牌库；中途清场未击发归袋；奖励弹叠加入袋；可下一波。
+func test_endless_win_resets_bag_with_bonus_sin() -> void:
+	## 无限同场胜利：袋按战斗内重置（10+5+次数）；奖励叠加；跨波累计次数；枪口清。
 	var cs := CombatState.new(840)
-	cs.start_graybox(840, true)
+	cs.start_graybox(840, true, FireResolver.ID_WRATH)
 	assert_eq(cs.from_map_run, false)
 	assert_true(cs.endless_mode)
-	# 僵尸 40HP；本测只验证袋保留，压到 10HP 以便 4 白清场
+	assert_eq(cs.bag_reset_count, 0)
 	cs.enemies[0].hp = 10
 	cs.enemies[0].max_hp = 10
 	cs.dev_force_load([1, 1, 1, 1, 1, 1] as Array[int])
@@ -171,20 +174,21 @@ func test_endless_win_keeps_bag() -> void:
 	while cs.phase == CombatState.Phase.FIRING:
 		cs.fire_next_shot()
 		shots += 1
-	# 10HP / 白弹 3 → 约 4 发清场，剩 2 归袋
 	assert_eq(shots, 4)
 	assert_eq(cs.phase, CombatState.Phase.WON)
-	assert_eq(cs.discard.size(), 4)
-	# 原袋 2 + 归还未击发 2 = 4（不重置成 12 白）
-	assert_eq(cs.bag.size(), 4)
-	assert_true(cs.bag.has(FireResolver.ID_GOLD))
-	assert_true(cs.bag.has(FireResolver.ID_FIRE))
+	assert_eq(cs.discard.size(), 0)
+	assert_eq(cs.bag_reset_count, 1)
+	assert_eq(cs.bag.size(), CombatConstants.STARTER_BAG_TOTAL + 1)
+	assert_eq(cs._muzzle_pride, 0)
+	assert_eq(cs._muzzle_wrath, 0)
 	assert_true(cs.pick_reward_ammo(0))
-	assert_eq(cs.bag.size(), 5)
+	assert_eq(cs.bag.size(), CombatConstants.STARTER_BAG_TOTAL + 2)
 	assert_true(cs.can_start_next_wave())
 	assert_true(cs.start_next_wave())
 	assert_eq(cs.wave_index, 2)
-	assert_eq(cs.bag.size(), 5)
+	# 下一波仍保留胜利重置+奖励后的袋；重置计数仍为 1（下一场胜利才到 2）
+	assert_eq(cs.bag_reset_count, 1)
+	assert_eq(cs.bag.size(), CombatConstants.STARTER_BAG_TOTAL + 2)
 
 
 func test_map_run_win_does_not_reset_bag() -> void:

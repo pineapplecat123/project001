@@ -397,15 +397,17 @@ func test_reward_generate_three_choices() -> void:
 func test_reward_pick_adds_to_bag_and_base_gold() -> void:
 	var cs := CombatState.new(8)
 	cs.start_graybox(8)
-	var bag_before := cs.bag.size()
 	assert_eq(cs.gold, 0)
 	cs.dev_kill_all_enemies()
 	assert_eq(cs.phase, CombatState.Phase.WON)
 	assert_eq(cs.gold, CombatConstants.REWARD_BASE_GOLD)
 	assert_eq(cs.reward_choices.size(), 3)
+	# 胜利后战斗内袋重置：10+5+1，再领奖 +1
+	var bag_after_reset := cs.bag.size()
+	assert_eq(bag_after_reset, CombatConstants.STARTER_BAG_TOTAL + 1)
 	var chosen: int = cs.reward_choices[1]
 	assert_true(cs.pick_reward_ammo(1))
-	assert_eq(cs.bag.size(), bag_before + 1)
+	assert_eq(cs.bag.size(), bag_after_reset + 1)
 	assert_eq(cs.bag[cs.bag.size() - 1], chosen)
 	assert_true(cs.reward_resolved)
 	assert_false(cs.reward_pending)
@@ -416,12 +418,13 @@ func test_reward_pick_adds_to_bag_and_base_gold() -> void:
 func test_reward_skip_for_extra_gold() -> void:
 	var cs := CombatState.new(9)
 	cs.start_graybox(9)
-	var bag_before := cs.bag.size()
 	cs.dev_kill_all_enemies()
+	var bag_after_reset := cs.bag.size()
+	assert_eq(bag_after_reset, CombatConstants.STARTER_BAG_TOTAL + 1)
 	assert_eq(cs.gold, CombatConstants.REWARD_BASE_GOLD)
 	assert_true(cs.skip_reward_for_gold())
 	assert_eq(cs.gold, CombatConstants.REWARD_BASE_GOLD + CombatConstants.REWARD_SKIP_EXTRA_GOLD)
-	assert_eq(cs.bag.size(), bag_before)
+	assert_eq(cs.bag.size(), bag_after_reset)
 	assert_true(cs.reward_resolved)
 	assert_true(cs.can_start_next_wave())
 	# 不可重复领取

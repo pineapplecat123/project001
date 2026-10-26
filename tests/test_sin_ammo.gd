@@ -182,3 +182,81 @@ func test_manual_load_one_chamber_at_a_time() -> void:
 	assert_eq(cs.magazine.loaded_count(), 3)
 	assert_false(cs.is_busy_loading())
 	assert_false(cs.can_manual_load())
+
+
+func test_manual_load_one_then_can_continue_and_fire() -> void:
+	## 手装 1 发后仍可再装；且可直接开火（提交装填会话）。
+	var cs := CombatState.new(920)
+	cs.start_graybox(920, false, FireResolver.ID_WRATH)
+	cs.enemies[0].hp = 999
+	cs.enemies[0].max_hp = 999
+	cs.bag.clear()
+	for _i in 4:
+		cs.bag.append(CombatConstants.WHITE_AMMO_ID)
+	assert_true(cs.begin_load())
+	var r1: Dictionary = cs.load_next_chamber()
+	assert_true(bool(r1.get("ok", false)))
+	assert_false(bool(r1.get("done", false)))
+	assert_eq(cs.magazine.loaded_count(), 1)
+	assert_true(cs.is_busy_loading())
+	assert_true(cs.can_manual_load(), "should still manual-load after 1")
+	assert_true(cs.can_fire(), "should be able to fire after 1 manual load")
+	cs.apply_load_rotate()
+	var r2: Dictionary = cs.load_next_chamber()
+	assert_true(bool(r2.get("ok", false)))
+	assert_eq(cs.magazine.loaded_count(), 2)
+	assert_true(cs.can_fire())
+	assert_true(cs.begin_fire())
+	assert_false(cs.is_busy_loading(), "fire should commit load session")
+	assert_eq(cs.phase, CombatState.Phase.FIRING)
+
+
+func test_bag_reset_bonus_sin_accumulates_then_clears_on_new_combat() -> void:
+	## 战斗内重置两次 → 额外罪孽 +1、+2；新开战斗清零无额外。
+	var cs := CombatState.new(921)
+	cs.start_graybox(921, false, FireResolver.ID_GREED)
+	assert_eq(cs.bag_reset_count, 0)
+	assert_eq(cs.bag.size(), CombatConstants.STARTER_BAG_TOTAL)
+	cs.dev_kill_all_enemies()
+	assert_eq(cs.bag_reset_count, 1)
+	var sin1 := 0
+	for id in cs.bag:
+		if int(id) == FireResolver.ID_GREED:
+			sin1 += 1
+	assert_eq(sin1, CombatConstants.STARTER_SIN_COUNT + 1)
+	assert_eq(cs.bag.size(), CombatConstants.STARTER_BAG_TOTAL + 1)
+	assert_eq(cs._muzzle_pride, 0)
+	assert_true(cs.skip_reward_for_gold())
+	assert_true(cs.start_next_wave())
+	cs.dev_kill_all_enemies()
+	assert_eq(cs.bag_reset_count, 2)
+	var sin2 := 0
+	for id in cs.bag:
+		if int(id) == FireResolver.ID_GREED:
+			sin2 += 1
+	assert_eq(sin2, CombatConstants.STARTER_SIN_COUNT + 2)
+	assert_eq(cs.bag.size(), CombatConstants.STARTER_BAG_TOTAL + 2)
+	# 新开一场：计数清零，袋回 10+5
+	cs.start_graybox(922, false, FireResolver.ID_GREED)
+	assert_eq(cs.bag_reset_count, 0)
+	assert_eq(cs.bag.size(), CombatConstants.STARTER_BAG_TOTAL)
+	var sin0 := 0
+	for id in cs.bag:
+		if int(id) == FireResolver.ID_GREED:
+			sin0 += 1
+	assert_eq(sin0, CombatConstants.STARTER_SIN_COUNT)
+
+
+func test_win_clears_all_sin_muzzle_including_pride() -> void:
+	var cs := CombatState.new(923)
+	cs.start_graybox(923, false, FireResolver.ID_PRIDE)
+	cs._muzzle_pride = 3
+	cs._muzzle_wrath = 2
+	cs._muzzle_greed = 1
+	cs._muzzle_fire = true
+	cs.dev_kill_all_enemies()
+	assert_eq(cs._muzzle_pride, 0)
+	assert_eq(cs._muzzle_wrath, 0)
+	assert_eq(cs._muzzle_greed, 0)
+	assert_eq(cs._muzzle_fire, false)
+
