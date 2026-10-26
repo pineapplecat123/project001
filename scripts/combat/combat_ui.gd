@@ -8,8 +8,11 @@ const ShopState = preload("res://scripts/shop/shop_state.gd")
 const ShopConstants = preload("res://scripts/shop/shop_constants.gd")
 const BagPhysicsBox = preload("res://scripts/combat/bag_physics_box.gd")
 
-const CELL_W := 92
-const CELL_H := 72
+const CELL_W := 86
+const CELL_H := 110
+const UNIT_W := 54.0
+const UNIT_H := 70.0
+const GROUND_LINE_H := 4.0
 const WHEEL_SIZE := 220.0
 const CHAMBER_SIZE := 58.0
 const WHEEL_RADIUS := 78.0
@@ -34,9 +37,9 @@ const DMG_FLOAT_DURATION := 0.85
 const DMG_FLOAT_RISE := 78.0
 const DMG_FLOAT_FONT_MIN := 16
 const DMG_FLOAT_FONT_MAX := 40
-const SHAKE_MIN_PX := 2.0
-const SHAKE_MAX_PX := 18.0
-const SHAKE_DURATION := 0.22
+const SHAKE_MIN_PX := 8.0
+const SHAKE_MAX_PX := 42.0
+const SHAKE_DURATION := 0.28
 
 const COL_PHASE := Color(1.0, 0.92, 0.45)
 const COL_HP_OK := Color(0.45, 0.95, 0.55)
@@ -86,9 +89,8 @@ var _muzzle_tip_open: bool = false
 var _muzzle_tip_from_hover: bool = false
 var _muzzle_tip_from_long_press: bool = false
 var _long_press_kind: String = ""  ## "ammo" | "muzzle"
-var _board_base_pos: Vector2 = Vector2.ZERO
-var _board_shake_tween: Tween
-var _board_shake_ready: bool = false
+## 每格独立抖动 tween（key=cell）；不再整块棋盘抖
+var _cell_shake_tweens: Dictionary = {}
 var _reward_open: bool = false
 var _ammo_detail_panel: PanelContainer = null
 var _ammo_detail_body: RichTextLabel = null
@@ -639,12 +641,23 @@ func _on_log(text: String) -> void:
 
 
 func _build_board_cells() -> void:
+	## 视觉：一条地面线 + 线上站立的单位块；格位逻辑仍按 cell 索引。
 	for c in board_row.get_children():
 		c.queue_free()
+	_ensure_ground_line()
 	for i in CombatConstants.BOARD_SIZE:
-		var panel := Panel.new()
-		panel.custom_minimum_size = Vector2(CELL_W, CELL_H)
-		panel.name = "Cell%d" % i
+		var slot := Control.new()
+		slot.custom_minimum_size = Vector2(CELL_W, CELL_H)
+		slot.name = "Cell%d" % i
+		slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		# 格位透明占位；单位本体是 UnitBody
+		var unit := Panel.new()
+		unit.name = "UnitBody"
+		unit.visible = false
+		unit.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		unit.custom_minimum_size = Vector2(UNIT_W, UNIT_H)
+		unit.size = Vector2(UNIT_W, UNIT_H)
+		unit.position = Vector2((CELL_W - UNIT_W) * 0.5, CELL_H - UNIT_H - GROUND_LINE_H - 6.0)
 		var vbox := VBoxContainer.new()
 		vbox.name = "VBox"
 		vbox.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -658,14 +671,46 @@ func _build_board_cells() -> void:
 		vbox.add_child(info)
 		var hp_bar := ProgressBar.new()
 		hp_bar.name = "HpBar"
-		hp_bar.custom_minimum_size = Vector2(0, 10)
+		hp_bar.custom_minimum_size = Vector2(0, 8)
 		hp_bar.show_percentage = false
 		hp_bar.max_value = 100
 		hp_bar.value = 0
 		hp_bar.visible = false
 		vbox.add_child(hp_bar)
-		panel.add_child(vbox)
-		board_row.add_child(panel)
+		unit.add_child(vbox)
+		slot.add_child(unit)
+		board_row.add_child(slot)
+
+
+func _ensure_ground_line() -> void:
+	## 在 BoardRow 下方画一条水平地面线（占位美术）。
+	if board_row == null or board_row.get_parent() == null:
+		return
+	var parent: Control = board_row.get_parent() as Control
+	var line: ColorRect = parent.get_node_or_null("GroundLine") as ColorRect
+	if line == null:
+		line = ColorRect.new()
+		line.name = "GroundLine"
+		line.color = Color(0.78, 0.72, 0.55, 0.95)
+		line.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		parent.add_child(line)
+		parent.move_child(line, board_row.get_index() + 1)
+	# 用回调对齐到 BoardRow 底边
+	if not board_row.resized.is_connected(_layout_ground_line):
+		board_row.resized.connect(_layout_ground_line)
+	call_deferred("_layout_ground_line")
+
+
+func _layout_ground_line() -> void:
+	if board_row == null or board_row.get_parent() == null:
+		return
+	var parent: Control = board_row.get_parent() as Control
+	var line: ColorRect = parent.get_node_or_null("GroundLine") as ColorRect
+	if line == null:
+		return
+	var r: Rect2 = board_row.get_rect()
+	line.position = Vector2(r.position.x, r.position.y + r.size.y - GROUND_LINE_H - 2.0)
+	line.size = Vector2(maxf(r.size.x, float(CombatConstants.BOARD_SIZE) * CELL_W), GROUND_LINE_H)
 
 
 func _build_wheel_chambers() -> void:
@@ -1021,7 +1066,8 @@ func _animate_fire_shots() -> void:
 		if state.last_fired_slot >= 0:
 			fired_slot = state.last_fired_slot
 		var blank: bool = state.last_shot_was_blank
-		# 空仓：无黄闪；有弹：黄闪钉在红圈下，看清后再转 60°
+		var skip_n: int = int(state.last_blank_skip_steps)
+		# 空仓快跳已并入本发：有弹才黄闪；跳过的空格不逐发播完整射击
 		if not blank:
 			_flash_fire_at_top(fired_slot)
 			_refresh_mag_contents()
@@ -1035,9 +1081,13 @@ func _animate_fire_shots() -> void:
 			var delta: int = (start_after - start_before + CombatConstants.MAGAZINE_SIZE) % CombatConstants.MAGAZINE_SIZE
 			if delta == 0:
 				delta = 1
-			await _animate_disk_to(_wheel_visual_steps + float(delta), STEP_ROT_DURATION)
+			# 含空仓快跳时略加速旋转
+			var rot_dur: float = STEP_ROT_DURATION
+			if skip_n > 0:
+				rot_dur = maxf(0.08, STEP_ROT_DURATION * 0.55)
+			await _animate_disk_to(_wheel_visual_steps + float(delta), rot_dur)
 			_refresh_mag_contents()
-			await get_tree().create_timer(FIRE_SHOT_DELAY).timeout
+			await get_tree().create_timer(FIRE_SHOT_DELAY if skip_n == 0 else FIRE_SHOT_DELAY * 0.45).timeout
 		else:
 			_wheel_animating = false
 			break
@@ -1275,7 +1325,10 @@ func _spawn_damage_float(cell: int, amount: int, kind: String = "") -> void:
 	var panel: Control = board_row.get_child(cell) as Control
 	if panel == null:
 		return
-	var start_g: Vector2 = panel.get_global_rect().get_center()
+	var anchor: Control = panel.get_node_or_null("UnitBody") as Control
+	if anchor == null or not anchor.visible:
+		anchor = panel
+	var start_g: Vector2 = anchor.get_global_rect().get_center()
 	start_g.x += randf_range(-28.0, 28.0)
 	start_g.y += randf_range(-18.0, 10.0)
 	var lab := Label.new()
@@ -1304,7 +1357,7 @@ func _spawn_damage_float(cell: int, amount: int, kind: String = "") -> void:
 			col = Color(1.0, 0.84, 0.25)
 	lab.add_theme_color_override("font_color", col)
 	if kind != "金币":
-		_shake_board_for_damage(amount)
+		_shake_cell_for_damage(cell, amount)
 	lab.add_theme_color_override("font_outline_color", Color(0.12, 0.04, 0.02, 0.95))
 	lab.add_theme_constant_override("outline_size", 5)
 	lab.modulate = Color(1, 1, 1, 1)
@@ -1336,32 +1389,60 @@ func _float_font_size_for(amount: int, has_kind_label: bool) -> int:
 	return base
 
 
-func _ensure_board_shake_base() -> void:
-	if board_row == null:
-		return
-	if not _board_shake_ready:
-		_board_base_pos = board_row.position
-		_board_shake_ready = true
+func _shake_cell_body(panel: Control) -> Control:
+	## 抖单位占位块 UnitBody（不抖整块棋盘/地块）。
+	var body: Control = panel.get_node_or_null("UnitBody") as Control
+	if body == null:
+		body = panel.get_node_or_null("VBox") as Control
+	if body == null:
+		body = panel
+	return body
 
 
-func _shake_board_for_damage(amount: int) -> void:
-	## 击中抖动：伤害越大振幅越大，夹在 SHAKE_MIN/MAX，不把棋盘抖出屏。
+func _reset_cell_shake_offsets(body: Control) -> void:
+	body.offset_left = 0.0
+	body.offset_right = 0.0
+	body.offset_top = 0.0
+	body.offset_bottom = 0.0
+
+
+func _shake_cell_for_damage(cell: int, amount: int) -> void:
+	## 仅被击中的怪物格抖动；振幅更大更夸张，仍随伤害放大（小伤也明显）。
 	if board_row == null or amount <= 0:
 		return
-	_ensure_board_shake_base()
-	var t: float = clampf(float(amount) / 24.0, 0.0, 1.0)
+	if cell < 0 or cell >= board_row.get_child_count():
+		return
+	var panel: Control = board_row.get_child(cell) as Control
+	if panel == null:
+		return
+	var body: Control = _shake_cell_body(panel)
+	# 伤害曲线：小伤也有下限可见度，约 12 伤即接近最大
+	var t: float = clampf(0.22 + float(amount) / 14.0, 0.22, 1.0)
 	var amp: float = lerpf(SHAKE_MIN_PX, SHAKE_MAX_PX, t)
-	if _board_shake_tween != null:
-		_board_shake_tween.kill()
-	board_row.position = _board_base_pos
-	_board_shake_tween = create_tween()
-	var steps := 5
+	if _cell_shake_tweens.has(cell):
+		var old_tw: Tween = _cell_shake_tweens[cell] as Tween
+		if old_tw != null:
+			old_tw.kill()
+	_reset_cell_shake_offsets(body)
+	var tw := create_tween()
+	_cell_shake_tweens[cell] = tw
+	var steps := 7
 	for i in steps:
 		var fall: float = 1.0 - float(i) / float(steps)
 		var ox := randf_range(-amp, amp) * fall
-		var oy := randf_range(-amp * 0.55, amp * 0.55) * fall
-		_board_shake_tween.tween_property(board_row, "position", _board_base_pos + Vector2(ox, oy), SHAKE_DURATION / float(steps))
-	_board_shake_tween.tween_property(board_row, "position", _board_base_pos, 0.04)
+		var oy := randf_range(-amp * 0.7, amp * 0.7) * fall
+		tw.tween_callback(_apply_cell_offsets.bind(body, ox, oy))
+		tw.tween_interval(SHAKE_DURATION / float(steps))
+	tw.tween_callback(_reset_cell_shake_offsets.bind(body))
+
+
+func _apply_cell_offsets(body: Control, ox: float, oy: float) -> void:
+	if not is_instance_valid(body):
+		return
+	body.offset_left = ox
+	body.offset_right = ox
+	body.offset_top = oy
+	body.offset_bottom = oy
 
 
 func _damage_float_step(t: float, lab: Label, start_g: Vector2, ctrl: Vector2, end_g: Vector2) -> void:
@@ -1714,7 +1795,7 @@ func _bag_inventory_fingerprint(inv: Dictionary) -> String:
 		parts.append("%s:%s/%s/%s" % [
 			str(k), str(e.get("bag", 0)), str(e.get("mag", 0)), str(e.get("discard", 0))
 		])
-	return "%s|g%d" % ["|".join(parts), state.gold]
+	return "%s|g%d|t%d" % ["|".join(parts), state.gold, state.count_temporary_in_bag()]
 
 
 func _refresh_bag_list() -> void:
@@ -1767,9 +1848,11 @@ func _refresh_bag_list() -> void:
 	_bag_inv_fingerprint = fp
 	# 物理盒只同步「袋」内每发；膛/弃仍在统计行可见
 	var ids: Array = []
-	for aid in state.bag:
-		ids.append(int(aid))
-	_bag_physics.sync_ammo_ids(ids)
+	var temps: Array = []
+	for i in state.bag.size():
+		ids.append(int(state.bag[i]))
+		temps.append(state.is_bag_index_temporary(i))
+	_bag_physics.sync_ammo_ids(ids, temps)
 	if _detail_open and _hover_ammo_id >= 0:
 		_show_ammo_detail(_hover_ammo_id, _bag_physics, true, false)
 
@@ -2355,33 +2438,41 @@ func _refresh_board() -> void:
 	var by_cell := {}
 	for e in state.alive_enemies():
 		by_cell[e.cell] = e
+	_layout_ground_line()
 	for i in CombatConstants.BOARD_SIZE:
-		var panel: Panel = board_row.get_child(i)
-		var info: Label = panel.get_node("VBox/Info")
-		var hp_bar: ProgressBar = panel.get_node("VBox/HpBar")
+		var slot: Control = board_row.get_child(i) as Control
+		var unit: Panel = slot.get_node_or_null("UnitBody") as Panel
+		if unit == null:
+			continue
+		var info: Label = unit.get_node("VBox/Info")
+		var hp_bar: ProgressBar = unit.get_node("VBox/HpBar")
 		var style := StyleBoxFlat.new()
-		style.set_border_width_all(2)
-		style.set_corner_radius_all(6)
-		style.border_color = Color(0.15, 0.15, 0.18)
+		style.set_corner_radius_all(8)
+		style.content_margin_left = 4
+		style.content_margin_right = 4
+		style.content_margin_top = 4
+		style.content_margin_bottom = 4
 		if i == CombatConstants.PLAYER_CELL:
-			style.bg_color = Color(0.15, 0.4, 0.85)
-			style.border_color = Color(0.55, 0.8, 1.0)
+			unit.visible = true
+			style.bg_color = Color(0.2, 0.48, 0.92, 0.98)
+			style.border_color = Color(0.65, 0.88, 1.0)
 			style.set_border_width_all(3)
 			info.text = "玩家\n%d" % state.player_hp
 			info.add_theme_color_override("font_color", Color(1, 1, 1))
-			info.add_theme_font_size_override("font_size", 18)
+			info.add_theme_font_size_override("font_size", 15)
 			hp_bar.visible = true
 			hp_bar.max_value = state.player_max_hp
 			hp_bar.value = state.player_hp
 			_style_hp_bar(hp_bar, Color(0.35, 0.85, 0.45))
 		elif by_cell.has(i):
 			var e: EnemyInstance = by_cell[i]
-			style.bg_color = Color(0.72, 0.18, 0.2)
+			unit.visible = true
+			style.bg_color = Color(0.78, 0.22, 0.24, 0.98)
 			if state.can_attack_player(e):
-				style.border_color = Color(1.0, 0.85, 0.15)
+				style.border_color = Color(1.0, 0.88, 0.2)
 				style.set_border_width_all(4)
 			else:
-				style.border_color = Color(0.95, 0.45, 0.45)
+				style.border_color = Color(0.98, 0.55, 0.5)
 				style.set_border_width_all(2)
 			var st := e.status_text()
 			var tag_s := ",".join(e.tags) if e.tags.size() > 0 else ""
@@ -2391,19 +2482,17 @@ func _refresh_board() -> void:
 				("\n" + st) if st != "" else ""
 			]
 			info.add_theme_color_override("font_color", Color(1, 0.95, 0.95))
-			info.add_theme_font_size_override("font_size", 16)
+			info.add_theme_font_size_override("font_size", 13)
 			hp_bar.visible = true
 			hp_bar.max_value = maxi(e.max_hp, 1)
 			hp_bar.value = e.hp
 			_style_hp_bar(hp_bar, Color(0.95, 0.35, 0.3))
 		else:
-			style.bg_color = Color(0.22, 0.22, 0.26)
-			style.border_color = Color(0.32, 0.32, 0.36)
-			info.text = str(i)
-			info.add_theme_color_override("font_color", Color(0.55, 0.55, 0.6))
-			info.add_theme_font_size_override("font_size", 14)
+			# 空格：不画地块色块，只留线上位
+			unit.visible = false
 			hp_bar.visible = false
-		panel.add_theme_stylebox_override("panel", style)
+			info.text = ""
+		unit.add_theme_stylebox_override("panel", style)
 
 
 func _style_hp_bar(bar: ProgressBar, fill: Color) -> void:
@@ -2475,8 +2564,9 @@ func _paint_mag_chambers() -> void:
 		if ammo_id == Magazine.EMPTY:
 			style.bg_color = Color(0.18, 0.18, 0.22)
 			style.border_color = Color(0.4, 0.4, 0.45)
-			info.text = "%d\n空" % order_num
+			info.text = "空"
 			info.add_theme_color_override("font_color", Color(0.7, 0.7, 0.75))
+			panel.modulate = Color(1, 1, 1, 1)
 		else:
 			var def: Dictionary = DataRegistry.get_ammo(ammo_id)
 			var short: String
@@ -2491,8 +2581,13 @@ func _paint_mag_chambers() -> void:
 			style.border_color = Color(0.12, 0.12, 0.14)
 			if ammo_id == CombatConstants.INVALID_AMMO_ID:
 				style.border_color = Color(0.95, 0.4, 0.4)
-			info.text = "%d\n%s" % [order_num, short]
+			info.text = short
 			info.add_theme_color_override("font_color", colors["fg"])
+			# 临时额外罪孽：半透明
+			if state.magazine.is_slot_temporary(slot_i):
+				panel.modulate = Color(1, 1, 1, 0.48)
+			else:
+				panel.modulate = Color(1, 1, 1, 1)
 		# 高亮跟屏幕固定标走：用盘面视觉步数，避免逻辑 start 已+1 而 Tween 未完成时错位
 		var visual_start: int = int(round(fposmod(_wheel_visual_steps, float(CombatConstants.MAGAZINE_SIZE))))
 		var at_fire: bool = slot_i == posmod(visual_start + CombatConstants.FIRE_PORT_OFFSET_STEPS, CombatConstants.MAGAZINE_SIZE)

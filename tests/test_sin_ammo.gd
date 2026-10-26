@@ -212,39 +212,37 @@ func test_manual_load_one_then_can_continue_and_fire() -> void:
 
 
 func test_bag_reset_bonus_sin_accumulates_then_clears_on_new_combat() -> void:
-	## 战斗内重置两次 → 额外罪孽 +1、+2；新开战斗清零无额外。
+	## 战斗内袋空重置两次 → +1、+2 临时罪孽；练习战胜利清零；新开无额外。
 	var cs := CombatState.new(921)
 	cs.start_graybox(921, false, FireResolver.ID_GREED)
 	assert_eq(cs.bag_reset_count, 0)
 	assert_eq(cs.bag.size(), CombatConstants.STARTER_BAG_TOTAL)
-	cs.dev_kill_all_enemies()
+	cs.bag.clear()
+	cs.bag_temp.clear()
+	assert_true(cs._auto_reset_bag_if_empty_at_turn_start())
 	assert_eq(cs.bag_reset_count, 1)
-	var sin1 := 0
-	for id in cs.bag:
-		if int(id) == FireResolver.ID_GREED:
-			sin1 += 1
-	assert_eq(sin1, CombatConstants.STARTER_SIN_COUNT + 1)
-	assert_eq(cs.bag.size(), CombatConstants.STARTER_BAG_TOTAL + 1)
-	assert_eq(cs._muzzle_pride, 0)
-	assert_true(cs.skip_reward_for_gold())
-	assert_true(cs.start_next_wave())
-	cs.dev_kill_all_enemies()
+	assert_eq(cs.count_temporary_in_bag(), 1)
+	cs.bag.clear()
+	cs.bag_temp.clear()
+	assert_true(cs._auto_reset_bag_if_empty_at_turn_start())
 	assert_eq(cs.bag_reset_count, 2)
+	assert_eq(cs.count_temporary_in_bag(), 2)
 	var sin2 := 0
 	for id in cs.bag:
 		if int(id) == FireResolver.ID_GREED:
 			sin2 += 1
 	assert_eq(sin2, CombatConstants.STARTER_SIN_COUNT + 2)
 	assert_eq(cs.bag.size(), CombatConstants.STARTER_BAG_TOTAL + 2)
-	# 新开一场：计数清零，袋回 10+5
+	# 练习战胜利 = 战斗结束：清额外
+	cs.dev_kill_all_enemies()
+	assert_eq(cs.bag_reset_count, 0)
+	assert_eq(cs.count_temporary_in_bag(), 0)
+	assert_eq(cs.bag.size(), CombatConstants.STARTER_BAG_TOTAL)
+	# 新开一场亦无额外
 	cs.start_graybox(922, false, FireResolver.ID_GREED)
 	assert_eq(cs.bag_reset_count, 0)
 	assert_eq(cs.bag.size(), CombatConstants.STARTER_BAG_TOTAL)
-	var sin0 := 0
-	for id in cs.bag:
-		if int(id) == FireResolver.ID_GREED:
-			sin0 += 1
-	assert_eq(sin0, CombatConstants.STARTER_SIN_COUNT)
+	assert_eq(cs.count_temporary_in_bag(), 0)
 
 
 func test_win_clears_all_sin_muzzle_including_pride() -> void:
@@ -361,4 +359,38 @@ func test_greed_gold_gained_signal_emits_amount() -> void:
 	assert_gt(got.size(), 0, "should emit at least one gold float")
 	assert_eq(got[0][0], 3)
 	assert_eq(got[0][1], 6)
+
+
+func test_empty_bag_at_turn_start_auto_resets_nonempty_skips() -> void:
+	var cs := CombatState.new(940)
+	cs.start_graybox(940, false, FireResolver.ID_WRATH)
+	assert_eq(cs.bag_reset_count, 0)
+	assert_false(cs._auto_reset_bag_if_empty_at_turn_start())
+	assert_eq(cs.bag_reset_count, 0)
+	cs.bag.clear()
+	cs.bag_temp.clear()
+	assert_true(cs._auto_reset_bag_if_empty_at_turn_start())
+	assert_eq(cs.bag_reset_count, 1)
+	assert_eq(cs.bag.size(), CombatConstants.STARTER_BAG_TOTAL + 1)
+	assert_eq(cs.count_temporary_in_bag(), 1)
+	assert_true(cs.can_manual_load())
+
+
+func test_endless_keeps_reset_count_across_waves_then_new_combat_clears() -> void:
+	var cs := CombatState.new(941)
+	cs.start_graybox(941, true, FireResolver.ID_PRIDE)
+	cs.bag.clear()
+	cs.bag_temp.clear()
+	cs._auto_reset_bag_if_empty_at_turn_start()
+	assert_eq(cs.bag_reset_count, 1)
+	cs.dev_kill_all_enemies()
+	# 无限胜利保留 count，灌 10+5+1，不因胜利再 +1
+	assert_eq(cs.bag_reset_count, 1)
+	assert_eq(cs.count_temporary_in_bag(), 1)
+	assert_true(cs.skip_reward_for_gold())
+	assert_true(cs.start_next_wave())
+	assert_eq(cs.bag_reset_count, 1)
+	cs.start_graybox(942, true, FireResolver.ID_PRIDE)
+	assert_eq(cs.bag_reset_count, 0)
+	assert_eq(cs.count_temporary_in_bag(), 0)
 

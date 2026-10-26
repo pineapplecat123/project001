@@ -133,10 +133,12 @@ func test_roll_ends_turn_and_enemy_advances() -> void:
 
 func test_distant_enemy_multiple_turns_no_player_damage() -> void:
 	var cs := CombatState.new(5)
-	cs.start_graybox(5)
+	# 贪婪：袋空自动重置后装≥3 也不会自伤扣血（避免愤怒惩罚干扰本测）
+	cs.start_graybox(5, false, FireResolver.ID_GREED)
 	cs.bag.clear()
+	cs.bag_temp.clear()
 	for _i in 12:
-		cs.bag.append(CombatConstants.WHITE_AMMO_ID)
+		cs._bag_append(CombatConstants.WHITE_AMMO_ID, false)
 	cs.enemies[0].hp = 100
 	cs.enemies[0].max_hp = 100
 	cs.enemies[0].cell = 9
@@ -155,10 +157,11 @@ func test_distant_enemy_multiple_turns_no_player_damage() -> void:
 
 func test_only_adjacent_enemy_attacks() -> void:
 	var cs := CombatState.new(1)
-	cs.start_graybox(1, false, FireResolver.ID_WRATH)
+	cs.start_graybox(1, false, FireResolver.ID_GREED)
 	cs.bag.clear()
+	cs.bag_temp.clear()
 	for _i in 12:
-		cs.bag.append(CombatConstants.WHITE_AMMO_ID)
+		cs._bag_append(CombatConstants.WHITE_AMMO_ID, false)
 	cs.enemies[0].hp = 100
 	cs.enemies[0].max_hp = 100
 	cs.enemies[0].cell = 2
@@ -402,9 +405,10 @@ func test_reward_pick_adds_to_bag_and_base_gold() -> void:
 	assert_eq(cs.phase, CombatState.Phase.WON)
 	assert_eq(cs.gold, CombatConstants.REWARD_BASE_GOLD)
 	assert_eq(cs.reward_choices.size(), 3)
-	# 胜利后战斗内袋重置：10+5+1，再领奖 +1
+	# 练习战胜利：袋回 10+5（清额外），再领奖 +1
 	var bag_after_reset := cs.bag.size()
-	assert_eq(bag_after_reset, CombatConstants.STARTER_BAG_TOTAL + 1)
+	assert_eq(bag_after_reset, CombatConstants.STARTER_BAG_TOTAL)
+	assert_eq(cs.bag_reset_count, 0)
 	var chosen: int = cs.reward_choices[1]
 	assert_true(cs.pick_reward_ammo(1))
 	assert_eq(cs.bag.size(), bag_after_reset + 1)
@@ -420,7 +424,8 @@ func test_reward_skip_for_extra_gold() -> void:
 	cs.start_graybox(9)
 	cs.dev_kill_all_enemies()
 	var bag_after_reset := cs.bag.size()
-	assert_eq(bag_after_reset, CombatConstants.STARTER_BAG_TOTAL + 1)
+	assert_eq(bag_after_reset, CombatConstants.STARTER_BAG_TOTAL)
+	assert_eq(cs.bag_reset_count, 0)
 	assert_eq(cs.gold, CombatConstants.REWARD_BASE_GOLD)
 	assert_true(cs.skip_reward_for_gold())
 	assert_eq(cs.gold, CombatConstants.REWARD_BASE_GOLD + CombatConstants.REWARD_SKIP_EXTRA_GOLD)
@@ -531,28 +536,27 @@ func test_ammo_inventory_bag_and_mag() -> void:
 
 
 func test_ammo_inventory_shows_owned_when_bag_empty() -> void:
-	## 袋空时仍显示牌库拥有（弃牌/膛内），列表不为空。
+	## 袋空时装满匣后，库存仍显示膛内拥有（列表不为空）。
 	var cs := CombatState.new(43)
 	cs.start_graybox(43)
 	cs.enemies[0].hp = 999
 	cs.enemies[0].max_hp = 999
 	cs.bag.clear()
+	cs.bag_temp.clear()
 	cs.discard.clear()
+	cs.discard_temp.clear()
 	for _i in 6:
-		cs.bag.append(CombatConstants.WHITE_AMMO_ID)
+		cs._bag_append(CombatConstants.WHITE_AMMO_ID, false)
 	assert_true(cs.do_load())
 	assert_true(cs.bag.is_empty())
-	assert_true(cs.do_unload())  # 全部进弃牌
-	assert_true(cs.bag.is_empty())
-	assert_true(cs.magazine.is_empty())
-	assert_eq(cs.discard.size(), 6)
+	assert_eq(cs.magazine.loaded_count(), 6)
 	var inv: Dictionary = cs.ammo_inventory_by_id()
 	assert_false(inv.is_empty())
 	assert_true(inv.has(CombatConstants.WHITE_AMMO_ID))
 	var e: Dictionary = inv[CombatConstants.WHITE_AMMO_ID]
 	assert_eq(int(e["bag"]), 0)
-	assert_eq(int(e["mag"]), 0)
-	assert_eq(int(e["discard"]), 6)
+	assert_eq(int(e["mag"]), 6)
+	assert_eq(int(e["discard"]), 0)
 	assert_eq(int(e["total"]), 6)
 
 
@@ -686,40 +690,46 @@ func test_magazine_random_roll_steps_nonzero_when_full() -> void:
 		assert_lte(steps, 5, "seed %d" % seed_v)
 
 
-func test_partial_load_then_next_turn_reshuffles_no_ammo_lose() -> void:
-	## 袋剩 N 发只装 N；FIRE 进弃牌；下回合洗回后再装，不因袋空判负。
+func test_partial_load_then_next_turn_auto_resets_bag() -> void:
+	## 袋剩 N 发只装 N；FIRE 后怪回合；袋空 → 自动战斗内重置，可手装，不判负。
 	var cs := CombatState.new(42)
 	cs.start_graybox(42)
 	cs.enemies[0].hp = 999
 	cs.enemies[0].max_hp = 999
 	cs.bag.clear()
+	cs.bag_temp.clear()
 	cs.discard.clear()
+	cs.discard_temp.clear()
 	for _i in 2:
-		cs.bag.append(CombatConstants.WHITE_AMMO_ID)
+		cs._bag_append(CombatConstants.WHITE_AMMO_ID, false)
 	assert_true(cs.do_load())
 	assert_eq(cs.magazine.loaded_count(), 2)
 	assert_true(cs.bag.is_empty())
-	assert_true(cs.needs_reshuffle_next_load)
 	assert_true(cs.do_fire())
 	assert_eq(cs.phase, CombatState.Phase.AWAIT_LOAD)
-	assert_eq(cs.discard.size(), 2)
 	assert_ne(cs.phase, CombatState.Phase.LOST)
+	# 袋空自动重置：count=1，10+5+1，含 1 发临时罪孽
+	assert_eq(cs.bag_reset_count, 1)
+	assert_eq(cs.bag.size(), CombatConstants.STARTER_BAG_TOTAL + 1)
+	assert_eq(cs.count_temporary_in_bag(), 1)
+	assert_true(cs.can_manual_load())
 	assert_true(cs.do_load())
 	assert_eq(cs.lose_reason, CombatState.LoseReason.NONE)
-	assert_eq(cs.magazine.loaded_count(), 2)
-	assert_true(cs.discard.is_empty())
+	assert_eq(cs.magazine.loaded_count(), CombatConstants.MAGAZINE_SIZE)
 
 
 func test_roll_keeps_mag_and_can_act_after_enemy_turn() -> void:
-	## ROLL 不耗弹；怪回合后匣内仍有弹 → AWAIT_ACTION；卸除后再装不丢弹、不判耗尽。
+	## ROLL 不耗弹；怪回合后匣内仍有弹 → AWAIT_ACTION；袋空会自动战斗内重置。
 	var cs := CombatState.new(77)
 	cs.start_graybox(77)
 	cs.enemies[0].hp = 999
 	cs.enemies[0].max_hp = 999
 	cs.bag.clear()
+	cs.bag_temp.clear()
 	cs.discard.clear()
+	cs.discard_temp.clear()
 	for _i in 6:
-		cs.bag.append(CombatConstants.WHITE_AMMO_ID)
+		cs._bag_append(CombatConstants.WHITE_AMMO_ID, false)
 	assert_true(cs.do_load())
 	assert_eq(cs.magazine.loaded_count(), 6)
 	assert_true(cs.bag.is_empty())
@@ -732,27 +742,26 @@ func test_roll_keeps_mag_and_can_act_after_enemy_turn() -> void:
 	assert_true(cs.can_start_roll())
 	assert_true(cs.can_unload())
 	assert_false(cs.can_load())
-	# 卸除清空匣 → 怪回合 → AWAIT_LOAD，再装回
+	# 怪回合后袋空 → 已自动重置
+	assert_eq(cs.bag_reset_count, 1)
+	assert_eq(cs.bag.size(), CombatConstants.STARTER_BAG_TOTAL + 1)
 	assert_true(cs.do_unload())
 	assert_eq(cs.phase, CombatState.Phase.AWAIT_LOAD)
+	assert_true(cs.can_manual_load())
 	assert_true(cs.do_load())
 	assert_ne(cs.lose_reason, CombatState.LoseReason.AMMO_EXHAUSTED)
 	assert_eq(cs.magazine.loaded_count(), 6)
-	# 总量守恒：袋+膛+弃 = 6
-	assert_eq(cs.bag.size() + cs.magazine.loaded_count() + cs.discard.size(), 6)
 
 
-func test_blank_chamber_fire_no_effect_advances() -> void:
-	## 锤位空仓：无伤害、推进一格、标记 blank（供 UI 无黄闪）。
+func test_blank_chamber_skips_to_nearest_ammo() -> void:
+	## 锤位空仓：快跳到最近有弹格再结算，不逐空打；跳过步数记入 last_blank_skip_steps。
 	var cs := CombatState.new(101)
 	cs.start_graybox(101)
 	cs.enemies[0].hp = 999
 	cs.enemies[0].max_hp = 999
-	# 只装 2 发到槽 0、1；start 对准空仓 3
 	cs.dev_force_load([
 		CombatConstants.WHITE_AMMO_ID, CombatConstants.WHITE_AMMO_ID,
 	] as Array[int])
-	# load_sequence 只填前 2 槽，其余 EMPTY；锤位置于空仓 3
 	assert_eq(cs.magazine.loaded_count(), 2)
 	assert_eq(cs.magazine.slots[2], Magazine.EMPTY)
 	cs.magazine.set_start(2)
@@ -760,11 +769,11 @@ func test_blank_chamber_fire_no_effect_advances() -> void:
 	var hp_before: int = cs.enemies[0].hp
 	assert_true(cs.begin_fire())
 	assert_true(cs.fire_next_shot())
-	assert_true(cs.last_shot_was_blank)
-	assert_eq(cs.last_fired_slot, 2)
-	assert_eq(cs.enemies[0].hp, hp_before)
-	assert_eq(cs.magazine.start_index, 3)
-	assert_eq(cs.discard.size(), 0)
+	# 从空仓 2 前进到有弹仓（0 或 1，视 FIRE_PORT 与 start）并实弹结算
+	assert_false(cs.last_shot_was_blank)
+	assert_gte(cs.last_blank_skip_steps, 1)
+	assert_lt(cs.enemies[0].hp, hp_before)
+	assert_eq(cs.discard.size(), 1)
 
 
 func test_muzzle_fire_persists_for_rest_of_turn() -> void:

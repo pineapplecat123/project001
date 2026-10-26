@@ -5,13 +5,17 @@ class_name Magazine
 const EMPTY := -1
 
 var slots: Array[int] = []
+## 与 slots 平行：该仓是否为战斗内临时额外罪孽（半透明）
+var temp_slots: Array[bool] = []
 var start_index: int = 0
 
 
 func _init(size: int = CombatConstants.MAGAZINE_SIZE) -> void:
 	slots.clear()
+	temp_slots.clear()
 	for _i in size:
 		slots.append(EMPTY)
+		temp_slots.append(false)
 	start_index = 0
 
 
@@ -34,21 +38,31 @@ func is_empty() -> bool:
 func clear() -> void:
 	for i in slots.size():
 		slots[i] = EMPTY
+		if i < temp_slots.size():
+			temp_slots[i] = false
+		else:
+			temp_slots.append(false)
 	start_index = 0
 
 
 ## 写入单个仓位（逐步装填用）。
-func set_slot(index: int, ammo_id: int) -> void:
+func set_slot(index: int, ammo_id: int, temporary: bool = false) -> void:
 	assert(index >= 0 and index < slots.size())
 	slots[index] = ammo_id
+	_ensure_temp_size()
+	temp_slots[index] = temporary and ammo_id != EMPTY
 
 
 ## 按顺序填入 ammo_ids（从槽 0 起）；返回实际装入数量。
-func load_sequence(ammo_ids: Array[int]) -> int:
+func load_sequence(ammo_ids: Array[int], temporary_flags: Array = []) -> int:
 	clear()
 	var n: int = mini(ammo_ids.size(), slots.size())
 	for i in n:
 		slots[i] = ammo_ids[i]
+		var is_temp := false
+		if i < temporary_flags.size():
+			is_temp = bool(temporary_flags[i])
+		temp_slots[i] = is_temp and ammo_ids[i] != EMPTY
 	start_index = 0
 	return n
 
@@ -112,3 +126,24 @@ func chamber_at_fire_port(steps: int = -1) -> int:
 func chamber_at_load_port(steps: int = -1) -> int:
 	var s: int = start_index if steps < 0 else steps
 	return posmod(s + CombatConstants.LOAD_PORT_OFFSET_STEPS, size())
+
+
+func _ensure_temp_size() -> void:
+	while temp_slots.size() < slots.size():
+		temp_slots.append(false)
+
+
+func is_slot_temporary(index: int) -> bool:
+	if index < 0 or index >= temp_slots.size():
+		return false
+	return bool(temp_slots[index]) and slots[index] != EMPTY
+
+
+## 卸除：返回 [{id, temp}, ...]
+func unload_all_entries() -> Array:
+	var out: Array = []
+	for i in slots.size():
+		if slots[i] != EMPTY:
+			out.append({"id": slots[i], "temp": is_slot_temporary(i)})
+	clear()
+	return out

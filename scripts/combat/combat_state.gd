@@ -34,7 +34,10 @@ var phase: int = Phase.AWAIT_LOAD
 var player_hp: int = CombatConstants.PLAYER_MAX_HP
 var player_max_hp: int = CombatConstants.PLAYER_MAX_HP
 var bag: Array[int] = []
+## 与 bag 平行：战斗内额外罪孽（半透明）
+var bag_temp: Array[bool] = []
 var discard: Array[int] = []
+var discard_temp: Array[bool] = []
 var magazine: Magazine = Magazine.new()
 var enemies: Array = []
 var turn_index: int = 0
@@ -101,6 +104,8 @@ var _load_resolved_ids: Array[int] = []
 var last_fired_slot: int = -1
 ## UI：上一发是否空仓（无效果、无黄闪，仍推进一格）
 var last_shot_was_blank: bool = false
+## 本发开火前快跳过的空仓步数（供 UI 快转）
+var last_blank_skip_steps: int = 0
 
 
 func _init(seed_value: int = 0) -> void:
@@ -117,11 +122,13 @@ func start_graybox(seed_value: int = 0, endless: bool = false, sin_ammo_id: int 
 	player_max_hp = CombatConstants.PLAYER_MAX_HP
 	player_hp = player_max_hp
 	bag.clear()
+	bag_temp.clear()
 	discard.clear()
+	discard_temp.clear()
 	bag_reset_count = 0
 	_apply_sin_choice(sin_ammo_id, false)
 	_fill_starter_bag()
-	_shuffle(bag)
+	_shuffle_bag()
 	magazine = Magazine.new()
 	enemies.clear()
 	wave_index = 1
@@ -176,11 +183,14 @@ func start_from_run(payload: Dictionary, seed_value: int = 0) -> void:
 	player_max_hp = int(payload.get("player_max_hp", CombatConstants.PLAYER_MAX_HP))
 	player_hp = int(payload.get("player_hp", player_max_hp))
 	bag.clear()
+	bag_temp.clear()
 	for x in payload.get("bag", []):
-		bag.append(int(x))
+		_bag_append(int(x), false)
 	if bag.is_empty():
 		_fill_starter_bag()
 	discard.clear()
+	discard_temp.clear()
+	bag_reset_count = 0
 	magazine = Magazine.new()
 	enemies.clear()
 	wave_index = 1
@@ -226,12 +236,14 @@ func export_run_payload() -> Dictionary:
 
 func _consolidate_ammo_into_bag() -> void:
 	if not magazine.is_empty():
-		for id in magazine.unload_all():
-			bag.append(id)
+		for entry in magazine.unload_all_entries():
+			_bag_append(int(entry.get("id", Magazine.EMPTY)), bool(entry.get("temp", false)))
 	if not discard.is_empty():
-		for id in discard:
-			bag.append(id)
+		_sync_temp_arrays()
+		for i in discard.size():
+			_bag_append(discard[i], bool(discard_temp[i]) if i < discard_temp.size() else false)
 		discard.clear()
+		discard_temp.clear()
 
 
 
@@ -242,6 +254,7 @@ func _reset_fire_session() -> void:
 	_fire_index = 0
 	_fire_total_damage = 0
 	last_shot_was_blank = false
+	last_blank_skip_steps = 0
 	last_fired_slot = -1
 
 
@@ -369,25 +382,111 @@ func _apply_sin_choice(sin_ammo_id: int, refill_bag: bool = true) -> void:
 		# 开局选罪孽：基准 10+5，不计入战斗内重置加成
 		bag_reset_count = 0
 		_fill_starter_bag()
-		_shuffle(bag)
+		_shuffle_bag()
 		_emit()
 
 
+func _bag_append(ammo_id: int, temporary: bool = false) -> void:
+	bag.append(ammo_id)
+	bag_temp.append(temporary)
+
+
+func _discard_append(ammo_id: int, temporary: bool = false) -> void:
+	discard.append(ammo_id)
+	discard_temp.append(temporary)
+
+
+func _sync_temp_arrays() -> void:
+	## 兜底：保证 temp 数组与 bag/discard 等长（旧路径漏标时当永久弹）。
+	while bag_temp.size() < bag.size():
+		bag_temp.append(false)
+	while bag_temp.size() > bag.size():
+		bag_temp.pop_back()
+	while discard_temp.size() < discard.size():
+		discard_temp.append(false)
+	while discard_temp.size() > discard.size():
+		discard_temp.pop_back()
+
+
 func _fill_starter_bag(extra_sin: int = 0) -> void:
-	## 灌入 10 平庸 + (5+extra_sin) 本局罪孽。extra_sin 仅战斗内重置使用。
+	## 灌入 10 平庸 + 5 本局罪孽 + extra_sin 发临时额外罪孽（半透明）。
 	bag.clear()
+	bag_temp.clear()
 	for _i in CombatConstants.STARTER_WHITE_COUNT:
-		bag.append(CombatConstants.WHITE_AMMO_ID)
-	var sin_n: int = CombatConstants.STARTER_SIN_COUNT + maxi(extra_sin, 0)
-	for _i in sin_n:
-		bag.append(selected_sin_ammo_id)
+		_bag_append(CombatConstants.WHITE_AMMO_ID, false)
+	for _i in CombatConstants.STARTER_SIN_COUNT:
+		_bag_append(selected_sin_ammo_id, false)
+	for _i in maxi(extra_sin, 0):
+		_bag_append(selected_sin_ammo_id, true)
+
+
+func _shuffle_bag() -> void:
+	_sync_temp_arrays()
+	# Fisher–Yates 同步打乱 bag 与 bag_temp
+	for i in range(bag.size() - 1, 0, -1):
+		var j := rng.randi_range(0, i)
+		var tmp_id := bag[i]
+		bag[i] = bag[j]
+		bag[j] = tmp_id
+		var tmp_t := bag_temp[i]
+		bag_temp[i] = bag_temp[j]
+		bag_temp[j] = tmp_t
 
 
 func _reset_bag_in_combat() -> void:
 	## 战斗内袋重置：次数 +1，灌 10 平庸 + 5 罪孽 + 次数发额外罪孽。
 	bag_reset_count += 1
 	_fill_starter_bag(bag_reset_count)
-	_shuffle(bag)
+	_shuffle_bag()
+
+
+func is_bag_index_temporary(index: int) -> bool:
+	if index < 0 or index >= bag_temp.size() or index >= bag.size():
+		return false
+	return bool(bag_temp[index])
+
+
+func count_temporary_in_bag() -> int:
+	var n := 0
+	for t in bag_temp:
+		if t:
+			n += 1
+	return n
+
+
+func _clear_combat_bonus_ammo() -> void:
+	## 真正战斗结束：额外罪孽与临时标记清零，袋回 10+5。
+	bag_reset_count = 0
+	_fill_starter_bag(0)
+	_shuffle_bag()
+	discard.clear()
+	discard_temp.clear()
+
+
+func _auto_reset_bag_if_empty_at_turn_start() -> bool:
+	## 玩家回合开始：袋空则自动战斗内重置（10+5+N 罪孽），便于手装；每回合至多一次（仅此处调用）。
+	## 练习/无限：清空弃牌，避免与新袋重复计数。地图 run：弃牌洗回以保留构筑，不走 starter 灌袋。
+	if not bag.is_empty():
+		return false
+	if from_map_run:
+		if needs_reshuffle_next_load or not discard.is_empty():
+			_reshuffle_discard_into_bag()
+			needs_reshuffle_next_load = false
+			_log("弹药袋已空：弃牌洗回（%d 发），可手装。" % bag.size())
+			return true
+		_log("弹药袋已空且无弃牌可洗回。")
+		return false
+	_reset_bag_in_combat()
+	discard.clear()
+	discard_temp.clear()
+	needs_reshuffle_next_load = false
+	var sin_n: int = CombatConstants.STARTER_SIN_COUNT + bag_reset_count
+	_log("弹药袋已空：自动战斗内重置（平庸 ×%d + %s ×%d，第 %d 次）。" % [
+		CombatConstants.STARTER_WHITE_COUNT, _ammo_name(selected_sin_ammo_id), sin_n, bag_reset_count
+	])
+	return true
+
+
 
 
 func choose_sin(sin_ammo_id: int) -> void:
@@ -557,13 +656,22 @@ func ammo_inventory_by_id() -> Dictionary:
 
 
 ## 弹药袋无顺序：每次从现存弹药中均匀随机抽取（数量加权=逐发随机下标），不按数组 FIFO。
+## 最近一次 _draw_random_from_bag 对应的临时标记（与返回数组等长）
+var _last_drawn_temps: Array[bool] = []
+
+
 func _draw_random_from_bag(count: int) -> Array[int]:
+	_sync_temp_arrays()
 	var drawn: Array[int] = []
+	_last_drawn_temps.clear()
 	var n: int = mini(count, bag.size())
 	for _i in n:
 		var idx: int = rng.randi_range(0, bag.size() - 1)
 		drawn.append(bag[idx])
+		_last_drawn_temps.append(bool(bag_temp[idx]) if idx < bag_temp.size() else false)
 		bag.remove_at(idx)
+		if idx < bag_temp.size():
+			bag_temp.remove_at(idx)
 	return drawn
 
 
@@ -730,12 +838,13 @@ func load_next_chamber() -> Dictionary:
 		return _complete_load_session()
 	var drawn: Array[int] = _draw_random_from_bag(1)
 	var raw_id: int = drawn[0]
+	var raw_temp: bool = bool(_last_drawn_temps[0]) if not _last_drawn_temps.is_empty() else false
 	_load_raw_ids.append(raw_id)
 	var resolved_arr: Array[int] = _resolve_black_white_with_prev([raw_id], last_load_ids)
 	var resolved: int = resolved_arr[0]
 	_load_resolved_ids.append(resolved)
 	var slot: int = magazine.chamber_at_load_port()
-	magazine.set_slot(slot, resolved)
+	magazine.set_slot(slot, resolved, raw_temp)
 	if raw_id == FireResolver.ID_BW and resolved != FireResolver.ID_BW:
 		_log("黑白子弹变形为 %s。" % _ammo_name(resolved))
 	_log("装填上弹口→仓 %d：%s。" % [slot + 1, _ammo_name(resolved)])
@@ -844,6 +953,9 @@ func _lose_ammo_exhausted() -> void:
 	lose_reason = LoseReason.AMMO_EXHAUSTED
 	_clear_all_sin_muzzle(true)
 	_reset_muzzle()
+	if not from_map_run:
+		_clear_combat_bonus_ammo()
+		magazine = Magazine.new()
 	_set_phase(Phase.LOST)
 	_log("失败：弹药耗尽（袋、弃牌与弹夹皆空，无法洗回）。")
 	_emit()
@@ -854,9 +966,10 @@ func _return_magazine_to_bag() -> void:
 	if magazine == null or magazine.is_empty():
 		return
 	var n := 0
-	for id in magazine.slots:
+	for i in magazine.slots.size():
+		var id: int = magazine.slots[i]
 		if id != Magazine.EMPTY:
-			bag.append(id)
+			_bag_append(id, magazine.is_slot_temporary(i))
 			n += 1
 	magazine.clear()
 	if n > 0:
@@ -874,16 +987,23 @@ func _lose_hp() -> void:
 	lose_reason = LoseReason.HP
 	_clear_all_sin_muzzle(true)
 	_reset_muzzle()
+	if not from_map_run:
+		_clear_combat_bonus_ammo()
+		magazine = Magazine.new()
 	_set_phase(Phase.LOST)
 	_log("失败：玩家血量归零，整局结束。")
 	_emit()
 
 
 func _reshuffle_discard_into_bag() -> void:
-	for id in discard:
-		bag.append(id)
+	_sync_temp_arrays()
+	for i in discard.size():
+		var id: int = discard[i]
+		var t: bool = bool(discard_temp[i]) if i < discard_temp.size() else false
+		_bag_append(id, t)
 	discard.clear()
-	_shuffle(bag)
+	discard_temp.clear()
+	_shuffle_bag()
 	_log("弃牌堆洗回弹药袋（%d 发）。" % bag.size())
 
 
@@ -911,21 +1031,32 @@ func fire_next_shot() -> bool:
 	if _fire_index >= _fire_queue.size():
 		_finish_fire()
 		return false
-	# 锤位空仓：无效果、不耗队列发数；推进一格；UI 不黄闪
+	# 空仓：沿转轮前进方向快跳到最近有弹格，不逐空结算
+	var skipped := 0
+	var guard := 0
+	while magazine != null and not magazine.is_empty() and guard < CombatConstants.MAGAZINE_SIZE:
+		var h: int = magazine.chamber_at_fire_port()
+		if magazine.slots[h] != Magazine.EMPTY:
+			break
+		_advance_cylinder_one_step()
+		skipped += 1
+		guard += 1
+	last_blank_skip_steps = skipped
+	if magazine == null or magazine.is_empty():
+		last_shot_was_blank = skipped > 0
+		last_fired_slot = magazine.chamber_at_fire_port() if magazine != null else -1
+		_finish_fire()
+		return false
 	var hammer: int = magazine.chamber_at_fire_port()
-	last_fired_slot = hammer
 	if magazine.slots[hammer] == Magazine.EMPTY:
 		last_shot_was_blank = true
-		_advance_cylinder_one_step()
-		_log("击发[空仓] → 无效果。")
-		_emit()
-		# 队列里还有实弹则继续；否则收束（不应出现：有实弹待发却只剩空）
-		if _fire_index >= _fire_queue.size() or magazine.is_empty():
-			_finish_fire()
-			return false
-		return true
+		last_fired_slot = hammer
+		_finish_fire()
+		return false
 
 	last_shot_was_blank = false
+	last_fired_slot = hammer
+	var shot_temp: bool = magazine.is_slot_temporary(hammer)
 	var ammo_id: int = _fire_queue[_fire_index]
 	var base_dmg: int = _fire_damages[_fire_index]
 	_consume_hammer_chamber(ammo_id)
@@ -942,7 +1073,7 @@ func fire_next_shot() -> bool:
 	base_dmg = _scale_outgoing_damage(base_dmg)
 	var dealt_total := _apply_shot_to_enemies(ammo_id, base_dmg, pierce, gas, fire, water, thunder)
 	_fire_total_damage += dealt_total
-	discard.append(ammo_id)
+	_discard_append(ammo_id, shot_temp)
 
 	# 元素枪口：本发后挂上，供后续击发附带
 	_mount_muzzle_from(flags)
@@ -1220,10 +1351,11 @@ func begin_gold_extra_load() -> bool:
 		_pending_gold_autofires = 0
 		return false
 	var drawn: Array[int] = _draw_random_from_bag(draw_n)
+	var drawn_temps: Array = _last_drawn_temps.duplicate()
 	var prev := last_load_ids.duplicate()
 	last_load_ids = drawn.duplicate()
 	var resolved := _resolve_black_white_with_prev(drawn, prev)
-	magazine.load_sequence(resolved)
+	magazine.load_sequence(resolved, drawn_temps)
 	if bag.is_empty():
 		needs_reshuffle_next_load = true
 	_pending_gold_autofires -= 1
@@ -1279,10 +1411,11 @@ func _auto_load_and_fire_once() -> bool:
 	var saved_damages: Array[int] = _fire_damages.duplicate()
 	var saved_index: int = _fire_index
 	var drawn: Array[int] = _draw_random_from_bag(draw_n)
+	var drawn_temps: Array = _last_drawn_temps.duplicate()
 	var prev := last_load_ids.duplicate()
 	last_load_ids = drawn.duplicate()
 	var resolved := _resolve_black_white_with_prev(drawn, prev)
-	magazine.load_sequence(resolved)
+	magazine.load_sequence(resolved, drawn_temps)
 	if bag.is_empty():
 		needs_reshuffle_next_load = true
 	_fire_queue = magazine.fire_order()
@@ -1293,11 +1426,15 @@ func _auto_load_and_fire_once() -> bool:
 		if alive_enemies().is_empty():
 			break
 		var hammer: int = magazine.chamber_at_fire_port()
-		if magazine.slots[hammer] == Magazine.EMPTY:
+		var skip_g := 0
+		while magazine.slots[hammer] == Magazine.EMPTY and skip_g < CombatConstants.MAGAZINE_SIZE:
 			_advance_cylinder_one_step()
+			skip_g += 1
 			if magazine.is_empty():
 				break
-			continue
+			hammer = magazine.chamber_at_fire_port()
+		if magazine.is_empty() or magazine.slots[hammer] == Magazine.EMPTY:
+			break
 		var ammo_id: int = _fire_queue[_fire_index]
 		var base_dmg: int = _fire_damages[_fire_index]
 		_consume_hammer_chamber(ammo_id)
@@ -1309,8 +1446,9 @@ func _auto_load_and_fire_once() -> bool:
 		var water := _muzzle_water or bool(flags["water"])
 		var thunder := _muzzle_thunder or bool(flags["thunder"])
 		base_dmg = _scale_outgoing_damage(base_dmg)
+		var gold_temp: bool = magazine.is_slot_temporary(hammer)
 		_fire_total_damage += _apply_shot_to_enemies(ammo_id, base_dmg, pierce, gas, fire, water, thunder)
-		discard.append(ammo_id)
+		_discard_append(ammo_id, gold_temp)
 		_mount_muzzle_from(flags)
 		_fire_index += 1
 		_remove_dead()
@@ -1377,16 +1515,19 @@ func do_unload() -> bool:
 	if not can_unload():
 		return false
 	commit_load_session_if_active()
-	var removed: Array[int] = magazine.unload_all()
+	var removed_entries: Array = magazine.unload_all_entries()
 	var had_pink := false
-	for id in removed:
-		discard.append(id)
+	for entry in removed_entries:
+		var id: int = int(entry.get("id", Magazine.EMPTY))
+		var is_temp: bool = bool(entry.get("temp", false))
+		_discard_append(id, is_temp)
 		if id == FireResolver.ID_PINK:
 			had_pink = true
+	var removed_size: int = removed_entries.size()
 	if had_pink:
 		pink_bonus += 1
 		_log("粉色弹药卸除：本局粉色伤害永久 +1（现 +%d）。" % pink_bonus)
-	_log("卸除 %d 发进入弃牌堆。" % removed.size())
+	_log("卸除 %d 发进入弃牌堆。" % removed_size)
 	if _check_end_after_player():
 		_emit()
 		return true
@@ -1460,6 +1601,8 @@ func _run_enemy_turn() -> void:
 	# 地图 Boss（非无限超级僵尸）：每怪物回合向袋塞无效弹
 	if encounter_kind == EncounterKind.BOSS and not endless_mode:
 		_inject_invalid_ammo(CombatConstants.BOSS_INVALID_PER_ENEMY_TURN, "回合末")
+	# 玩家回合开始：袋空则自动重置（练习/无限走战斗内袋重置；地图 run 洗回弃牌）
+	_auto_reset_bag_if_empty_at_turn_start()
 	# ROLL 不清空弹匣：匣内仍有弹 → 可继续 FIRE/ROLL/UNLOAD；仅空匣才要求装填
 	if magazine.is_empty():
 		_set_phase(Phase.AWAIT_LOAD)
@@ -1575,10 +1718,16 @@ func _enter_won() -> void:
 
 
 func _reset_practice_ammo_to_starter() -> void:
-	## 练习战 / 无限同场跨波：匣/弃清空；战斗内袋重置（10+5+本场重置次数发额外罪孽）；枪口全清。
+	## 练习战胜利=战斗结束：清额外罪孽与临时标记，袋回 10+5。
+	## 无限同场跨波：保留 bag_reset_count，灌 10+5+count（胜利本身不再 +1；仅袋空自动重置累加）。
 	magazine = Magazine.new()
 	discard.clear()
-	_reset_bag_in_combat()
+	discard_temp.clear()
+	if endless_mode:
+		_fill_starter_bag(bag_reset_count)
+		_shuffle_bag()
+	else:
+		_clear_combat_bonus_ammo()
 	needs_reshuffle_next_load = false
 	last_load_ids.clear()
 	_reset_fire_session()
@@ -1588,7 +1737,7 @@ func _reset_practice_ammo_to_starter() -> void:
 	_reset_load_session()
 	var mode_label := "无限模式" if endless_mode else "练习战"
 	var sin_n: int = CombatConstants.STARTER_SIN_COUNT + bag_reset_count
-	_log("%s：弹药已重置（平庸 ×%d + %s ×%d，含战斗内重置加成 ×%d）。" % [
+	_log("%s：弹药已重置（平庸 ×%d + %s ×%d，战斗内加成 ×%d）。" % [
 		mode_label, CombatConstants.STARTER_WHITE_COUNT, _ammo_name(selected_sin_ammo_id), sin_n, bag_reset_count
 	])
 
@@ -1641,7 +1790,7 @@ func pick_reward_ammo(index: int) -> bool:
 	if index < 0 or index >= reward_choices.size():
 		return false
 	var ammo_id: int = reward_choices[index]
-	bag.append(ammo_id)
+	_bag_append(ammo_id, false)
 	reward_pending = false
 	reward_resolved = true
 	_log("奖励：选择 %s 加入弹药袋（袋内 %d）。" % [_ammo_name(ammo_id), bag.size()])
@@ -1689,8 +1838,9 @@ func apply_shop_payload(payload: Dictionary) -> void:
 	## 无限模式离店：写回金币与袋（匣/弃牌不变）。
 	gold = int(payload.get("gold", gold))
 	bag.clear()
+	bag_temp.clear()
 	for x in payload.get("bag", []):
-		bag.append(int(x))
+		_bag_append(int(x), false)
 	_emit()
 
 
@@ -1846,7 +1996,7 @@ func _inject_invalid_ammo(count: int, reason: String = "") -> void:
 	if count <= 0:
 		return
 	for _i in count:
-		bag.append(CombatConstants.INVALID_AMMO_ID)
+		_bag_append(CombatConstants.INVALID_AMMO_ID, false)
 	var tag: String = reason if reason != "" else "效果"
 	_log("Boss[%s]：弹药袋 +无效弹药 ×%d（袋内 %d）。击发伤害 0。" % [tag, count, bag.size()])
 
@@ -1855,17 +2005,20 @@ func _inject_invalid_ammo(count: int, reason: String = "") -> void:
 
 func dev_add_ammo(ammo_id: int, count: int = 1) -> void:
 	for _i in count:
-		bag.append(ammo_id)
+		_bag_append(ammo_id, false)
 	_log("[开发] 弹药袋 +%d × %s（现 %d）" % [count, _ammo_name(ammo_id), bag.size()])
 	_emit()
 
 
 func dev_remove_ammo(ammo_id: int, count: int = 1) -> void:
+	_sync_temp_arrays()
 	var left := count
 	var i := 0
 	while i < bag.size() and left > 0:
 		if bag[i] == ammo_id:
 			bag.remove_at(i)
+			if i < bag_temp.size():
+				bag_temp.remove_at(i)
 			left -= 1
 		else:
 			i += 1
@@ -1876,6 +2029,7 @@ func dev_remove_ammo(ammo_id: int, count: int = 1) -> void:
 func dev_clear_bag() -> void:
 	var n: int = bag.size()
 	bag.clear()
+	bag_temp.clear()
 	_log("[开发] 清空弹药袋（移除 %d）" % n)
 	_emit()
 
