@@ -1,4 +1,4 @@
-# Project 001 — Harness（完整版 v1.3.6）
+# Project 001 — Harness（完整版 v1.3.7）
 
 ## 一、项目参数（锁定）
 
@@ -123,6 +123,7 @@ Bot 每次遇到需决策事项时，先自评重要度，再按对应时机行�
 1. Bot 生成录屏/GIF（尽力而为；做不到则提供 GitHub Pages 试玩链接）。
 2. 你亲自试玩网页版。
 3. 两者通过后任务完成，进入 commit 流程。
+4. **涉及 UI 中文的任务**：验收前必须跑 `bash tools/check_ui_charset.sh`（全绿）；每次文本改动后都要测试文本库是否覆盖；改过字体还须重导入后再截图/导出。
 
 ### 5.4 Commit 规则
 - 每次任务完成时申请一次 commit（一般重要级）。
@@ -154,10 +155,14 @@ Bot 每次遇到需决策事项时，先自评重要度，再按对应时机行�
 - 主菜单 / 地图 / 战斗 UI 一律读 `GameVersion.STRING` 显示 `v%s`，禁止再写 `const VERSION`。
 - 提交前可跑 `tools/check_version.sh`；GUT `test_game_version.gd` 也会卡住重复定义。
 
-**UI 中文与字体子集**：
+**UI 中文与字体子集**（工作流硬性要求）：
+- **每次文本改动后都要测试文本库是否覆盖**（老大原话）：改玩家可见中文后，验收/截图/发版前必须跑文本库覆盖检查，不得跳过。
 - 玩家可见中文（`data/*.json`、场景 `text=`、脚本字符串）必须被 `tools/ui_charset.txt` 与 `assets/fonts/NotoSansSC-UI.ttf` 覆盖。
-- **凡改动玩家可见中文文案后**：必须 `python3 tools/collect_ui_charset.py` + `bash tools/rebuild_ui_font.sh`（或至少 `bash tools/check_ui_charset.sh` 全绿）。
-- **禁止带着缺字推送**；乱码多半是子集缺字形，不是 JSON 编码坏了。
+- **凡改动玩家可见中文文案后**的固定步骤：
+  1. `python3 tools/collect_ui_charset.py` + `bash tools/rebuild_ui_font.sh`（或至少 `bash tools/check_ui_charset.sh` 全绿）。
+  2. 若改过/重建了字体：清 `.godot/imported/NotoSansSC-UI.ttf-*` 后 `godot --headless --path . --import` 强制重导入，再截图或 Web 导出（源 TTF OK 但导入缓存旧仍会豆腐块）。
+  3. `check_ui_charset` 也会校验导入缓存相对源 TTF 的 mtime/体积；缓存过期 → 非零失败。
+- **禁止带着缺字推送**；乱码多半是子集缺字形或导入缓存过期，不是 JSON 编码坏了。
 - CI 会跑 `tools/check_ui_charset.sh`；本地发版前也要跑。
 
 **Web 导出约束**：
@@ -178,6 +183,10 @@ Bot 每次遇到需决策事项时，先自评重要度，再按对应时机行�
 ---
 
 ## 修改日志
+
+### v1.3.7（2026-10-27 Asia/Shanghai）
+- 七、技术备忘 / UI 中文：把「每次文本改动后都要测试文本库是否覆盖」写死为工作流硬性要求；改字体后须清导入缓存并重导入再截图/导出；`check_ui_charset` 校验 `.godot/imported` 缓存不过期。
+- 五、5.3 验收：涉及 UI 中文的任务，验收前必须跑文本库覆盖检查。
 
 ### v1.3.6（2026-10-23 Asia/Shanghai）
 - 3.1.2：女朋友微信只由小狗管家直接接收；本助手不收不转。

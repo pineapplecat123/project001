@@ -4,7 +4,7 @@
     {
       "id": 1,
       "name": "平民",
-      "hp": 10,
+      "hp": 20,
       "atk": 1,
       "mobility": 1,
       "special": "无",
@@ -17,7 +17,7 @@
     {
       "id": 2,
       "name": "强盗",
-      "hp": 15,
+      "hp": 30,
       "atk": 2,
       "mobility": 1,
       "special": "无",
@@ -30,7 +30,7 @@
     {
       "id": 3,
       "name": "熊",
-      "hp": 20,
+      "hp": 40,
       "atk": 3,
       "mobility": 1,
       "special": "无",
@@ -69,11 +69,13 @@
     {
       "id": 6,
       "name": "僵尸",
-      "hp": 40,
+      "hp": 50,
       "atk": 1,
       "mobility": 1,
       "special": "无",
-      "tags": [],
+      "tags": [
+        "僵尸"
+      ],
       "type": "小怪",
       "enabled_in_combat": false
     },
@@ -83,8 +85,10 @@
       "hp": 100,
       "atk": 1,
       "mobility": 1,
-      "special": "每回合在自己后面召唤一个僵尸",
-      "tags": [],
+      "special": "每回合在面前生成1个僵尸，没有空间则不生成",
+      "tags": [
+        "僵尸"
+      ],
       "type": "Boss",
       "enabled_in_combat": false
     }

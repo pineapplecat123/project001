@@ -4,6 +4,7 @@
 Fails non-zero when:
   - tools/ui_charset.txt is stale vs fresh collect from data/scenes/scripts
   - assets/fonts/NotoSansSC-UI.ttf is missing any required glyph
+  - .godot/imported/NotoSansSC-UI.ttf-*.fontdata exists but is older/smaller than source TTF
 
 Usage:
   python3 tools/check_ui_charset.py
@@ -117,6 +118,43 @@ def main() -> int:
         )
         print("  Fix: bash tools/rebuild_ui_font.sh", file=sys.stderr)
         errors += 1
+
+    # Stale Godot import cache can still show tofu even when source TTF is OK.
+    import_dir = ROOT / ".godot" / "imported"
+    if import_dir.is_dir():
+        caches = sorted(import_dir.glob("NotoSansSC-UI.ttf-*.fontdata"))
+        if caches:
+            src_mtime = FONT_PATH.stat().st_mtime
+            src_size = FONT_PATH.stat().st_size
+            for cache in caches:
+                st = cache.stat()
+                # fontdata slightly larger than source TTF is normal; flag clear lag/shrink.
+                stale_mtime = st.st_mtime + 1.0 < src_mtime  # allow 1s clock skew
+                too_small = st.st_size + 4096 < src_size  # more than ~4KB smaller than source
+                if stale_mtime or too_small:
+                    print(
+                        "ERROR: Godot import cache for NotoSansSC-UI looks stale vs source TTF.",
+                        file=sys.stderr,
+                    )
+                    print(
+                        f"  source: {FONT_PATH.name} size={src_size} mtime={src_mtime:.0f}",
+                        file=sys.stderr,
+                    )
+                    print(
+                        f"  cache:  {cache.name} size={st.st_size} mtime={st.st_mtime:.0f}",
+                        file=sys.stderr,
+                    )
+                    print(
+                        "  Fix: rm .godot/imported/NotoSansSC-UI.ttf-* && godot --headless --path . --import",
+                        file=sys.stderr,
+                    )
+                    errors += 1
+        else:
+            print(
+                "WARN: no .godot/imported/NotoSansSC-UI.ttf-*.fontdata yet "
+                "(run godot --import before screenshots / Web export).",
+                file=sys.stderr,
+            )
 
     if errors:
         return 1

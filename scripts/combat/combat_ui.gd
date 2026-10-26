@@ -59,6 +59,9 @@ var _detail_from_long_press: bool = false
 var _ammo_detail_title: Label = null
 var _bag_inv_fingerprint: String = ""
 var _bag_physics: BagPhysicsBox = null
+var _sin_panel: PanelContainer = null
+var _sin_pick_open: bool = false
+var _pending_start_endless: bool = false
 var _bag_refreshing: bool = false
 var _firing: bool = false
 var _rolling: bool = false
@@ -99,6 +102,7 @@ var _btn_shop_leave: Button = null
 @onready var fire_marker: Label = %FireMarker
 @onready var log_box: RichTextLabel = %LogBox
 @onready var btn_load: Button = %BtnLoad
+var btn_manual_load: Button = null
 @onready var btn_fire: Button = %BtnFire
 @onready var btn_roll: Button = %BtnRoll
 @onready var btn_unload: Button = %BtnUnload
@@ -128,6 +132,7 @@ func _ready() -> void:
 	state.log_line.connect(_on_log)
 	state.enemy_damaged.connect(_on_enemy_damaged)
 	btn_load.pressed.connect(_on_load)
+	# btn_manual_load wired in _ensure_square_action_buttons
 	btn_fire.pressed.connect(_on_fire)
 	btn_roll.pressed.connect(_on_roll)
 	btn_unload.pressed.connect(_on_unload)
@@ -149,6 +154,7 @@ func _ready() -> void:
 	_build_wheel_chambers()
 	_build_ammo_detail_panel()
 	_build_endless_shop_panel()
+	_build_sin_pick_panel()
 	_wire_dev_buttons()
 	bag_panel.visible = true
 	dev_panel.visible = false
@@ -160,13 +166,14 @@ func _ready() -> void:
 	if RunState.is_in_map_run() and RunState.pending_combat_node_id >= 0:
 		state.start_from_run(RunState.combat_snapshot())
 		btn_menu.text = "放弃回地图"
+		state.pace_after_fire = true
+		_refresh()
 	else:
-		var endless := RunState.consume_pending_endless()
-		state.start_graybox(0, endless)
+		_pending_start_endless = RunState.consume_pending_endless()
 		btn_menu.text = "返回主菜单"
 		btn_next_wave.text = "下一波 NEXT"
-	state.pace_after_fire = true
-	_refresh()
+		state.pace_after_fire = true
+		_open_sin_pick()
 
 
 func _style_overlay_panels() -> void:
@@ -389,8 +396,14 @@ func _ensure_square_action_buttons(combat_block: HBoxContainer) -> void:
 				break
 		action_col.add_child(grid)
 		action_col.move_child(grid, insert_at)
+	grid.columns = 3
+	if btn_manual_load == null:
+		btn_manual_load = Button.new()
+		btn_manual_load.name = "BtnManualLoad"
+		btn_manual_load.pressed.connect(_on_manual_load)
 	var specs: Array = [
 		[btn_load, "装弹"],
+		[btn_manual_load, "手装"],
 		[btn_fire, "射击"],
 		[btn_roll, "ROLL"],
 		[btn_unload, "卸除"],
@@ -404,7 +417,12 @@ func _ensure_square_action_buttons(combat_block: HBoxContainer) -> void:
 		btn.add_theme_font_size_override("font_size", 18)
 		btn.clip_text = false
 		_style_square_action_button(btn)
-		if btn.get_parent() != grid:
+		if btn.get_parent() == grid:
+			pass
+		elif btn.get_parent() == null:
+			# runtime-created btn (e.g. manual load) has no parent yet; cannot reparent
+			grid.add_child(btn)
+		else:
 			btn.reparent(grid)
 	var hint_lab: Label = get_node_or_null("%HintLabel") as Label
 	if hint_lab != null and hint_lab.get_parent() == action_col:
@@ -581,7 +599,7 @@ func _ensure_long_press_timer() -> void:
 func _on_dimmer_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 		# 奖励 / 无限商店必须主动操作，点遮罩不关闭
-		if _reward_open or _shop_open:
+		if _reward_open or _shop_open or _sin_pick_open:
 			return
 		if _detail_open and not _detail_from_hover:
 			_hide_ammo_detail()
@@ -807,6 +825,12 @@ func _ammo_colors(ammo_id: int) -> Dictionary:
 			return {"bg": Color(0.35, 0.7, 0.95), "fg": Color(0.02, 0.08, 0.15)}
 		FireResolver.ID_THUNDER:
 			return {"bg": Color(0.85, 0.75, 0.2), "fg": Color(0.12, 0.1, 0.0)}
+		FireResolver.ID_WRATH:
+			return {"bg": Color(0.75, 0.12, 0.12), "fg": Color(1.0, 0.92, 0.9)}
+		FireResolver.ID_PRIDE:
+			return {"bg": Color(0.55, 0.35, 0.85), "fg": Color(0.98, 0.95, 1.0)}
+		FireResolver.ID_GREED:
+			return {"bg": Color(0.2, 0.65, 0.35), "fg": Color(0.95, 1.0, 0.95)}
 		CombatConstants.INVALID_AMMO_ID:
 			return {"bg": Color(0.28, 0.28, 0.3), "fg": Color(0.95, 0.55, 0.55)}
 		_:
@@ -814,7 +838,7 @@ func _ammo_colors(ammo_id: int) -> Dictionary:
 
 
 func _busy() -> bool:
-	return _firing or _rolling or _loading or _wheel_animating
+	return _firing or _rolling or _loading or _wheel_animating or _sin_pick_open
 
 
 func _on_load() -> void:
@@ -866,6 +890,64 @@ func _run_load_sequence() -> void:
 		await _run_shared_cylinder_spin()
 	else:
 		_apply_disk_rotation(float(state.magazine.start_index))
+	_loading = false
+	_refresh()
+
+
+func _on_manual_load() -> void:
+	if _busy():
+		return
+	if not state.can_manual_load():
+		if state.bag.is_empty():
+			state._log("手装：弹药袋已空。")
+		elif state.is_busy_loading() and state.magazine != null and state.magazine.loaded_count() >= CombatConstants.MAGAZINE_SIZE:
+			state._log("手装：弹匣已满。")
+		else:
+			state._log("手装：当前无法装填。")
+		_refresh()
+		return
+	_run_manual_load_one()
+
+
+func _run_manual_load_one() -> void:
+	## 与装弹相同路径，但只装 1 发后停（会话可继续手装）。
+	_loading = true
+	if not state.is_busy_loading():
+		if not state.begin_load():
+			_loading = false
+			_refresh()
+			return
+		_apply_disk_rotation(float(state.magazine.start_index))
+		_refresh_mag_contents()
+		_refresh_hud_only()
+	var before_steps: float = _wheel_visual_steps
+	var result: Dictionary = state.load_next_chamber()
+	if not bool(result.get("ok", false)):
+		_loading = false
+		_refresh()
+		return
+	_refresh_mag_contents()
+	_refresh_hud_only()
+	if LOAD_INSERT_PAUSE > 0.0:
+		await get_tree().create_timer(LOAD_INSERT_PAUSE).timeout
+	var done: bool = bool(result.get("done", false))
+	if not done:
+		var rotate_to: float = float(result.get("rotate_to", state.magazine.start_index))
+		var target: float = rotate_to
+		while target + 0.001 < before_steps:
+			target += float(CombatConstants.MAGAZINE_SIZE)
+		if absf(target - before_steps) < 0.001:
+			target = before_steps + 1.0
+		_wheel_animating = true
+		state.apply_load_rotate()
+		await _animate_disk_to(target, STEP_ROT_DURATION)
+		_refresh_mag_contents()
+	else:
+		# 装满结束：与整匣装相同，可随机转
+		if bool(result.get("needs_spin", false)) and state.can_start_roll():
+			await _run_shared_cylinder_spin()
+		else:
+			_apply_disk_rotation(float(state.magazine.start_index))
 	_loading = false
 	_refresh()
 
@@ -1066,8 +1148,8 @@ func _toggle_dev() -> void:
 
 
 func _update_dimmer() -> void:
-	# 悬停/长按弹药详情不盖遮罩；开发面板 / 奖励 / 无限商店用遮罩
-	dimmer.visible = _dev_open or _reward_open or _shop_open
+	# 悬停/长按弹药详情不盖遮罩；开发面板 / 奖励 / 无限商店 / 罪孽选择用遮罩
+	dimmer.visible = _dev_open or _reward_open or _shop_open or _sin_pick_open
 
 
 func _set_reward_open(open: bool) -> void:
@@ -1799,6 +1881,91 @@ func _show_ammo_detail(ammo_id: int, cell: Control = null, from_hover: bool = fa
 	_update_dimmer()
 
 
+func _build_sin_pick_panel() -> void:
+	if _sin_panel != null:
+		return
+	_sin_panel = PanelContainer.new()
+	_sin_panel.name = "SinPickPanel"
+	_sin_panel.visible = false
+	_sin_panel.z_index = 14
+	_sin_panel.set_anchors_preset(Control.PRESET_CENTER)
+	_sin_panel.offset_left = -320.0
+	_sin_panel.offset_top = -220.0
+	_sin_panel.offset_right = 320.0
+	_sin_panel.offset_bottom = 220.0
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.1, 0.09, 0.14, 0.98)
+	style.set_border_width_all(2)
+	style.border_color = Color(0.85, 0.55, 0.35, 0.95)
+	style.set_corner_radius_all(12)
+	_sin_panel.add_theme_stylebox_override("panel", style)
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 18)
+	margin.add_theme_constant_override("margin_right", 18)
+	margin.add_theme_constant_override("margin_top", 16)
+	margin.add_theme_constant_override("margin_bottom", 16)
+	_sin_panel.add_child(margin)
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 12)
+	margin.add_child(vbox)
+	var title := Label.new()
+	title.text = "选择你的罪孽"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 26)
+	title.add_theme_color_override("font_color", Color(1.0, 0.85, 0.45))
+	vbox.add_child(title)
+	var hint := Label.new()
+	hint.text = "开局弹药袋：平庸子弹 ×10 + 所选罪孽弹 ×5"
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	hint.add_theme_font_size_override("font_size", 14)
+	hint.add_theme_color_override("font_color", Color(0.8, 0.82, 0.9))
+	vbox.add_child(hint)
+	var row := HBoxContainer.new()
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("separation", 12)
+	vbox.add_child(row)
+	_sin_add_choice_btn(row, "愤怒", "伤3 · 枪口愤怒叠伤\n装3自伤6", FireResolver.ID_WRATH, Color(0.75, 0.18, 0.18))
+	_sin_add_choice_btn(row, "傲慢", "伤2 · 枪口傲慢整局\n装3拉近敌人", FireResolver.ID_PRIDE, Color(0.55, 0.35, 0.85))
+	_sin_add_choice_btn(row, "贪婪", "伤2 · 枪口贪婪掉金\n装3金币-6", FireResolver.ID_GREED, Color(0.2, 0.65, 0.35))
+	add_child(_sin_panel)
+
+
+func _sin_add_choice_btn(parent: Control, title: String, blurb: String, ammo_id: int, accent: Color) -> void:
+	var b := Button.new()
+	b.custom_minimum_size = Vector2(170, 150)
+	b.text = "%s\n%s" % [title, blurb]
+	b.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(accent.r * 0.35, accent.g * 0.35, accent.b * 0.35, 0.95)
+	sb.set_border_width_all(2)
+	sb.border_color = accent
+	sb.set_corner_radius_all(10)
+	b.add_theme_stylebox_override("normal", sb)
+	var sb2 := sb.duplicate()
+	sb2.bg_color = Color(accent.r * 0.5, accent.g * 0.5, accent.b * 0.5, 0.98)
+	b.add_theme_stylebox_override("hover", sb2)
+	b.pressed.connect(func(id := ammo_id): _on_sin_picked(id))
+	parent.add_child(b)
+
+
+func _open_sin_pick() -> void:
+	_sin_pick_open = true
+	if _sin_panel != null:
+		_sin_panel.visible = true
+	_update_dimmer()
+
+
+func _on_sin_picked(sin_ammo_id: int) -> void:
+	_sin_pick_open = false
+	if _sin_panel != null:
+		_sin_panel.visible = false
+	_update_dimmer()
+	state.start_graybox(0, _pending_start_endless, sin_ammo_id)
+	state.pace_after_fire = true
+	_refresh()
+
+
 func _wire_dev_buttons() -> void:
 	%DevClose.pressed.connect(func(): _toggle_dev())
 	_rebuild_dev_tool_body()
@@ -1926,6 +2093,8 @@ func _refresh() -> void:
 	turn_label.add_theme_color_override("font_color", COL_TURN)
 	var busy := _busy() or state.is_busy_firing() or state.is_busy_loading()
 	btn_load.disabled = busy or not state.can_load()
+	if btn_manual_load != null:
+		btn_manual_load.disabled = busy or not state.can_manual_load()
 	btn_fire.disabled = busy or not state.can_fire()
 	btn_roll.disabled = busy or not state.can_start_roll()
 	btn_unload.disabled = busy or not state.can_unload()
@@ -2061,6 +2230,8 @@ func _refresh_hud_only() -> void:
 	turn_label.add_theme_color_override("font_color", COL_TURN)
 	var busy := _busy() or state.is_busy_firing() or state.is_busy_loading()
 	btn_load.disabled = true if (_loading or _firing or _rolling or _wheel_animating) else (busy or not state.can_load())
+	if btn_manual_load != null:
+		btn_manual_load.disabled = true if (_loading or _firing or _rolling or _wheel_animating) else (busy or not state.can_manual_load())
 	btn_fire.disabled = true if (_loading or _firing or _rolling or _wheel_animating) else (busy or not state.can_fire())
 	btn_roll.disabled = true if (_loading or _firing or _rolling or _wheel_animating) else (busy or not state.can_start_roll())
 	btn_unload.disabled = true if (_loading or _firing or _rolling or _wheel_animating) else (busy or not state.can_unload())

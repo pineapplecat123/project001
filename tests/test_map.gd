@@ -36,7 +36,7 @@ func test_run_begin_available_are_first_branch() -> void:
 	assert_eq(avail.size(), 2)
 	assert_true(avail.has(1))
 	assert_true(avail.has(2))
-	assert_eq(RunState.bag.size(), CombatConstants.STARTER_WHITE_COUNT)
+	assert_eq(RunState.bag.size(), CombatConstants.STARTER_BAG_TOTAL)
 	assert_eq(RunState.gold, 0)
 
 

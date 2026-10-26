@@ -1,3 +1,10 @@
+## 2026-10-27 — 罪孽系统 + 手装 + 字体缓存（v0.2.31）
+
+- 任务：开局选罪孽、愤怒/傲慢/贪婪效果、手装、敌人表；修「罪孽/愤怒」等豆腐块；harness 写死每次文本改动后测文本库覆盖。
+- 改动：战斗开局罪孽选择；袋 10 平庸+5 罪孽；枪口/装 3 效果；手装按钮；僵尸 HP50 / 超僵面前召唤；重建 NotoSansSC-UI 并强制重导入；`check_ui_charset` 校验 `.godot/imported` 缓存；harness v1.3.7。
+- 自测：`check_ui_charset.sh` OK；GUT 全绿；截图 `docs/shots/13_sin_pick.png` / `14_sin_bag_physics_crop.png` / `15_sin_muzzle.png` 无豆腐。
+- 状态：老大指示修好即推送（2026-10-27 Asia/Shanghai），已 push main。
+
 
 
 ## 2026-10-24 — 无限模式（v0.2.25）

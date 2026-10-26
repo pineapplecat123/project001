@@ -9,8 +9,10 @@ const WHITE_AMMO_ID := 1
 const CIVILIAN_ENEMY_ID := 1
 const ZOMBIE_ENEMY_ID := 6
 const SUPER_ZOMBIE_ENEMY_ID := 7
-## 灰盒开局弹药袋：若干发白色（足够打完平民并演示抽弃洗）。
-const STARTER_WHITE_COUNT := 12
+## 灰盒开局：平庸弹 + 所选罪孽弹。
+const STARTER_WHITE_COUNT := 10
+const STARTER_SIN_COUNT := 5
+const STARTER_BAG_TOTAL := STARTER_WHITE_COUNT + STARTER_SIN_COUNT
 
 ## 战斗胜利奖励（灰盒）
 const REWARD_BASE_GOLD := 10

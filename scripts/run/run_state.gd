@@ -26,6 +26,8 @@ var run_finished: bool = false
 var last_message: String = ""
 ## 主菜单「无限模式」进入战斗时置 true；战斗读取后清零。
 var pending_endless: bool = false
+## 地图 run 所选罪孽弹 id；begin_run 时灌入 10+5。
+var selected_sin_ammo_id: int = 16
 
 
 func is_in_map_run() -> bool:
@@ -60,8 +62,7 @@ func begin_run(seed_value: int = 0, force_placeholder_kind: String = "") -> void
 		run_seed = randi()
 	gold = 0
 	bag.clear()
-	for _i in CombatConstants.STARTER_WHITE_COUNT:
-		bag.append(CombatConstants.WHITE_AMMO_ID)
+	_fill_run_starter_bag()
 	player_max_hp = CombatConstants.PLAYER_MAX_HP
 	player_hp = player_max_hp
 	pink_bonus = 0
@@ -281,3 +282,17 @@ func _copy_int_array(src) -> Array[int]:
 	for x in src:
 		out.append(int(x))
 	return out
+
+
+func set_selected_sin(sin_ammo_id: int) -> void:
+	if sin_ammo_id not in [16, 17, 18]:
+		sin_ammo_id = 16
+	selected_sin_ammo_id = sin_ammo_id
+
+
+func _fill_run_starter_bag() -> void:
+	bag.clear()
+	for _i in CombatConstants.STARTER_WHITE_COUNT:
+		bag.append(CombatConstants.WHITE_AMMO_ID)
+	for _i in CombatConstants.STARTER_SIN_COUNT:
+		bag.append(selected_sin_ammo_id)

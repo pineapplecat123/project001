@@ -3,14 +3,14 @@
   "items": [
     {
       "id": 1,
-      "name": "白色子弹",
+      "name": "平庸子弹",
       "rarity": null,
       "base_damage": 3,
       "base_damage_mode": "fixed",
-      "special": "常规弹药，无特殊效果。",
+      "special": "常规平庸弹药，基础伤害3。",
       "tags": [],
       "enabled_in_combat": true,
-      "blurb": "常规"
+      "blurb": "常规平庸"
     },
     {
       "id": 2,
@@ -165,6 +165,45 @@
       "tags": [],
       "enabled_in_combat": true,
       "blurb": "挂枪口电；湿敌相邻传导"
+    },
+    {
+      "id": 16,
+      "name": "愤怒子弹",
+      "rarity": null,
+      "base_damage": 3,
+      "base_damage_mode": "fixed",
+      "special": "基础伤害3。每发射1发，枪口+1层【愤怒】（回合结束清除）。枪口每层使造成伤害+100%（×(1+层)）。一次装填恰好3发愤怒时，对玩家造成6点伤害。",
+      "tags": [
+        "罪孽"
+      ],
+      "enabled_in_combat": true,
+      "blurb": "枪口愤怒；装3自伤6"
+    },
+    {
+      "id": 17,
+      "name": "傲慢子弹",
+      "rarity": null,
+      "base_damage": 2,
+      "base_damage_mode": "fixed",
+      "special": "基础伤害2。每发射1发，枪口+1层【傲慢】（整局保留）。每层使造成伤害与受到攻击伤害均+25%。一次装填恰好3发傲慢时，将敌人拉到玩家面前。",
+      "tags": [
+        "罪孽"
+      ],
+      "enabled_in_combat": true,
+      "blurb": "枪口傲慢；装3拉近"
+    },
+    {
+      "id": 18,
+      "name": "贪婪子弹",
+      "rarity": null,
+      "base_damage": 2,
+      "base_damage_mode": "fixed",
+      "special": "基础伤害2。每发射1发，枪口+1层【贪婪】（回合结束清除）。敌人受伤时每层30%概率掉落等同该次伤害的金币。一次装填恰好3发贪婪时，金币-6（可负）。",
+      "tags": [
+        "罪孽"
+      ],
+      "enabled_in_combat": true,
+      "blurb": "枪口贪婪；装3扣金"
     }
   ]
 }

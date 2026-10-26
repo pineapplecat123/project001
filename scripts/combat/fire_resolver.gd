@@ -20,6 +20,9 @@ const ID_GAS := 12
 const ID_FIRE := 13
 const ID_WATER := 14
 const ID_THUNDER := 15
+const ID_WRATH := 16  ## 愤怒
+const ID_PRIDE := 17  ## 傲慢
+const ID_GREED := 18  ## 贪婪
 
 
 static func count_by_id(order: Array[int]) -> Dictionary:
@@ -114,6 +117,10 @@ static func base_damage_for(ammo_id: int, order: Array[int], index: int, pink_bo
 			return 1
 		ID_WATER:
 			return 2
+		ID_WRATH:
+			return 3
+		ID_PRIDE, ID_GREED:
+			return 2
 		_:
 			return 0
 
@@ -157,6 +164,9 @@ static func inherits_from(ammo_id: int) -> Dictionary:
 		"fire": ammo_id == ID_FIRE,
 		"water": ammo_id == ID_WATER,
 		"thunder": ammo_id == ID_THUNDER,
+		"wrath": ammo_id == ID_WRATH,
+		"pride": ammo_id == ID_PRIDE,
+		"greed": ammo_id == ID_GREED,
 	}
 
 

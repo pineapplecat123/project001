@@ -76,6 +76,12 @@ var _muzzle_gas: bool = false
 var _muzzle_fire: bool = false
 var _muzzle_water: bool = false
 var _muzzle_thunder: bool = false
+## 罪孽枪口层数：愤怒/贪婪回合末清；傲慢整局保留。
+var _muzzle_wrath: int = 0
+var _muzzle_pride: int = 0
+var _muzzle_greed: int = 0
+## 本局所选罪孽弹药 id（愤怒/傲慢/贪婪之一）
+var selected_sin_ammo_id: int = FireResolver.ID_WRATH
 var _pending_gold_autofires: int = 0
 ## UI 逐步表现：为 true 时整匣结束后不立刻跑金色额外轮/怪回合，由 UI 消费。
 var pace_after_fire: bool = false
@@ -100,7 +106,7 @@ func _init(seed_value: int = 0) -> void:
 		rng.randomize()
 
 
-func start_graybox(seed_value: int = 0, endless: bool = false) -> void:
+func start_graybox(seed_value: int = 0, endless: bool = false, sin_ammo_id: int = FireResolver.ID_WRATH) -> void:
 	if seed_value != 0:
 		rng.seed = seed_value
 	BulletEffectRegistry.ensure_defaults()
@@ -108,8 +114,8 @@ func start_graybox(seed_value: int = 0, endless: bool = false) -> void:
 	player_hp = player_max_hp
 	bag.clear()
 	discard.clear()
-	for _i in CombatConstants.STARTER_WHITE_COUNT:
-		bag.append(CombatConstants.WHITE_AMMO_ID)
+	_apply_sin_choice(sin_ammo_id, false)
+	_fill_starter_bag()
 	_shuffle(bag)
 	magazine = Magazine.new()
 	enemies.clear()
@@ -140,10 +146,12 @@ func start_graybox(seed_value: int = 0, endless: bool = false) -> void:
 		_spawn_wave_enemies()
 	else:
 		_spawn_wave_enemies([CombatConstants.CIVILIAN_ENEMY_ID])
+	_clear_all_sin_muzzle(true)
 	_set_phase(Phase.AWAIT_LOAD)
 	var mode_label := "无限模式" if endless_mode else "练习战斗"
-	_log("%s：白色弹药 ×%d · 第 %d 波。（可用开发者工具加入其它弹药）" % [
-		mode_label, CombatConstants.STARTER_WHITE_COUNT, wave_index
+	_log("%s：平庸 ×%d + %s ×%d · 第 %d 波。" % [
+		mode_label, CombatConstants.STARTER_WHITE_COUNT,
+		_ammo_name(selected_sin_ammo_id), CombatConstants.STARTER_SIN_COUNT, wave_index
 	])
 	_emit()
 
@@ -166,8 +174,7 @@ func start_from_run(payload: Dictionary, seed_value: int = 0) -> void:
 	for x in payload.get("bag", []):
 		bag.append(int(x))
 	if bag.is_empty():
-		for _i in CombatConstants.STARTER_WHITE_COUNT:
-			bag.append(CombatConstants.WHITE_AMMO_ID)
+		_fill_starter_bag()
 	discard.clear()
 	magazine = Magazine.new()
 	enemies.clear()
@@ -246,6 +253,12 @@ func muzzle_status_parts() -> PackedStringArray:
 		parts.append("水")
 	if _muzzle_thunder:
 		parts.append("雷")
+	if _muzzle_wrath > 0:
+		parts.append("愤怒×%d" % _muzzle_wrath)
+	if _muzzle_pride > 0:
+		parts.append("傲慢×%d" % _muzzle_pride)
+	if _muzzle_greed > 0:
+		parts.append("贪婪×%d" % _muzzle_greed)
 	return parts
 
 
@@ -257,7 +270,7 @@ func muzzle_status_text() -> String:
 
 
 func _reset_muzzle() -> void:
-	## 回合结束重置枪口：状态弹挂上的效果本回合内持续附带到后续击发。
+	## 射击收束时清元素枪口；罪孽层数另管（愤怒/贪婪回合末，傲慢整局）。
 	_muzzle_pierce = false
 	_muzzle_gas = false
 	_muzzle_fire = false
@@ -265,8 +278,73 @@ func _reset_muzzle() -> void:
 	_muzzle_thunder = false
 
 
+func _clear_turn_sin_muzzle() -> void:
+	## 怪物回合结束：清愤怒与贪婪；傲慢保留。
+	if _muzzle_wrath > 0 or _muzzle_greed > 0:
+		_log("回合末：枪口愤怒/贪婪清除（傲慢×%d 保留）。" % _muzzle_pride)
+	_muzzle_wrath = 0
+	_muzzle_greed = 0
+
+
+func _clear_all_sin_muzzle(include_pride: bool = false) -> void:
+	_muzzle_wrath = 0
+	_muzzle_greed = 0
+	if include_pride:
+		_muzzle_pride = 0
+
+
+func _apply_sin_choice(sin_ammo_id: int, refill_bag: bool = true) -> void:
+	if sin_ammo_id != FireResolver.ID_WRATH and sin_ammo_id != FireResolver.ID_PRIDE and sin_ammo_id != FireResolver.ID_GREED:
+		sin_ammo_id = FireResolver.ID_WRATH
+	selected_sin_ammo_id = sin_ammo_id
+	if refill_bag:
+		_fill_starter_bag()
+		_shuffle(bag)
+		_emit()
+
+
+func _fill_starter_bag() -> void:
+	bag.clear()
+	for _i in CombatConstants.STARTER_WHITE_COUNT:
+		bag.append(CombatConstants.WHITE_AMMO_ID)
+	for _i in CombatConstants.STARTER_SIN_COUNT:
+		bag.append(selected_sin_ammo_id)
+
+
+func choose_sin(sin_ammo_id: int) -> void:
+	## UI：开局选定罪孽后灌入 10 平庸 + 5 罪孽。
+	_apply_sin_choice(sin_ammo_id, true)
+	_log("选定罪孽：%s。弹药袋：平庸 ×%d + %s ×%d。" % [
+		_ammo_name(selected_sin_ammo_id), CombatConstants.STARTER_WHITE_COUNT,
+		_ammo_name(selected_sin_ammo_id), CombatConstants.STARTER_SIN_COUNT
+	])
+
+
+func _outgoing_sin_multiplier() -> float:
+	## 愤怒：每层 +100% → ×(1+stacks)；傲慢：每层 +25% → ×(1+0.25*stacks)；两者相乘。
+	var m := 1.0
+	if _muzzle_wrath > 0:
+		m *= float(1 + _muzzle_wrath)
+	if _muzzle_pride > 0:
+		m *= 1.0 + 0.25 * float(_muzzle_pride)
+	return m
+
+
+func _incoming_pride_multiplier() -> float:
+	if _muzzle_pride <= 0:
+		return 1.0
+	return 1.0 + 0.25 * float(_muzzle_pride)
+
+
+func _scale_outgoing_damage(raw: int) -> int:
+	if raw <= 0:
+		return 0
+	var scaled: int = int(floor(float(raw) * _outgoing_sin_multiplier() + 0.0001))
+	return maxi(scaled, 0)
+
+
 func _mount_muzzle_from(flags: Dictionary) -> void:
-	## 射击过的状态效果挂到枪口（累积，不覆盖其它已挂效果）。
+	## 元素枪口：射击后挂上，本回合后续击发附带。
 	if bool(flags.get("pierce", false)):
 		_muzzle_pierce = true
 	if bool(flags.get("gas", false)):
@@ -277,6 +355,68 @@ func _mount_muzzle_from(flags: Dictionary) -> void:
 		_muzzle_water = true
 	if bool(flags.get("thunder", false)):
 		_muzzle_thunder = true
+
+
+func _mount_sin_muzzle_from(flags: Dictionary) -> void:
+	## 罪孽层在本发结算前叠加，使本发即享受加成。
+	if bool(flags.get("wrath", false)):
+		_muzzle_wrath += 1
+		_log("  → 枪口【愤怒】+1（现 %d）" % _muzzle_wrath)
+	if bool(flags.get("pride", false)):
+		_muzzle_pride += 1
+		_log("  → 枪口【傲慢】+1（现 %d，整局）" % _muzzle_pride)
+	if bool(flags.get("greed", false)):
+		_muzzle_greed += 1
+		_log("  → 枪口【贪婪】+1（现 %d）" % _muzzle_greed)
+
+
+func _count_ammo_in(ids: Array, ammo_id: int) -> int:
+	var n := 0
+	for x in ids:
+		if int(x) == ammo_id:
+			n += 1
+	return n
+
+
+func _resolve_sin_pack_on_load(loaded: Array) -> void:
+	## 一次装填恰好 3 发同种罪孽 → 触发负面。在装填完成时结算。
+	var wrath_n := _count_ammo_in(loaded, FireResolver.ID_WRATH)
+	var pride_n := _count_ammo_in(loaded, FireResolver.ID_PRIDE)
+	var greed_n := _count_ammo_in(loaded, FireResolver.ID_GREED)
+	if wrath_n == 3:
+		player_hp = maxi(0, player_hp - 6)
+		wave_took_damage = true
+		_log("罪孽[愤怒]：本匣恰好 3 发愤怒 → 玩家自伤 6（HP %d/%d）。" % [player_hp, player_max_hp])
+		if player_hp <= 0:
+			_lose_hp()
+	if pride_n == 3:
+		_pull_enemies_to_face()
+	if greed_n == 3:
+		gold -= 6
+		_log("罪孽[贪婪]：本匣恰好 3 发贪婪 → 金币 -6（现 %d）。" % gold)
+
+
+func _pull_enemies_to_face() -> void:
+	## 傲慢装 3：全体敌人尽量贴到玩家面前（格 1、2、3…）。
+	var alive: Array = alive_enemies()
+	alive.sort_custom(func(a, b): return a.cell < b.cell)
+	var next_cell: int = CombatConstants.PLAYER_CELL + 1
+	for e in alive:
+		if next_cell >= CombatConstants.BOARD_SIZE:
+			break
+		e.cell = next_cell
+		next_cell += 1
+		_log("罪孽[傲慢]：%s 被拉至格 %d。" % [e.name_zh, e.cell])
+	_log("罪孽[傲慢]：本匣恰好 3 发傲慢 → 敌人拉至面前。")
+
+
+func _try_greed_gold_drop(dealt: int) -> void:
+	if dealt <= 0 or _muzzle_greed <= 0:
+		return
+	for _i in _muzzle_greed:
+		if rng.randf() < 0.30:
+			gold += dealt
+			_log("  → 贪婪掉金 +%d（现 %d）" % [dealt, gold])
 
 
 func _set_phase(p: int) -> void:
@@ -399,6 +539,15 @@ func is_busy_loading() -> bool:
 
 func can_load() -> bool:
 	return phase == Phase.AWAIT_LOAD and not _load_session_active
+
+
+func can_manual_load() -> bool:
+	## 手装：可开新装填会话，或在会话中继续装 1 发（袋有弹且未满匣）。
+	if phase == Phase.FIRING or phase == Phase.ENEMY_TURN or phase == Phase.WON or phase == Phase.LOST:
+		return false
+	if _load_session_active:
+		return not bag.is_empty() and _load_next_slot < CombatConstants.MAGAZINE_SIZE
+	return can_load() and not bag.is_empty()
 
 
 func can_fire() -> bool:
@@ -528,6 +677,7 @@ func _complete_load_session() -> Dictionary:
 	_log("装填完成：共 %d 发%s。" % [
 		n, "（将随机旋转转轮）" if needs_spin else ""
 	])
+	_resolve_sin_pack_on_load(_load_resolved_ids)
 	var rotate_to: int = magazine.start_index
 	_reset_load_session()
 	if magazine.is_empty():
@@ -669,17 +819,20 @@ func fire_next_shot() -> bool:
 	_consume_hammer_chamber(ammo_id)
 
 	var flags := FireResolver.inherits_from(ammo_id)
+	# 罪孽层：本发先入枪口，本发伤害即享受新层
+	_mount_sin_muzzle_from(flags)
 	var pierce := _muzzle_pierce or bool(flags["pierce"])
 	var gas := _muzzle_gas or bool(flags["gas"])
 	var fire := _muzzle_fire or bool(flags["fire"])
 	var water := _muzzle_water or bool(flags["water"])
 	var thunder := _muzzle_thunder or bool(flags["thunder"])
 
+	base_dmg = _scale_outgoing_damage(base_dmg)
 	var dealt_total := _apply_shot_to_enemies(ammo_id, base_dmg, pierce, gas, fire, water, thunder)
 	_fire_total_damage += dealt_total
 	discard.append(ammo_id)
 
-	# 本发状态效果挂上枪口，本回合后续击发都附带
+	# 元素枪口：本发后挂上，供后续击发附带
 	_mount_muzzle_from(flags)
 
 	_fire_index += 1
@@ -739,6 +892,7 @@ func _hit_enemy_with_elements(
 ) -> int:
 	var dealt: int = e.apply_hit(dmg)
 	_notify_enemy_damage(e, dealt, damage_kind)
+	_try_greed_gold_drop(dealt)
 	_log("击发[%s] → %s 格%d 伤害%d（HP %d/%d）%s" % [
 		_ammo_name(ammo_id), e.name_zh, e.cell, dealt, e.hp, e.max_hp,
 		(" " + e.status_text()) if e.status_text() != "" else ""
@@ -1036,11 +1190,13 @@ func _auto_load_and_fire_once() -> bool:
 		var base_dmg: int = _fire_damages[_fire_index]
 		_consume_hammer_chamber(ammo_id)
 		var flags := FireResolver.inherits_from(ammo_id)
+		_mount_sin_muzzle_from(flags)
 		var pierce := _muzzle_pierce or bool(flags["pierce"])
 		var gas := _muzzle_gas or bool(flags["gas"])
 		var fire := _muzzle_fire or bool(flags["fire"])
 		var water := _muzzle_water or bool(flags["water"])
 		var thunder := _muzzle_thunder or bool(flags["thunder"])
+		base_dmg = _scale_outgoing_damage(base_dmg)
 		_fire_total_damage += _apply_shot_to_enemies(ammo_id, base_dmg, pierce, gas, fire, water, thunder)
 		discard.append(ammo_id)
 		_mount_muzzle_from(flags)
@@ -1165,11 +1321,13 @@ func _run_enemy_turn() -> void:
 	for e in order:
 		_move_enemy(e)
 		if can_attack_player(e):
-			player_hp = maxi(0, player_hp - e.atk)
-			if e.atk > 0:
+			var incoming: int = int(floor(float(e.atk) * _incoming_pride_multiplier() + 0.0001))
+			player_hp = maxi(0, player_hp - incoming)
+			if incoming > 0:
 				wave_took_damage = true
-			_log("%s 攻击玩家，造成 %d（玩家 HP %d/%d · 射程 %d）" % [
-				e.name_zh, e.atk, player_hp, player_max_hp, e.attack_range
+			_log("%s 攻击玩家，造成 %d（玩家 HP %d/%d · 射程 %d%s）" % [
+				e.name_zh, incoming, player_hp, player_max_hp, e.attack_range,
+				(" · 傲慢×%d" % _muzzle_pride) if _muzzle_pride > 0 else ""
 			])
 		else:
 			_log("%s 未进入射程，不攻击（格 %d · 射程 %d）。" % [e.name_zh, e.cell, e.attack_range])
@@ -1177,12 +1335,14 @@ func _run_enemy_turn() -> void:
 		_lose_hp()
 		return
 	_tick_bleed_end_of_enemy_turn()
+	_tick_zombie_regen_end_of_enemy_turn()
 	_remove_dead()
 	if alive_enemies().is_empty():
 		_enter_won()
 		return
-	# 超级僵尸：每怪物回合在身后召唤一只僵尸
+	# 超级僵尸：每怪物回合在面前召唤一只僵尸
 	_try_super_zombie_summons()
+	_clear_turn_sin_muzzle()
 	# 地图 Boss（非无限超级僵尸）：每怪物回合向袋塞无效弹
 	if encounter_kind == EncounterKind.BOSS and not endless_mode:
 		_inject_invalid_ammo(CombatConstants.BOSS_INVALID_PER_ENEMY_TURN, "回合末")
@@ -1208,25 +1368,37 @@ func _tick_bleed_end_of_enemy_turn() -> void:
 
 
 func _try_super_zombie_summons() -> void:
-	## 超级僵尸每回合在自己后面（更高格号）召唤一只僵尸。
+	## 超级僵尸每回合在自己面前（更低格号、朝向玩家）召唤一只僵尸；无空位则不生成。
 	var bosses: Array = []
 	for e in alive_enemies():
 		if e.def_id == CombatConstants.SUPER_ZOMBIE_ENEMY_ID:
 			bosses.append(e)
 	for boss in bosses:
-		var behind: int = boss.cell + 1
-		if behind >= CombatConstants.BOARD_SIZE:
-			_log("%s 身后无空位，召唤失败。" % boss.name_zh)
+		var front: int = boss.cell - 1
+		if front <= CombatConstants.PLAYER_CELL:
+			_log("%s 面前无空位，召唤失败。" % boss.name_zh)
 			continue
-		if occupied_cells().has(behind):
-			_log("%s 身后格 %d 已占用，召唤失败。" % [boss.name_zh, behind])
+		if occupied_cells().has(front):
+			_log("%s 面前格 %d 已占用，召唤失败。" % [boss.name_zh, front])
 			continue
 		var def: Dictionary = DataRegistry.get_enemy(CombatConstants.ZOMBIE_ENEMY_ID)
 		if def.is_empty():
 			continue
-		var z := EnemyInstance.new(def, behind)
+		var z := EnemyInstance.new(def, front)
 		enemies.append(z)
-		_log("%s 召唤僵尸于格 %d。" % [boss.name_zh, behind])
+		_log("%s 召唤僵尸于面前格 %d。" % [boss.name_zh, front])
+
+
+func _tick_zombie_regen_end_of_enemy_turn() -> void:
+	## 僵尸标签：回合结束回复 5 HP（不超过上限）。
+	for e in alive_enemies():
+		if not e.has_tag("僵尸"):
+			continue
+		if e.hp >= e.max_hp:
+			continue
+		var before: int = e.hp
+		e.hp = mini(e.max_hp, e.hp + 5)
+		_log("%s 僵尸再生 +%d（HP %d/%d）。" % [e.name_zh, e.hp - before, e.hp, e.max_hp])
 
 
 func _move_enemy(e: EnemyInstance) -> void:
@@ -1287,12 +1459,10 @@ func _enter_won() -> void:
 
 
 func _reset_practice_ammo_to_starter() -> void:
-	## 练习战专用：匣清空、弃牌清空、袋恢复 STARTER_WHITE_COUNT 发白弹。
+	## 练习战专用：匣/弃清空，袋恢复 10 平庸 + 5 本局罪孽。
 	magazine = Magazine.new()
 	discard.clear()
-	bag.clear()
-	for _i in CombatConstants.STARTER_WHITE_COUNT:
-		bag.append(CombatConstants.WHITE_AMMO_ID)
+	_fill_starter_bag()
 	_shuffle(bag)
 	needs_reshuffle_next_load = false
 	last_load_ids.clear()
@@ -1300,7 +1470,9 @@ func _reset_practice_ammo_to_starter() -> void:
 	_reset_muzzle()
 	_pending_gold_autofires = 0
 	_reset_load_session()
-	_log("练习战：弹药已重置为开局牌库（白弹 ×%d）。" % CombatConstants.STARTER_WHITE_COUNT)
+	_log("练习战：弹药已重置为开局牌库（平庸 ×%d + %s ×%d）。" % [
+		CombatConstants.STARTER_WHITE_COUNT, _ammo_name(selected_sin_ammo_id), CombatConstants.STARTER_SIN_COUNT
+	])
 
 
 func _begin_reward() -> void:

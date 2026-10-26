@@ -59,13 +59,13 @@ func test_gold_whites_fire_before_extras_then_clear() -> void:
 		CombatConstants.WHITE_AMMO_ID,
 		CombatConstants.WHITE_AMMO_ID,
 	] as Array[int])
-	assert_eq(cs.enemies[0].hp, 10)
+	assert_eq(cs.enemies[0].hp, 20)
 	assert_true(cs.begin_fire())
 	var more: bool = cs.fire_next_shot()  # 仅金：0 伤，计入待追加，不立刻额外轮
 	assert_true(more, "gold alone should not clear or finish")
 	assert_true(_log_has(cs, "已击发金"))
 	assert_false(_log_has(cs, "额外自动装填射击"), "extras must wait until magazine finishes")
-	assert_eq(cs.enemies[0].hp, 10)
+	assert_eq(cs.enemies[0].hp, 20)
 	while cs.phase == CombatState.Phase.FIRING:
 		cs.fire_next_shot()
 	assert_true(_log_has(cs, "金色弹药"))
@@ -99,7 +99,8 @@ func test_fire_stops_when_enemies_cleared_mid_magazine() -> void:
 	## 连射中途清场：立刻停射进胜利，不打完剩余弹；未击发归袋（练习战随后会重置袋）。
 	var cs := CombatState.new(810)
 	cs.start_graybox(810)
-	assert_eq(cs.enemies[0].hp, 10)
+	cs.enemies[0].hp = 10
+	cs.enemies[0].max_hp = 10
 	cs.dev_force_load([
 		CombatConstants.WHITE_AMMO_ID,
 		CombatConstants.WHITE_AMMO_ID,
@@ -120,7 +121,7 @@ func test_fire_stops_when_enemies_cleared_mid_magazine() -> void:
 	assert_true(cs.alive_enemies().is_empty())
 	# 练习战胜利重置：弃牌清空，已击发不保留在 discard
 	assert_eq(cs.discard.size(), 0)
-	assert_eq(cs.bag.size(), CombatConstants.STARTER_WHITE_COUNT)
+	assert_eq(cs.bag.size(), CombatConstants.STARTER_BAG_TOTAL)
 
 
 func test_practice_win_resets_bag_and_magazine() -> void:
@@ -136,11 +137,18 @@ func test_practice_win_resets_bag_and_magazine() -> void:
 	assert_eq(cs.phase, CombatState.Phase.WON)
 	assert_true(cs.magazine.is_empty())
 	assert_eq(cs.discard.size(), 0, "practice win should clear discard")
-	assert_eq(cs.bag.size(), CombatConstants.STARTER_WHITE_COUNT)
+	assert_eq(cs.bag.size(), CombatConstants.STARTER_BAG_TOTAL)
+	var white_n := 0
+	var sin_n := 0
 	for id in cs.bag:
-		assert_eq(id, CombatConstants.WHITE_AMMO_ID)
+		if int(id) == CombatConstants.WHITE_AMMO_ID:
+			white_n += 1
+		elif int(id) == cs.selected_sin_ammo_id:
+			sin_n += 1
+	assert_eq(white_n, CombatConstants.STARTER_WHITE_COUNT)
+	assert_eq(sin_n, CombatConstants.STARTER_SIN_COUNT)
 	assert_true(cs.pick_reward_ammo(0))
-	assert_eq(cs.bag.size(), CombatConstants.STARTER_WHITE_COUNT + 1)
+	assert_eq(cs.bag.size(), CombatConstants.STARTER_BAG_TOTAL + 1)
 
 
 
@@ -777,13 +785,17 @@ func test_endless_spawns_zombies_and_boss_super() -> void:
 
 
 func test_super_zombie_summons_behind() -> void:
+	## 表改：面前召唤（朝向玩家的更低格）。
 	var cs := CombatState.new(844)
-	cs.start_graybox(844, true)
+	cs.start_graybox(844, true, FireResolver.ID_WRATH)
 	cs.enemies.clear()
 	cs.dev_spawn_enemy(CombatConstants.SUPER_ZOMBIE_ENEMY_ID, 5)
 	assert_eq(cs.enemies.size(), 1)
+	cs.bag.clear()
+	for _i in 6:
+		cs.bag.append(CombatConstants.WHITE_AMMO_ID)
 	cs.do_load()
-	cs.do_unload()  # 怪回合：先移动再召唤于身后
+	cs.do_unload()
 	var boss: EnemyInstance = null
 	var zombies := 0
 	var zcell := -1
@@ -793,6 +805,6 @@ func test_super_zombie_summons_behind() -> void:
 		elif e.def_id == CombatConstants.ZOMBIE_ENEMY_ID:
 			zombies += 1
 			zcell = e.cell
-	assert_eq(zombies, 1, "super zombie should summon one zombie behind")
+	assert_eq(zombies, 1, "super zombie should summon one zombie in front")
 	assert_ne(boss, null)
-	assert_eq(zcell, boss.cell + 1)
+	assert_eq(zcell, boss.cell - 1)

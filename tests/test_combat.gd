@@ -8,11 +8,11 @@ func before_each() -> void:
 
 
 func test_data_registry_loads_tables() -> void:
-	assert_eq(DataRegistry.get_ammo(1).get("name"), "白色子弹")
+	assert_eq(DataRegistry.get_ammo(1).get("name"), "平庸子弹")
 	assert_eq(DataRegistry.get_enemy(1).get("name"), "平民")
 	assert_true(DataRegistry.get_tag("生物").has("effect"))
 	assert_eq(int(DataRegistry.get_ammo(1).get("base_damage")), 3)
-	assert_eq(int(DataRegistry.get_enemy(1).get("hp")), 10)
+	assert_eq(int(DataRegistry.get_enemy(1).get("hp")), 20)
 
 
 func test_magazine_load_and_fire_order() -> void:
@@ -71,10 +71,10 @@ func test_load_fills_magazine_from_bag() -> void:
 	var cs := CombatState.new(42)
 	cs.start_graybox(42)
 	assert_eq(cs.phase, CombatState.Phase.AWAIT_LOAD)
-	assert_eq(cs.bag.size(), CombatConstants.STARTER_WHITE_COUNT)
+	assert_eq(cs.bag.size(), CombatConstants.STARTER_BAG_TOTAL)
 	assert_true(cs.do_load())
 	assert_eq(cs.magazine.loaded_count(), CombatConstants.MAGAZINE_SIZE)
-	assert_eq(cs.bag.size(), CombatConstants.STARTER_WHITE_COUNT - CombatConstants.MAGAZINE_SIZE)
+	assert_eq(cs.bag.size(), CombatConstants.STARTER_BAG_TOTAL - CombatConstants.MAGAZINE_SIZE)
 	assert_eq(cs.phase, CombatState.Phase.AWAIT_ACTION)
 
 
@@ -110,6 +110,9 @@ func test_roll_ends_turn_and_enemy_advances() -> void:
 	## ROLL 消耗回合：转轮后进怪物回合，怪前进一格；匣内仍有弹 → AWAIT_ACTION，可再射/roll/卸。
 	var cs := CombatState.new(99)
 	cs.start_graybox(99)
+	cs.bag.clear()
+	for _i in 12:
+		cs.bag.append(CombatConstants.WHITE_AMMO_ID)
 	cs.enemies[0].hp = 100
 	cs.enemies[0].max_hp = 100
 	var start_cell: int = cs.enemies[0].cell
@@ -131,6 +134,9 @@ func test_roll_ends_turn_and_enemy_advances() -> void:
 func test_distant_enemy_multiple_turns_no_player_damage() -> void:
 	var cs := CombatState.new(5)
 	cs.start_graybox(5)
+	cs.bag.clear()
+	for _i in 12:
+		cs.bag.append(CombatConstants.WHITE_AMMO_ID)
 	cs.enemies[0].hp = 100
 	cs.enemies[0].max_hp = 100
 	cs.enemies[0].cell = 9
@@ -149,7 +155,10 @@ func test_distant_enemy_multiple_turns_no_player_damage() -> void:
 
 func test_only_adjacent_enemy_attacks() -> void:
 	var cs := CombatState.new(1)
-	cs.start_graybox(1)
+	cs.start_graybox(1, false, FireResolver.ID_WRATH)
+	cs.bag.clear()
+	for _i in 12:
+		cs.bag.append(CombatConstants.WHITE_AMMO_ID)
 	cs.enemies[0].hp = 100
 	cs.enemies[0].max_hp = 100
 	cs.enemies[0].cell = 2
@@ -463,7 +472,7 @@ func test_stepwise_load_api() -> void:
 	# 装满后标记需要 reroll；start_index 在 spin 前保持会话末值
 	assert_true(bool(last.get("needs_spin", false)))
 	assert_eq(cs.phase, CombatState.Phase.AWAIT_ACTION)
-	assert_eq(cs.bag.size(), CombatConstants.STARTER_WHITE_COUNT - CombatConstants.MAGAZINE_SIZE)
+	assert_eq(cs.bag.size(), CombatConstants.STARTER_BAG_TOTAL - CombatConstants.MAGAZINE_SIZE)
 	# 上弹口依次装入仓 0,1,2,3,4,5
 	assert_eq(loaded_slots, [0, 1, 2, 3, 4, 5])
 
@@ -490,7 +499,7 @@ func test_stepwise_load_partial_when_bag_small() -> void:
 
 func test_ammo_detail_text_from_table() -> void:
 	var text := DataRegistry.format_ammo_detail_text(1)
-	assert_true(text.contains("白色子弹"))
+	assert_true(text.contains("平庸子弹"))
 	assert_true(text.contains("3"))
 	assert_true(text.contains("常规子弹") or text.contains("无"))
 
@@ -503,7 +512,10 @@ func test_ammo_detail_text_invalid() -> void:
 
 func test_ammo_inventory_bag_and_mag() -> void:
 	var cs := CombatState.new(42)
-	cs.start_graybox(42)
+	cs.start_graybox(42, false, FireResolver.ID_WRATH)
+	cs.bag.clear()
+	for _i in 12:
+		cs.bag.append(CombatConstants.WHITE_AMMO_ID)
 	var before_bag: int = cs.bag.size()
 	assert_true(cs.do_load())
 	var inv: Dictionary = cs.ammo_inventory_by_id()
