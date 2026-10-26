@@ -125,7 +125,7 @@ vertical_alignment = 1
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 4
-theme_override_constants/separation = 5
+theme_override_constants/separation = 0
 alignment = 1
 
 [node name="MidSpacer" type="Control" parent="Margin/RootVBox"]

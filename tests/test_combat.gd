@@ -766,13 +766,54 @@ func test_blank_chamber_skips_to_nearest_ammo() -> void:
 	assert_eq(cs.magazine.slots[2], Magazine.EMPTY)
 	cs.magazine.set_start(2)
 	assert_eq(cs.magazine.chamber_at_fire_port(), 2)
+	var peek: int = cs.peek_blank_skip_steps()
+	assert_gte(peek, 1)
+	assert_eq(cs.magazine.start_index, 2, "peek must not mutate start")
 	var hp_before: int = cs.enemies[0].hp
 	assert_true(cs.begin_fire())
+	assert_eq(cs.peek_blank_skip_steps(), peek)
 	assert_true(cs.fire_next_shot())
 	# 从空仓 2 前进到有弹仓（0 或 1，视 FIRE_PORT 与 start）并实弹结算
 	assert_false(cs.last_shot_was_blank)
-	assert_gte(cs.last_blank_skip_steps, 1)
+	assert_eq(cs.last_blank_skip_steps, peek)
 	assert_lt(cs.enemies[0].hp, hp_before)
+	assert_eq(cs.discard.size(), 1)
+
+
+func test_partial_mag_manual_load_blank_skip_peek() -> void:
+	## 只手装几发、锤位落在空仓：peek 给出转到有弹的步数；开火后跳空步数一致。
+	var cs := CombatState.new(102)
+	cs.start_graybox(102)
+	cs.enemies[0].hp = 999
+	cs.enemies[0].max_hp = 999
+	cs.bag.clear()
+	cs.bag_temp.clear()
+	for _i in 3:
+		cs._bag_append(CombatConstants.WHITE_AMMO_ID, false)
+	assert_true(cs.begin_load())
+	# 手装 3 发（不满匣），会话提交
+	for _i in 3:
+		var r: Dictionary = cs.load_next_chamber()
+		assert_true(bool(r.get("ok", false)))
+		if not bool(r.get("done", false)):
+			cs.apply_load_rotate()
+	cs.commit_load_session_if_active()
+	assert_eq(cs.magazine.loaded_count(), 3)
+	# 转到空仓锤位（满 6 仓里后 3 空）
+	var empty_start := -1
+	for s in CombatConstants.MAGAZINE_SIZE:
+		cs.magazine.set_start(s)
+		if cs.magazine.slots[cs.magazine.chamber_at_fire_port()] == Magazine.EMPTY:
+			empty_start = s
+			break
+	assert_gte(empty_start, 0, "partial mag should have an empty fire-port start")
+	var peek: int = cs.peek_blank_skip_steps()
+	assert_gte(peek, 1)
+	assert_lte(peek, 5)
+	assert_true(cs.begin_fire())
+	assert_true(cs.fire_next_shot())
+	assert_false(cs.last_shot_was_blank)
+	assert_eq(cs.last_blank_skip_steps, peek)
 	assert_eq(cs.discard.size(), 1)
 
 
@@ -911,3 +952,35 @@ func test_partial_mag_can_start_roll() -> void:
 	assert_true(cs.begin_roll())
 	assert_eq(cs.phase, CombatState.Phase.AWAIT_ACTION)
 	assert_true(cs.can_fire())
+
+
+func test_board_ground_segs_and_unit_rest_on_ground() -> void:
+	## 每格有 GroundSeg；UnitBody 底边贴地；抖动复位不甩到 (0,0)；无 VBox 兄弟 GroundLine。
+	var CombatScene := load("res://scenes/combat.tscn")
+	var ui = add_child_autofree(CombatScene.instantiate())
+	await get_tree().process_frame
+	var board: HBoxContainer = ui.get_node("%BoardRow")
+	assert_eq(board.get_theme_constant("separation"), 0)
+	var parent: Node = board.get_parent()
+	assert_null(parent.get_node_or_null("GroundLine"), "legacy VBox GroundLine must be removed")
+	assert_eq(board.get_child_count(), CombatConstants.BOARD_SIZE)
+	var rest: Vector2 = ui._unit_rest_position()
+	assert_eq(rest.y, float(ui.CELL_H) - ui.UNIT_H - ui.GROUND_LINE_H)
+	for i in CombatConstants.BOARD_SIZE:
+		var slot: Control = board.get_child(i) as Control
+		var seg: ColorRect = slot.get_node_or_null("GroundSeg") as ColorRect
+		assert_not_null(seg, "cell %d needs GroundSeg" % i)
+		assert_eq(seg.position.y, float(ui.CELL_H) - ui.GROUND_LINE_H)
+		assert_eq(seg.size.y, ui.GROUND_LINE_H)
+		var unit: Control = slot.get_node_or_null("UnitBody") as Control
+		assert_not_null(unit)
+		assert_eq(unit.position, rest)
+	# 模拟旧 offset 抖动损坏后 reset 必须贴地
+	var body: Control = board.get_child(1).get_node("UnitBody")
+	body.position = Vector2(3, 3)
+	ui._reset_cell_shake_offsets(body)
+	assert_eq(body.position, rest)
+	ui._apply_cell_offsets(body, 5.0, -4.0)
+	assert_eq(body.position, rest + Vector2(5.0, -4.0))
+	ui._reset_cell_shake_offsets(body)
+	assert_eq(body.position, rest)

@@ -1025,6 +1025,23 @@ func begin_fire() -> bool:
 	return true
 
 
+func peek_blank_skip_steps() -> int:
+	## 不改状态：从当前锤位起，前进到最近有弹格需要的空仓步数（半满匣开火动画用）。
+	if magazine == null or magazine.is_empty():
+		return 0
+	var skipped := 0
+	var idx: int = magazine.start_index
+	var guard := 0
+	while guard < CombatConstants.MAGAZINE_SIZE:
+		var h: int = magazine.chamber_at_fire_port(idx)
+		if magazine.slots[h] != Magazine.EMPTY:
+			return skipped
+		idx = (idx + 1) % magazine.size()
+		skipped += 1
+		guard += 1
+	return skipped
+
+
 func fire_next_shot() -> bool:
 	if phase != Phase.FIRING:
 		return false
@@ -1704,7 +1721,7 @@ func _enter_won() -> void:
 		return
 	_set_phase(Phase.WON)
 	_log("胜利：敌人全灭。")
-	# 枪口（含罪孽层）一律清掉；练习/无限同场：战斗内袋重置（累加额外罪孽）再发奖；地图 run 保留构筑袋
+	# 枪口（含罪孽层）一律清掉；练习/无限每波：战斗结束清额外罪孽袋回 10+5 再发奖；地图 run 保留构筑袋
 	_clear_all_sin_muzzle(true)
 	_reset_muzzle()
 	if not from_map_run:
@@ -1718,16 +1735,12 @@ func _enter_won() -> void:
 
 
 func _reset_practice_ammo_to_starter() -> void:
-	## 练习战胜利=战斗结束：清额外罪孽与临时标记，袋回 10+5。
-	## 无限同场跨波：保留 bag_reset_count，灌 10+5+count（胜利本身不再 +1；仅袋空自动重置累加）。
+	## 练习战 / 无限每波胜利 = 战斗结束：清额外罪孽与临时标记，袋回 10+5。
+	## 同波内袋空自动重置仍按 bag_reset_count 累加临时罪孽；跨波不保留。
 	magazine = Magazine.new()
 	discard.clear()
 	discard_temp.clear()
-	if endless_mode:
-		_fill_starter_bag(bag_reset_count)
-		_shuffle_bag()
-	else:
-		_clear_combat_bonus_ammo()
+	_clear_combat_bonus_ammo()
 	needs_reshuffle_next_load = false
 	last_load_ids.clear()
 	_reset_fire_session()
@@ -1736,9 +1749,8 @@ func _reset_practice_ammo_to_starter() -> void:
 	_pending_gold_autofires = 0
 	_reset_load_session()
 	var mode_label := "无限模式" if endless_mode else "练习战"
-	var sin_n: int = CombatConstants.STARTER_SIN_COUNT + bag_reset_count
-	_log("%s：弹药已重置（平庸 ×%d + %s ×%d，战斗内加成 ×%d）。" % [
-		mode_label, CombatConstants.STARTER_WHITE_COUNT, _ammo_name(selected_sin_ammo_id), sin_n, bag_reset_count
+	_log("%s：弹药已重置（平庸 ×%d + %s ×%d；额外罪孽已清）。" % [
+		mode_label, CombatConstants.STARTER_WHITE_COUNT, _ammo_name(selected_sin_ammo_id), CombatConstants.STARTER_SIN_COUNT
 	])
 
 

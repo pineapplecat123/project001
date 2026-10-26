@@ -640,24 +640,39 @@ func _on_log(text: String) -> void:
 	log_box.scroll_to_line(log_box.get_line_count())
 
 
+func _unit_rest_position() -> Vector2:
+	## 单位底边贴在格内地面线段顶边。
+	return Vector2((CELL_W - UNIT_W) * 0.5, float(CELL_H) - UNIT_H - GROUND_LINE_H)
+
+
 func _build_board_cells() -> void:
-	## 视觉：一条地面线 + 线上站立的单位块；格位逻辑仍按 cell 索引。
+	## 视觉：每格底一条地面线段拼成整线 + 线上站立的单位块；格位逻辑仍按 cell 索引。
+	## 不用 VBox 兄弟节点画线（容器布局会抢 position → 线闪/消失）。
 	for c in board_row.get_children():
 		c.queue_free()
-	_ensure_ground_line()
+	_remove_legacy_ground_line()
+	# 格间距 0，地面线段首尾相接成连续线
+	board_row.add_theme_constant_override("separation", 0)
 	for i in CombatConstants.BOARD_SIZE:
 		var slot := Control.new()
 		slot.custom_minimum_size = Vector2(CELL_W, CELL_H)
 		slot.name = "Cell%d" % i
 		slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		# 格位透明占位；单位本体是 UnitBody
+		var ground := ColorRect.new()
+		ground.name = "GroundSeg"
+		ground.color = Color(0.78, 0.72, 0.55, 0.95)
+		ground.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		ground.position = Vector2(0.0, float(CELL_H) - GROUND_LINE_H)
+		ground.size = Vector2(CELL_W, GROUND_LINE_H)
+		slot.add_child(ground)
+		# 格位透明占位；单位本体是 UnitBody（用 position 贴地，抖动也改 position）
 		var unit := Panel.new()
 		unit.name = "UnitBody"
 		unit.visible = false
 		unit.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		unit.custom_minimum_size = Vector2(UNIT_W, UNIT_H)
 		unit.size = Vector2(UNIT_W, UNIT_H)
-		unit.position = Vector2((CELL_W - UNIT_W) * 0.5, CELL_H - UNIT_H - GROUND_LINE_H - 6.0)
+		unit.position = _unit_rest_position()
 		var vbox := VBoxContainer.new()
 		vbox.name = "VBox"
 		vbox.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -682,35 +697,26 @@ func _build_board_cells() -> void:
 		board_row.add_child(slot)
 
 
-func _ensure_ground_line() -> void:
-	## 在 BoardRow 下方画一条水平地面线（占位美术）。
+func _remove_legacy_ground_line() -> void:
+	## 清掉 v0.2.34 挂在 TopSection(VBox) 上的 GroundLine，避免与容器布局打架。
 	if board_row == null or board_row.get_parent() == null:
 		return
-	var parent: Control = board_row.get_parent() as Control
-	var line: ColorRect = parent.get_node_or_null("GroundLine") as ColorRect
-	if line == null:
-		line = ColorRect.new()
-		line.name = "GroundLine"
-		line.color = Color(0.78, 0.72, 0.55, 0.95)
-		line.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		parent.add_child(line)
-		parent.move_child(line, board_row.get_index() + 1)
-	# 用回调对齐到 BoardRow 底边
-	if not board_row.resized.is_connected(_layout_ground_line):
-		board_row.resized.connect(_layout_ground_line)
-	call_deferred("_layout_ground_line")
+	var parent: Node = board_row.get_parent()
+	var line: Node = parent.get_node_or_null("GroundLine")
+	if line != null:
+		line.queue_free()
+	if board_row.resized.is_connected(_layout_ground_line):
+		board_row.resized.disconnect(_layout_ground_line)
+
+
+func _ensure_ground_line() -> void:
+	## 兼容旧调用：地面已改每格 GroundSeg，只需清遗留兄弟线。
+	_remove_legacy_ground_line()
 
 
 func _layout_ground_line() -> void:
-	if board_row == null or board_row.get_parent() == null:
-		return
-	var parent: Control = board_row.get_parent() as Control
-	var line: ColorRect = parent.get_node_or_null("GroundLine") as ColorRect
-	if line == null:
-		return
-	var r: Rect2 = board_row.get_rect()
-	line.position = Vector2(r.position.x, r.position.y + r.size.y - GROUND_LINE_H - 2.0)
-	line.size = Vector2(maxf(r.size.x, float(CombatConstants.BOARD_SIZE) * CELL_W), GROUND_LINE_H)
+	## 兼容旧调用：每格 GroundSeg 固定在槽底，无需按 BoardRow rect 重算。
+	pass
 
 
 func _build_wheel_chambers() -> void:
@@ -1052,22 +1058,27 @@ func _run_fire_sequence() -> void:
 
 
 func _animate_fire_shots() -> void:
-	## 红圈固定正上；盘面先对齐当前击发仓；动画期间禁止 _refresh_mag 抢跑对齐
+	## 红圈固定正上；盘面先对齐当前击发仓；动画期间禁止 _refresh_mag 抢跑对齐。
+	## 半满/锤位空仓：先播可见旋转到最近有弹格，再黄闪击发，再转 60°；不瞬跳。
 	_apply_disk_rotation(float(state.magazine.start_index))
 	_refresh_mag_contents()
 	_refresh_hud_only()
 	while state.phase == CombatState.Phase.FIRING:
 		var start_before: int = state.magazine.start_index
-		var fired_slot: int = state.magazine.chamber_at_fire_port()
 		# 结算前锁视觉步数=锤位；signal refresh 不得抢跑
 		_apply_disk_rotation(float(start_before))
 		_wheel_animating = true
+		var skip_n: int = state.peek_blank_skip_steps()
+		if skip_n > 0:
+			# 每空仓一格时长，总时长随步数变长，保证能看见转到有弹处
+			var skip_dur: float = STEP_ROT_DURATION * float(skip_n)
+			await _animate_disk_to(_wheel_visual_steps + float(skip_n), skip_dur)
+			_refresh_mag_contents()
 		var more: bool = state.fire_next_shot()
-		if state.last_fired_slot >= 0:
-			fired_slot = state.last_fired_slot
+		# fire_next_shot 内会瞬推 skip_n（与上面动画对齐）并消耗实弹后再 +1
+		var fired_slot: int = state.last_fired_slot
 		var blank: bool = state.last_shot_was_blank
-		var skip_n: int = int(state.last_blank_skip_steps)
-		# 空仓快跳已并入本发：有弹才黄闪；跳过的空格不逐发播完整射击
+		skip_n = int(state.last_blank_skip_steps)
 		if not blank:
 			_flash_fire_at_top(fired_slot)
 			_refresh_mag_contents()
@@ -1077,17 +1088,15 @@ func _animate_fire_shots() -> void:
 			_refresh_mag_contents()
 			_refresh_hud_only()
 		if more:
+			# 跳空已在击发前播完；此处只播消耗后固定 60°
 			var start_after: int = state.magazine.start_index
-			var delta: int = (start_after - start_before + CombatConstants.MAGAZINE_SIZE) % CombatConstants.MAGAZINE_SIZE
-			if delta == 0:
-				delta = 1
-			# 含空仓快跳时略加速旋转
-			var rot_dur: float = STEP_ROT_DURATION
-			if skip_n > 0:
-				rot_dur = maxf(0.08, STEP_ROT_DURATION * 0.55)
-			await _animate_disk_to(_wheel_visual_steps + float(delta), rot_dur)
+			var expected_visual: int = (start_before + skip_n) % CombatConstants.MAGAZINE_SIZE
+			var remain: int = (start_after - expected_visual + CombatConstants.MAGAZINE_SIZE) % CombatConstants.MAGAZINE_SIZE
+			if remain == 0:
+				remain = 1
+			await _animate_disk_to(_wheel_visual_steps + float(remain), STEP_ROT_DURATION)
 			_refresh_mag_contents()
-			await get_tree().create_timer(FIRE_SHOT_DELAY if skip_n == 0 else FIRE_SHOT_DELAY * 0.45).timeout
+			await get_tree().create_timer(FIRE_SHOT_DELAY).timeout
 		else:
 			_wheel_animating = false
 			break
@@ -1400,14 +1409,14 @@ func _shake_cell_body(panel: Control) -> Control:
 
 
 func _reset_cell_shake_offsets(body: Control) -> void:
-	body.offset_left = 0.0
-	body.offset_right = 0.0
-	body.offset_top = 0.0
-	body.offset_bottom = 0.0
+	## 抖完必须回到贴地休息位；勿清 offset_*（会把无锚点 Panel 甩到 0,0）。
+	if not is_instance_valid(body):
+		return
+	body.position = _unit_rest_position()
 
 
 func _shake_cell_for_damage(cell: int, amount: int) -> void:
-	## 仅被击中的怪物格抖动；振幅更大更夸张，仍随伤害放大（小伤也明显）。
+	## 仅被击中的怪物单位块抖动；振幅更大更夸张，仍随伤害放大（小伤也明显）。
 	if board_row == null or amount <= 0:
 		return
 	if cell < 0 or cell >= board_row.get_child_count():
@@ -1426,11 +1435,16 @@ func _shake_cell_for_damage(cell: int, amount: int) -> void:
 	_reset_cell_shake_offsets(body)
 	var tw := create_tween()
 	_cell_shake_tweens[cell] = tw
+	tw.finished.connect(func():
+		_cell_shake_tweens.erase(cell)
+		_reset_cell_shake_offsets(body)
+	)
 	var steps := 7
 	for i in steps:
 		var fall: float = 1.0 - float(i) / float(steps)
 		var ox := randf_range(-amp, amp) * fall
-		var oy := randf_range(-amp * 0.7, amp * 0.7) * fall
+		# 纵向振幅收一点，且不把底边抖到地面线以下太多
+		var oy := randf_range(-amp * 0.45, amp * 0.25) * fall
 		tw.tween_callback(_apply_cell_offsets.bind(body, ox, oy))
 		tw.tween_interval(SHAKE_DURATION / float(steps))
 	tw.tween_callback(_reset_cell_shake_offsets.bind(body))
@@ -1439,10 +1453,7 @@ func _shake_cell_for_damage(cell: int, amount: int) -> void:
 func _apply_cell_offsets(body: Control, ox: float, oy: float) -> void:
 	if not is_instance_valid(body):
 		return
-	body.offset_left = ox
-	body.offset_right = ox
-	body.offset_top = oy
-	body.offset_bottom = oy
+	body.position = _unit_rest_position() + Vector2(ox, oy)
 
 
 func _damage_float_step(t: float, lab: Label, start_g: Vector2, ctrl: Vector2, end_g: Vector2) -> void:
@@ -2438,12 +2449,18 @@ func _refresh_board() -> void:
 	var by_cell := {}
 	for e in state.alive_enemies():
 		by_cell[e.cell] = e
-	_layout_ground_line()
 	for i in CombatConstants.BOARD_SIZE:
 		var slot: Control = board_row.get_child(i) as Control
 		var unit: Panel = slot.get_node_or_null("UnitBody") as Panel
 		if unit == null:
 			continue
+		# 非抖动中：强制贴地（防止旧 offset 抖动把单位留在空中）
+		var shaking: bool = false
+		if _cell_shake_tweens.has(i):
+			var tw_live: Tween = _cell_shake_tweens[i] as Tween
+			shaking = tw_live != null and is_instance_valid(tw_live) and tw_live.is_running()
+		if not shaking:
+			unit.position = _unit_rest_position()
 		var info: Label = unit.get_node("VBox/Info")
 		var hp_bar: ProgressBar = unit.get_node("VBox/HpBar")
 		var style := StyleBoxFlat.new()

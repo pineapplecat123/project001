@@ -376,20 +376,29 @@ func test_empty_bag_at_turn_start_auto_resets_nonempty_skips() -> void:
 	assert_true(cs.can_manual_load())
 
 
-func test_endless_keeps_reset_count_across_waves_then_new_combat_clears() -> void:
+func test_endless_wave_end_clears_reset_count_same_wave_bonus_stays() -> void:
+	## 同波内袋空重置仍 +N；波胜利清零；下一波内再重置可重新累加。
 	var cs := CombatState.new(941)
 	cs.start_graybox(941, true, FireResolver.ID_PRIDE)
 	cs.bag.clear()
 	cs.bag_temp.clear()
 	cs._auto_reset_bag_if_empty_at_turn_start()
 	assert_eq(cs.bag_reset_count, 1)
-	cs.dev_kill_all_enemies()
-	# 无限胜利保留 count，灌 10+5+1，不因胜利再 +1
-	assert_eq(cs.bag_reset_count, 1)
 	assert_eq(cs.count_temporary_in_bag(), 1)
+	cs.dev_kill_all_enemies()
+	# 无限每波胜利 = 战斗结束：清额外
+	assert_eq(cs.bag_reset_count, 0)
+	assert_eq(cs.count_temporary_in_bag(), 0)
+	assert_eq(cs.bag.size(), CombatConstants.STARTER_BAG_TOTAL)
 	assert_true(cs.skip_reward_for_gold())
 	assert_true(cs.start_next_wave())
+	assert_eq(cs.bag_reset_count, 0)
+	# 下一波内再袋空：重新从 +1 起
+	cs.bag.clear()
+	cs.bag_temp.clear()
+	assert_true(cs._auto_reset_bag_if_empty_at_turn_start())
 	assert_eq(cs.bag_reset_count, 1)
+	assert_eq(cs.count_temporary_in_bag(), 1)
 	cs.start_graybox(942, true, FireResolver.ID_PRIDE)
 	assert_eq(cs.bag_reset_count, 0)
 	assert_eq(cs.count_temporary_in_bag(), 0)
