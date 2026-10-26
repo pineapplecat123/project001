@@ -180,3 +180,9 @@
 
 ## 2026-10-23 v0.2.12
 - 修装弹/射击标位与实发不一致：load 推迟 apply_load_rotate；_refresh_mag 动画期不抢跑；FIRE 锤位 last_fired_slot；高亮跟视觉步数。GUT 69/69。
+
+## 2026-10-26
+- 弹药袋改为物理盒（BagPhysicsBox 自研圆盘物理）；截图 docs/shots/12_bag_physics_box*.png；**未 commit/push，等老大确认**。
+
+## 2026-10-26（续）
+- v0.2.30：物理弹药盒发版；球字用 ascent 居中对齐圆心。

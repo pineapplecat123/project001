@@ -6,6 +6,7 @@ extends Control
 
 const ShopState = preload("res://scripts/shop/shop_state.gd")
 const ShopConstants = preload("res://scripts/shop/shop_constants.gd")
+const BagPhysicsBox = preload("res://scripts/combat/bag_physics_box.gd")
 
 const CELL_W := 92
 const CELL_H := 72
@@ -57,6 +58,7 @@ var _detail_from_hover: bool = false
 var _detail_from_long_press: bool = false
 var _ammo_detail_title: Label = null
 var _bag_inv_fingerprint: String = ""
+var _bag_physics: BagPhysicsBox = null
 var _bag_refreshing: bool = false
 var _firing: bool = false
 var _rolling: bool = false
@@ -1561,123 +1563,89 @@ func _bag_inventory_fingerprint(inv: Dictionary) -> String:
 func _refresh_bag_list() -> void:
 	var inv: Dictionary = state.ammo_inventory_by_id()
 	var fp := _bag_inventory_fingerprint(inv)
-	if fp == _bag_inv_fingerprint and bag_list.get_child_count() > 0:
-		return
-	_bag_inv_fingerprint = fp
-	_bag_refreshing = true
-	for c in bag_list.get_children():
-		c.queue_free()
 	var bag_n: int = state.bag.size()
 	var mag_n: int = state.magazine.loaded_count() if state.magazine != null else 0
 	var disc_n: int = state.discard.size()
 	var total_n: int = bag_n + mag_n + disc_n
-	var title := Label.new()
-	title.text = "共%d · 袋%d · 膛%d\n弃%d · 金%d" % [
-		total_n, bag_n, mag_n, disc_n, state.gold
-	]
-	title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	title.add_theme_font_size_override("font_size", 12)
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	bag_list.add_child(title)
-	if inv.is_empty():
-		var empty := Label.new()
-		empty.text = "（牌库空：袋、膛、弃皆无）"
-		bag_list.add_child(empty)
-		var tip0 := Label.new()
-		tip0.text = "悬停/长按看效果"
-		tip0.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		tip0.add_theme_font_size_override("font_size", 13)
-		tip0.add_theme_color_override("font_color", Color(0.7, 0.75, 0.85))
-		bag_list.add_child(tip0)
+	if bag_header_label != null:
+		bag_header_label.text = "弹药盒 · 袋%d" % bag_n
+	# 结构只建一次：统计 + 物理盒 + 提示
+	if _bag_physics == null or not is_instance_valid(_bag_physics):
+		_bag_refreshing = true
+		for c in bag_list.get_children():
+			c.queue_free()
+		var title := Label.new()
+		title.name = "BagStatsLabel"
+		title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		title.add_theme_font_size_override("font_size", 12)
+		title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		bag_list.add_child(title)
+		_bag_physics = BagPhysicsBox.new()
+		_bag_physics.name = "BagPhysicsBox"
+		_bag_physics.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_bag_physics.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		_bag_physics.custom_minimum_size = Vector2(200, 210)
+		_bag_physics.color_lookup = Callable(self, "_ammo_colors")
+		_bag_physics.name_lookup = Callable(self, "_ammo_bag_glyph")
+		_bag_physics.ball_hover.connect(_on_bag_physics_hover)
+		_bag_physics.ball_hover_exit.connect(_on_bag_physics_hover_exit)
+		_bag_physics.ball_press.connect(_on_bag_physics_press)
+		bag_list.add_child(_bag_physics)
+		var tip := Label.new()
+		tip.name = "BagTipLabel"
+		tip.text = "袋内重力球 · 悬停/长按看效果"
+		tip.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		tip.add_theme_font_size_override("font_size", 11)
+		tip.add_theme_color_override("font_color", Color(0.7, 0.75, 0.85))
+		tip.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		bag_list.add_child(tip)
 		_bag_refreshing = false
+	var stats: Label = bag_list.get_node_or_null("BagStatsLabel") as Label
+	if stats != null:
+		stats.text = "共%d · 袋%d · 膛%d · 弃%d · 金%d" % [
+			total_n, bag_n, mag_n, disc_n, state.gold
+		]
+	if fp == _bag_inv_fingerprint and _bag_physics != null and _bag_physics.ball_count() == bag_n:
 		return
-	var order_ids: Array[int] = []
-	for k in inv.keys():
-		order_ids.append(int(k))
-	order_ids.sort()
-	var grid := GridContainer.new()
-	grid.columns = BAG_GRID_COLS
-	grid.add_theme_constant_override("h_separation", 6)
-	grid.add_theme_constant_override("v_separation", 6)
-	grid.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	bag_list.add_child(grid)
-	for ammo_id in order_ids:
-		var entry: Dictionary = inv[ammo_id]
-		var in_bag: int = int(entry.get("bag", 0))
-		var in_mag: int = int(entry.get("mag", 0))
-		var in_disc: int = int(entry.get("discard", 0))
-		var total: int = int(entry.get("total", in_bag + in_mag + in_disc))
-		var def: Dictionary = DataRegistry.get_ammo(ammo_id)
-		var colors := _ammo_colors(ammo_id)
-		var cell := PanelContainer.new()
-		cell.custom_minimum_size = BAG_CELL_MIN
-		cell.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-		cell.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		cell.clip_contents = true
-		var cell_style := StyleBoxFlat.new()
-		cell_style.bg_color = colors["bg"]
-		cell_style.set_corner_radius_all(999)
-		cell_style.set_border_width_all(2)
-		cell_style.border_color = Color(0.15, 0.15, 0.18, 0.7)
-		if ammo_id == CombatConstants.INVALID_AMMO_ID:
-			cell_style.border_color = Color(0.95, 0.35, 0.35)
-			cell_style.set_border_width_all(3)
-		elif in_mag > 0 and in_bag > 0:
-			# 部分上膛：琥珀色描边提示
-			cell_style.border_color = Color(0.95, 0.75, 0.25)
-			cell_style.set_border_width_all(3)
-		elif in_bag == 0 and in_mag > 0:
-			cell_style.border_color = Color(0.35, 0.35, 0.4)
-		elif in_bag == 0 and in_mag == 0 and in_disc > 0:
-			# 全在弃牌：蓝灰描边，袋空仍可见拥有
-			cell_style.border_color = Color(0.45, 0.55, 0.75)
-		cell_style.content_margin_left = 2
-		cell_style.content_margin_right = 2
-		cell_style.content_margin_top = 2
-		cell_style.content_margin_bottom = 2
-		cell.add_theme_stylebox_override("panel", cell_style)
-		# 仍有在袋 → 正常；全上膛或全弃 → 变暗（仍列出）
-		if in_bag == 0 and (in_mag > 0 or in_disc > 0):
-			cell.modulate = Color(0.55, 0.55, 0.58, 1.0)
-		else:
-			cell.modulate = Color.WHITE
-		var full_name: String
-		if ammo_id == CombatConstants.INVALID_AMMO_ID:
-			full_name = CombatConstants.INVALID_AMMO_NAME
-		else:
-			full_name = str(def.get("name", "未知#%d" % ammo_id))
-		var short := full_name.replace("子弹", "").replace("弹药", "")
-		if short.is_empty():
-			short = str(ammo_id)
-		var glyph := short.substr(0, 1)
-		var lbl := Label.new()
-		lbl.text = "%s×%d" % [glyph, total]
-		lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		lbl.size_flags_vertical = Control.SIZE_EXPAND_FILL
-		lbl.clip_text = true
-		lbl.add_theme_color_override("font_color", colors["fg"])
-		lbl.add_theme_font_size_override("font_size", 11)
-		cell.add_child(lbl)
-		cell.mouse_filter = Control.MOUSE_FILTER_STOP
-		cell.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-		var aid: int = ammo_id
-		cell.mouse_entered.connect(func(): _on_bag_cell_hover_enter(aid, cell))
-		cell.mouse_exited.connect(func(): _on_bag_cell_hover_exit(aid))
-		cell.gui_input.connect(func(ev: InputEvent): _on_bag_cell_input(ev, aid, cell))
-		grid.add_child(cell)
-	var tip := Label.new()
-	tip.text = "悬停/长按看效果"
-	tip.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	tip.add_theme_font_size_override("font_size", 11)
-	tip.add_theme_color_override("font_color", Color(0.7, 0.75, 0.85))
-	tip.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	bag_list.add_child(tip)
-	_bag_refreshing = false
+	_bag_inv_fingerprint = fp
+	# 物理盒只同步「袋」内每发；膛/弃仍在统计行可见
+	var ids: Array = []
+	for aid in state.bag:
+		ids.append(int(aid))
+	_bag_physics.sync_ammo_ids(ids)
 	if _detail_open and _hover_ammo_id >= 0:
-		# 刷新后尽量保持悬停详情
-		_show_ammo_detail(_hover_ammo_id, null, true, false)
+		_show_ammo_detail(_hover_ammo_id, _bag_physics, true, false)
+
+
+func _ammo_bag_glyph(ammo_id: int) -> String:
+	if ammo_id == CombatConstants.INVALID_AMMO_ID:
+		return "无"
+	var def: Dictionary = DataRegistry.get_ammo(ammo_id)
+	var full_name: String = str(def.get("name", "#%d" % ammo_id))
+	var short := full_name.replace("子弹", "").replace("弹药", "")
+	if short.is_empty():
+		return str(ammo_id)
+	return short.substr(0, 1)
+
+
+func _on_bag_physics_hover(ammo_id: int) -> void:
+	_hover_ammo_id = ammo_id
+	_show_ammo_detail(ammo_id, _bag_physics, true, false)
+
+
+func _on_bag_physics_hover_exit(ammo_id: int) -> void:
+	if _bag_refreshing:
+		return
+	if _hover_ammo_id == ammo_id:
+		_hover_ammo_id = -1
+	if _detail_from_hover and not _detail_from_long_press and _detail_ammo_id == ammo_id:
+		_hide_ammo_detail()
+
+
+func _on_bag_physics_press(ammo_id: int) -> void:
+	# 触屏/点击：走长按计时；桌面点击也弹出详情
+	_begin_long_press(ammo_id, _bag_physics)
+	_show_ammo_detail(ammo_id, _bag_physics, true, false)
 
 
 func _on_bag_cell_hover_enter(ammo_id: int, cell: Control) -> void:

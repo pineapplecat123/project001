@@ -231,7 +231,7 @@ text = "红圈正上击发 · 左上装弹口 · LOAD一发一转 · 有弹即�
 
 [node name="BagPanel" type="PanelContainer" parent="Margin/RootVBox/BottomSection"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(240, 280)
+custom_minimum_size = Vector2(260, 320)
 layout_mode = 2
 size_flags_horizontal = 0
 size_flags_vertical = 0
@@ -259,7 +259,7 @@ clip_text = false
 theme_override_font_sizes/font_size = 15
 vertical_alignment = 1
 theme_override_colors/font_color = Color(1.0, 0.92, 0.55, 1)
-text = "弹药袋"
+text = "弹药盒"
 
 [node name="BagScroll" type="ScrollContainer" parent="Margin/RootVBox/BottomSection/BagPanel/BagMargin/BagVBox"]
 layout_mode = 2
