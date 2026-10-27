@@ -934,6 +934,37 @@ func test_enemy_damaged_signal_emits_per_hit() -> void:
 	assert_gt(hits[0][1], 0)
 
 
+func test_player_damaged_signal_on_enemy_attack() -> void:
+	## 怪物普攻扣血发出 player_damaged，供 UI 抖玩家格。
+	var cs := CombatState.new(912)
+	cs.start_graybox(912)
+	cs.enemies.clear()
+	cs.dev_spawn_enemy(1, 1)  # 邻接可打
+	assert_true(cs.can_attack_player(cs.enemies[0]))
+	var got: Array = []
+	cs.player_damaged.connect(func(amount: int, kind: String=""): got.append([amount, kind]))
+	var hp0: int = cs.player_hp
+	cs._run_enemy_turn()
+	assert_gt(got.size(), 0, "enemy attack should emit player_damaged")
+	assert_gt(got[0][0], 0)
+	assert_lt(cs.player_hp, hp0)
+
+
+func test_player_damaged_signal_on_wrath_self_hit() -> void:
+	## 愤怒≥3 自伤也走 player_damaged。
+	var cs := CombatState.new(913)
+	cs.start_graybox(913, false, FireResolver.ID_WRATH)
+	var got: Array = []
+	cs.player_damaged.connect(func(amount: int, kind: String=""): got.append([amount, kind]))
+	var loaded: Array = []
+	for _i in 3:
+		loaded.append(FireResolver.ID_WRATH)
+	cs._resolve_sin_pack_on_load(loaded)
+	assert_eq(got.size(), 1)
+	assert_eq(got[0][0], 6)
+	assert_eq(got[0][1], "愤怒")
+
+
 
 func test_partial_mag_can_start_roll() -> void:
 	## 不满匣（有弹即可）也可 ROLL；与「装满才自动 spin」区分。
@@ -984,3 +1015,47 @@ func test_board_ground_segs_and_unit_rest_on_ground() -> void:
 	assert_eq(body.position, rest + Vector2(5.0, -4.0))
 	ui._reset_cell_shake_offsets(body)
 	assert_eq(body.position, rest)
+	# 玩家格也可抖，抖完贴地（不整盘抖）
+	var player_body: Control = board.get_child(CombatConstants.PLAYER_CELL).get_node("UnitBody")
+	ui._shake_cell_for_damage(CombatConstants.PLAYER_CELL, 8)
+	ui._reset_cell_shake_offsets(player_body)
+	assert_eq(player_body.position, rest)
+
+
+func test_last_shot_hit_and_muzzle_outline_ids() -> void:
+	## 实弹命中写入 last_shot_hit_cell/dealt/ammo；枪口罪孽进入描边 id 列表（怒→傲→贪）。
+	var cs := CombatState.new(920)
+	cs.start_graybox(920, false, FireResolver.ID_WRATH)
+	cs.enemies[0].hp = 999
+	cs.enemies[0].max_hp = 999
+	cs._muzzle_pride = 1
+	cs.dev_force_load([
+		FireResolver.ID_WRATH,
+		CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID,
+	] as Array[int])
+	cs.magazine.set_start(0)
+	assert_true(cs.begin_fire())
+	assert_true(cs.fire_next_shot())
+	assert_eq(cs.last_shot_ammo_id, FireResolver.ID_WRATH)
+	assert_eq(cs.last_shot_hit_cell, cs.enemies[0].cell)
+	assert_gt(cs.last_shot_dealt, 0)
+	# 本发愤怒入枪口后 wrath≥1，且已有傲慢
+	assert_true(cs.last_shot_muzzle_outline_ids.has(FireResolver.ID_WRATH))
+	assert_true(cs.last_shot_muzzle_outline_ids.has(FireResolver.ID_PRIDE))
+	assert_eq(cs.last_shot_muzzle_outline_ids[0], FireResolver.ID_WRATH)
+
+
+func test_blank_shot_clears_last_shot_hit() -> void:
+	var cs := CombatState.new(921)
+	cs.start_graybox(921)
+	cs.dev_force_load([CombatConstants.WHITE_AMMO_ID] as Array[int])
+	# 只 1 发，转锤到空仓再射会快跳；打完后匣空再射路径清 last_shot
+	cs.magazine.set_start(0)
+	assert_true(cs.begin_fire())
+	while cs.phase == CombatState.Phase.FIRING:
+		cs.fire_next_shot()
+	assert_eq(cs.magazine.loaded_count(), 0)

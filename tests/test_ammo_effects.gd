@@ -822,3 +822,43 @@ func test_super_zombie_summons_behind() -> void:
 	assert_eq(zombies, 1, "super zombie should summon one zombie in front")
 	assert_ne(boss, null)
 	assert_eq(zcell, boss.cell - 1)
+
+
+func test_begin_gold_extra_load_is_stepwise_not_instant() -> void:
+	## UI 金色额外：begin 后不瞬装满，需逐步 load_next_chamber；装完才可开火。
+	var cs := CombatState.new(830)
+	cs.start_graybox(830)
+	cs.pace_after_fire = true
+	cs.enemies[0].hp = 999
+	cs.enemies[0].max_hp = 999
+	cs.bag.clear()
+	cs.discard.clear()
+	for _i in 8:
+		cs.bag.append(CombatConstants.WHITE_AMMO_ID)
+	cs.dev_force_load([
+		FireResolver.ID_GOLD,
+		CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID,
+	] as Array[int])
+	assert_true(cs.begin_fire())
+	while cs.phase == CombatState.Phase.FIRING:
+		cs.fire_next_shot()
+	assert_gt(cs.pending_gold_autofires(), 0)
+	assert_true(cs.begin_gold_extra_load())
+	assert_true(cs.is_busy_loading())
+	assert_eq(cs.magazine.loaded_count(), 0, "must not instant-fill magazine")
+	var steps := 0
+	while cs.is_busy_loading():
+		var r: Dictionary = cs.load_next_chamber()
+		assert_true(bool(r.get("ok", false)))
+		steps += 1
+		if not bool(r.get("done", false)):
+			cs.apply_load_rotate()
+		assert_lte(steps, CombatConstants.MAGAZINE_SIZE + 1)
+	assert_eq(cs.magazine.loaded_count(), CombatConstants.MAGAZINE_SIZE)
+	assert_eq(cs.phase, CombatState.Phase.AWAIT_ACTION)
+	assert_true(cs.can_fire())
+	assert_gte(steps, CombatConstants.MAGAZINE_SIZE)

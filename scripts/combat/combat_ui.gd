@@ -40,6 +40,14 @@ const DMG_FLOAT_FONT_MAX := 40
 const SHAKE_MIN_PX := 8.0
 const SHAKE_MAX_PX := 42.0
 const SHAKE_DURATION := 0.28
+## 射击射线占位：加粗芯线 + 枪口罪孽描边；飞行再淡出，避免瞬闪
+const RAY_CORE_THICKNESS := 18.0
+const RAY_OUTLINE_PAD := 8.0
+const RAY_TRAVEL_SEC := 0.2
+const RAY_HOLD_SEC := 0.08
+const RAY_FADE_SEC := 0.12
+const BLOOD_BURST_MIN := 10
+const BLOOD_BURST_MAX := 22
 
 const COL_PHASE := Color(1.0, 0.92, 0.45)
 const COL_HP_OK := Color(0.45, 0.95, 0.55)
@@ -91,6 +99,9 @@ var _muzzle_tip_from_long_press: bool = false
 var _long_press_kind: String = ""  ## "ammo" | "muzzle"
 ## 每格独立抖动 tween（key=cell）；不再整块棋盘抖
 var _cell_shake_tweens: Dictionary = {}
+## 开火结算时暂存飘字/抖动，等射线飞到再播
+var _defer_hit_vfx: bool = false
+var _pending_hit_vfx: Array = []
 var _reward_open: bool = false
 var _ammo_detail_panel: PanelContainer = null
 var _ammo_detail_body: RichTextLabel = null
@@ -147,6 +158,7 @@ func _ready() -> void:
 	state.state_changed.connect(_refresh)
 	state.log_line.connect(_on_log)
 	state.enemy_damaged.connect(_on_enemy_damaged)
+	state.player_damaged.connect(_on_player_damaged)
 	state.gold_gained.connect(_on_gold_gained)
 	btn_load.pressed.connect(_on_load)
 	# btn_manual_load wired in _ensure_square_action_buttons
@@ -1026,6 +1038,49 @@ func _run_manual_load_one() -> void:
 	_refresh()
 
 
+func _animate_gold_extra_load() -> void:
+	## 金色额外轮：一发发装入转轮，节奏对齐普通 LOAD（入弹停顿 + 60° 旋转）；装满可再 spin。
+	_loading = true
+	_apply_disk_rotation(float(state.magazine.start_index))
+	_refresh_mag_contents()
+	_refresh_hud_only()
+	if not state.is_busy_loading():
+		_loading = false
+		_apply_disk_rotation(float(state.magazine.start_index))
+		_refresh_hud_only()
+		return
+	var needs_spin := false
+	while state.is_busy_loading():
+		var before_steps: float = _wheel_visual_steps
+		var result: Dictionary = state.load_next_chamber()
+		if not bool(result.get("ok", false)):
+			break
+		needs_spin = bool(result.get("needs_spin", false))
+		_refresh_mag_contents()
+		_refresh_hud_only()
+		if LOAD_INSERT_PAUSE > 0.0:
+			await get_tree().create_timer(LOAD_INSERT_PAUSE).timeout
+		if bool(result.get("done", false)):
+			break
+		var rotate_to: float = float(result.get("rotate_to", state.magazine.start_index))
+		var target: float = rotate_to
+		while target + 0.001 < before_steps:
+			target += float(CombatConstants.MAGAZINE_SIZE)
+		if absf(target - before_steps) < 0.001:
+			target = before_steps + 1.0
+		_wheel_animating = true
+		state.apply_load_rotate()
+		await _animate_disk_to(target, STEP_ROT_DURATION)
+		_refresh_mag_contents()
+	if needs_spin and state.can_start_roll():
+		await _run_shared_cylinder_spin()
+	else:
+		_apply_disk_rotation(float(state.magazine.start_index))
+	_loading = false
+	_refresh_mag_contents()
+	_refresh_hud_only()
+
+
 func _on_fire() -> void:
 	if _busy():
 		return
@@ -1037,14 +1092,14 @@ func _run_fire_sequence() -> void:
 		return
 	_firing = true
 	await _animate_fire_shots()
-	# 金色额外轮：装→射，沿用同一套击发节奏（非整匣瞬结）
+	# 金色额外轮：逐步装弹（同普通装弹节奏）→ 再自动开火（不瞬装满）
 	while state.pending_gold_autofires() > 0:
 		if not state.begin_gold_extra_load():
 			break
-		_apply_disk_rotation(float(state.magazine.start_index))
-		_refresh_mag_contents()
-		_refresh_hud_only()
-		await get_tree().create_timer(FIRE_SHOT_DELAY).timeout
+		await _animate_gold_extra_load()
+		if state.magazine.is_empty() or not state.can_fire():
+			break
+		await get_tree().create_timer(FIRE_SHOT_DELAY * 0.5).timeout
 		if not state.begin_fire():
 			break
 		await _animate_fire_shots()
@@ -1074,7 +1129,10 @@ func _animate_fire_shots() -> void:
 			var skip_dur: float = STEP_ROT_DURATION * float(skip_n)
 			await _animate_disk_to(_wheel_visual_steps + float(skip_n), skip_dur)
 			_refresh_mag_contents()
+		_defer_hit_vfx = true
+		_pending_hit_vfx.clear()
 		var more: bool = state.fire_next_shot()
+		_defer_hit_vfx = false
 		# fire_next_shot 内会瞬推 skip_n（与上面动画对齐）并消耗实弹后再 +1
 		var fired_slot: int = state.last_fired_slot
 		var blank: bool = state.last_shot_was_blank
@@ -1083,8 +1141,14 @@ func _animate_fire_shots() -> void:
 			_flash_fire_at_top(fired_slot)
 			_refresh_mag_contents()
 			_refresh_hud_only()
+			# 实弹：粗射线（弹药色+枪口描边）飞到目标，命中再飚血/飘字抖动
+			await _play_shot_beam_and_impact()
+			for hit in _pending_hit_vfx:
+				_spawn_damage_float(int(hit.get("cell", -1)), int(hit.get("amount", 0)), str(hit.get("kind", "")))
+			_pending_hit_vfx.clear()
 			await get_tree().create_timer(FIRE_FLASH_HOLD).timeout
 		else:
+			_pending_hit_vfx.clear()
 			_refresh_mag_contents()
 			_refresh_hud_only()
 		if more:
@@ -1101,6 +1165,109 @@ func _animate_fire_shots() -> void:
 			_wheel_animating = false
 			break
 	_apply_disk_rotation(float(state.magazine.start_index))
+
+
+func _cell_unit_global_center(cell: int) -> Vector2:
+	## 棋盘单位块中心（全球坐标）；无单位则用格中心。
+	if board_row == null or cell < 0 or cell >= board_row.get_child_count():
+		return Vector2.ZERO
+	var slot: Control = board_row.get_child(cell) as Control
+	if slot == null:
+		return Vector2.ZERO
+	var unit: Control = slot.get_node_or_null("UnitBody") as Control
+	if unit != null and unit.visible:
+		return unit.get_global_rect().get_center()
+	return slot.get_global_rect().get_center()
+
+
+func _play_shot_beam_and_impact() -> void:
+	## 从玩家打到本发主命中怪：粗芯线=弹药色，外圈描边=枪口罪孽色（怒→傲→贪可多层）；命中且有伤则飚血。
+	if state == null:
+		return
+	var hit_cell: int = int(state.last_shot_hit_cell)
+	if hit_cell < 0:
+		return
+	var from_g: Vector2 = _cell_unit_global_center(CombatConstants.PLAYER_CELL)
+	var to_g: Vector2 = _cell_unit_global_center(hit_cell)
+	if from_g == Vector2.ZERO or to_g == Vector2.ZERO:
+		return
+	var ammo_id: int = int(state.last_shot_ammo_id)
+	var core_col: Color = _ammo_colors(ammo_id).get("bg", Color(0.95, 0.95, 0.9))
+	var outline_cols: Array[Color] = []
+	for mid in state.last_shot_muzzle_outline_ids:
+		outline_cols.append(_ammo_colors(int(mid)).get("bg", Color(1, 1, 1)))
+	await _animate_thick_shot_ray(from_g, to_g, core_col, outline_cols)
+	if int(state.last_shot_dealt) > 0:
+		_spawn_blood_burst(to_g, int(state.last_shot_dealt))
+
+
+func _animate_thick_shot_ray(from_g: Vector2, to_g: Vector2, core_col: Color, outline_cols: Array[Color]) -> void:
+	## 加粗射线：多层描边在外、弹药色芯在内；长度从短拉满再短暂停淡出。
+	var delta: Vector2 = to_g - from_g
+	var length: float = maxf(delta.length(), 8.0)
+	var host := Control.new()
+	host.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	host.z_index = 48
+	host.pivot_offset = Vector2.ZERO
+	add_child(host)
+	host.global_position = from_g
+	host.rotation = delta.angle()
+	var layer_rects: Array[ColorRect] = []
+	# 描边由外到内（数组顺序=怒→傲→贪，最外层最先画）
+	var n_out: int = outline_cols.size()
+	for i in n_out:
+		var pad: float = float(n_out - i) * RAY_OUTLINE_PAD
+		var rect := ColorRect.new()
+		rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		rect.color = outline_cols[i]
+		rect.position = Vector2(0.0, -(RAY_CORE_THICKNESS * 0.5 + pad))
+		rect.size = Vector2(0.0, RAY_CORE_THICKNESS + pad * 2.0)
+		host.add_child(rect)
+		layer_rects.append(rect)
+	var core := ColorRect.new()
+	core.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	core.color = core_col
+	core.position = Vector2(0.0, -RAY_CORE_THICKNESS * 0.5)
+	core.size = Vector2(0.0, RAY_CORE_THICKNESS)
+	host.add_child(core)
+	layer_rects.append(core)
+	var tw := create_tween()
+	for rect in layer_rects:
+		tw.parallel().tween_property(rect, "size:x", length, RAY_TRAVEL_SEC).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	await tw.finished
+	if RAY_HOLD_SEC > 0.0:
+		await get_tree().create_timer(RAY_HOLD_SEC).timeout
+	var fade := create_tween()
+	fade.tween_property(host, "modulate:a", 0.0, RAY_FADE_SEC)
+	await fade.finished
+	if is_instance_valid(host):
+		host.queue_free()
+
+
+func _spawn_blood_burst(at_g: Vector2, amount: int) -> void:
+	## 命中飚血占位：红色小块向外飞散淡出；伤害越大颗粒略多。
+	if amount <= 0:
+		return
+	var t: float = clampf(float(amount) / 14.0, 0.0, 1.0)
+	var n: int = int(round(lerpf(float(BLOOD_BURST_MIN), float(BLOOD_BURST_MAX), t)))
+	for _i in n:
+		var drop := ColorRect.new()
+		drop.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		drop.z_index = 49
+		var sz: float = randf_range(5.0, 11.0) * (0.85 + 0.35 * t)
+		drop.size = Vector2(sz, sz)
+		drop.color = Color(randf_range(0.75, 1.0), randf_range(0.05, 0.22), randf_range(0.05, 0.18), 0.95)
+		add_child(drop)
+		drop.global_position = at_g - drop.size * 0.5
+		var dir := Vector2.from_angle(randf_range(-PI, PI))
+		var dist := randf_range(22.0, 58.0) * (0.9 + 0.4 * t)
+		var end_p: Vector2 = at_g + dir * dist - drop.size * 0.5
+		var dur := randf_range(0.28, 0.48)
+		var tw := create_tween()
+		tw.set_parallel(true)
+		tw.tween_property(drop, "global_position", end_p, dur).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+		tw.tween_property(drop, "modulate:a", 0.0, dur).set_delay(dur * 0.25)
+		tw.chain().tween_callback(drop.queue_free)
 
 
 ## 在正上击发点（红圈下）打出发黄闪；chamber 在盘上此时应对准正上。
@@ -1317,7 +1484,15 @@ func _refresh_reward_panel() -> void:
 
 
 func _on_enemy_damaged(cell: int, amount: int, kind: String = "") -> void:
+	if _defer_hit_vfx:
+		_pending_hit_vfx.append({"cell": cell, "amount": amount, "kind": kind})
+		return
 	_spawn_damage_float(cell, amount, kind)
+
+
+func _on_player_damaged(amount: int, kind: String = "") -> void:
+	## 只抖玩家单位块（格 0），与怪物受击同套振幅；飘字挂玩家格。
+	_spawn_damage_float(CombatConstants.PLAYER_CELL, amount, kind)
 
 
 func _on_gold_gained(cell: int, amount: int) -> void:
@@ -1416,7 +1591,7 @@ func _reset_cell_shake_offsets(body: Control) -> void:
 
 
 func _shake_cell_for_damage(cell: int, amount: int) -> void:
-	## 仅被击中的怪物单位块抖动；振幅更大更夸张，仍随伤害放大（小伤也明显）。
+	## 仅被击中的单位块抖动（怪或玩家）；振幅随伤害放大（小伤也明显）。不抖整盘。
 	if board_row == null or amount <= 0:
 		return
 	if cell < 0 or cell >= board_row.get_child_count():

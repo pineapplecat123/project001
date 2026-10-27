@@ -27,6 +27,8 @@ signal log_line(text: String)
 signal state_changed
 ## UI：敌人实际扣血时抛出（cell + 伤害 + 状态标签；直伤 kind 为空），用于飘字
 signal enemy_damaged(cell: int, amount: int, kind: String)
+## 玩家实际扣血（怪物普攻、愤怒自伤等）；UI 抖玩家格 + 飘字。
+signal player_damaged(amount: int, kind: String)
 ## UI：贪婪掉金时抛出（cell + 掉落金币量），用于金色飘字
 signal gold_gained(cell: int, amount: int)
 
@@ -106,6 +108,11 @@ var last_fired_slot: int = -1
 var last_shot_was_blank: bool = false
 ## 本发开火前快跳过的空仓步数（供 UI 快转）
 var last_blank_skip_steps: int = 0
+## UI 射击特效：本发弹药 id / 主命中格 / 主命中伤害 / 枪口描边用罪孽弹药 id（怒→傲→贪）
+var last_shot_ammo_id: int = -1
+var last_shot_hit_cell: int = -1
+var last_shot_dealt: int = 0
+var last_shot_muzzle_outline_ids: Array[int] = []
 
 
 func _init(seed_value: int = 0) -> void:
@@ -256,6 +263,10 @@ func _reset_fire_session() -> void:
 	last_shot_was_blank = false
 	last_blank_skip_steps = 0
 	last_fired_slot = -1
+	last_shot_ammo_id = -1
+	last_shot_hit_cell = -1
+	last_shot_dealt = 0
+	last_shot_muzzle_outline_ids.clear()
 
 
 
@@ -286,6 +297,19 @@ func muzzle_status_text() -> String:
 	if parts.is_empty():
 		return ""
 	return "枪口：" + " · ".join(parts)
+
+
+
+func _muzzle_outline_ammo_ids_for_shot() -> Array[int]:
+	## 对本发有贡献的罪孽枪口色（与伤害提示顺序一致：愤怒→傲慢→贪婪）；供射线描边。
+	var out: Array[int] = []
+	if _muzzle_wrath > 0:
+		out.append(FireResolver.ID_WRATH)
+	if _muzzle_pride > 0:
+		out.append(FireResolver.ID_PRIDE)
+	if _muzzle_greed > 0:
+		out.append(FireResolver.ID_GREED)
+	return out
 
 
 func muzzle_outgoing_multiplier() -> float:
@@ -563,8 +587,7 @@ func _resolve_sin_pack_on_load(loaded: Array) -> void:
 	var pride_n := _count_ammo_in(loaded, FireResolver.ID_PRIDE)
 	var greed_n := _count_ammo_in(loaded, FireResolver.ID_GREED)
 	if wrath_n >= 3:
-		player_hp = maxi(0, player_hp - 6)
-		wave_took_damage = true
+		_apply_player_damage(6, "愤怒")
 		_log("罪孽[愤怒]：本匣愤怒 ×%d（≥3）→ 玩家自伤 6（HP %d/%d）。" % [wrath_n, player_hp, player_max_hp])
 		if player_hp <= 0:
 			_lose_hp()
@@ -618,6 +641,16 @@ func _notify_enemy_damage(e: EnemyInstance, amount: int, kind: String = "") -> v
 	if e == null or amount <= 0:
 		return
 	enemy_damaged.emit(e.cell, amount, kind)
+
+
+func _apply_player_damage(amount: int, kind: String = "") -> int:
+	## 扣玩家 HP 并通知 UI（抖动/飘字）。amount≤0 不处理。返回申请的伤害值。
+	if amount <= 0:
+		return 0
+	player_hp = maxi(0, player_hp - amount)
+	wave_took_damage = true
+	player_damaged.emit(amount, kind)
+	return amount
 
 
 func _shuffle(arr: Array[int]) -> void:
@@ -891,7 +924,9 @@ func _complete_load_session() -> Dictionary:
 	_log("装填完成：共 %d 发%s。" % [
 		n, "（将随机旋转转轮）" if needs_spin else ""
 	])
-	_resolve_sin_pack_on_load(_load_resolved_ids)
+	# 金色额外轮逐步装：不触发罪孽≥3 装填惩罚（与旧 load_sequence 瞬装一致）
+	if not _in_gold_extra_round:
+		_resolve_sin_pack_on_load(_load_resolved_ids)
 	var rotate_to: int = magazine.start_index
 	_reset_load_session()
 	if magazine.is_empty():
@@ -1062,12 +1097,20 @@ func fire_next_shot() -> bool:
 	if magazine == null or magazine.is_empty():
 		last_shot_was_blank = skipped > 0
 		last_fired_slot = magazine.chamber_at_fire_port() if magazine != null else -1
+		last_shot_ammo_id = -1
+		last_shot_hit_cell = -1
+		last_shot_dealt = 0
+		last_shot_muzzle_outline_ids.clear()
 		_finish_fire()
 		return false
 	var hammer: int = magazine.chamber_at_fire_port()
 	if magazine.slots[hammer] == Magazine.EMPTY:
 		last_shot_was_blank = true
 		last_fired_slot = hammer
+		last_shot_ammo_id = -1
+		last_shot_hit_cell = -1
+		last_shot_dealt = 0
+		last_shot_muzzle_outline_ids.clear()
 		_finish_fire()
 		return false
 
@@ -1088,6 +1131,10 @@ func fire_next_shot() -> bool:
 	var thunder := _muzzle_thunder or bool(flags["thunder"])
 
 	base_dmg = _scale_outgoing_damage(base_dmg)
+	last_shot_ammo_id = ammo_id
+	last_shot_hit_cell = -1
+	last_shot_dealt = 0
+	last_shot_muzzle_outline_ids = _muzzle_outline_ammo_ids_for_shot()
 	var dealt_total := _apply_shot_to_enemies(ammo_id, base_dmg, pierce, gas, fire, water, thunder)
 	_fire_total_damage += dealt_total
 	_discard_append(ammo_id, shot_temp)
@@ -1128,10 +1175,16 @@ func _apply_shot_to_enemies(
 	if pierce:
 		var dmg := base_dmg
 		var chain_origin: EnemyInstance = null
+		var first := true
 		for e in targets:
 			if dmg <= 0:
 				break
-			total += _hit_enemy_with_elements(e, dmg, ammo_id, gas, fire, water, thunder)
+			var dealt_e: int = _hit_enemy_with_elements(e, dmg, ammo_id, gas, fire, water, thunder)
+			total += dealt_e
+			if first:
+				last_shot_hit_cell = e.cell
+				last_shot_dealt = dealt_e
+				first = false
 			# 穿透：以首个「有湿」目标为导电起点（含水本发刚挂上的湿）
 			if thunder and chain_origin == null and e.wet_stacks > 0:
 				chain_origin = e
@@ -1140,7 +1193,10 @@ func _apply_shot_to_enemies(
 			total += _thunder_chain(chain_origin, base_dmg, gas, fire, water)
 	else:
 		var e: EnemyInstance = targets[0]
-		total += _hit_enemy_with_elements(e, base_dmg, ammo_id, gas, fire, water, thunder)
+		var dealt_e: int = _hit_enemy_with_elements(e, base_dmg, ammo_id, gas, fire, water, thunder)
+		total += dealt_e
+		last_shot_hit_cell = e.cell
+		last_shot_dealt = dealt_e
 		if thunder and e.wet_stacks > 0:
 			total += _thunder_chain(e, base_dmg, gas, fire, water)
 	return total
@@ -1353,7 +1409,9 @@ func post_fire_enemy_pending() -> bool:
 	return _post_fire_enemy_pending
 
 
-## UI：消耗一轮金色额外——从袋装填（不播怪回合）。成功后 phase=AWAIT_ACTION，匣已装好。
+## UI：消耗一轮金色额外——开启逐步装填会话（不瞬装满、不扣回合）。
+## 成功后请反复 load_next_chamber + apply_load_rotate（与普通装弹同动画），完成后再 begin_fire。
+## 无 UI 的同步路径仍用 _auto_load_and_fire_once（测试/非 pace）。
 func begin_gold_extra_load() -> bool:
 	if _pending_gold_autofires <= 0:
 		return false
@@ -1362,23 +1420,20 @@ func begin_gold_extra_load() -> bool:
 		_pending_gold_autofires = 0
 		return false
 	_reshuffle_if_needed_for_load()
-	var draw_n: int = mini(CombatConstants.MAGAZINE_SIZE, bag.size())
-	if draw_n <= 0:
+	if bag.is_empty():
 		_log("金色额外轮：无弹药可装。")
 		_pending_gold_autofires = 0
 		return false
-	var drawn: Array[int] = _draw_random_from_bag(draw_n)
-	var drawn_temps: Array = _last_drawn_temps.duplicate()
-	var prev := last_load_ids.duplicate()
-	last_load_ids = drawn.duplicate()
-	var resolved := _resolve_black_white_with_prev(drawn, prev)
-	magazine.load_sequence(resolved, drawn_temps)
-	if bag.is_empty():
-		needs_reshuffle_next_load = true
 	_pending_gold_autofires -= 1
 	_in_gold_extra_round = true
-	_log("金色弹药：额外自动装填射击（剩余待追加 %d）。" % _pending_gold_autofires)
-	_set_phase(Phase.AWAIT_ACTION)
+	magazine.clear()
+	_load_session_active = true
+	_load_next_slot = 0
+	_load_raw_ids.clear()
+	_load_resolved_ids.clear()
+	magazine.start_index = CombatConstants.LOAD_SESSION_INITIAL_START
+	_log("金色弹药：额外自动装填（逐步入匣，剩余待追加 %d）。" % _pending_gold_autofires)
+	_set_phase(Phase.AWAIT_LOAD)
 	_emit()
 	return true
 
@@ -1463,6 +1518,10 @@ func _auto_load_and_fire_once() -> bool:
 		var water := _muzzle_water or bool(flags["water"])
 		var thunder := _muzzle_thunder or bool(flags["thunder"])
 		base_dmg = _scale_outgoing_damage(base_dmg)
+		last_shot_ammo_id = ammo_id
+		last_shot_hit_cell = -1
+		last_shot_dealt = 0
+		last_shot_muzzle_outline_ids = _muzzle_outline_ammo_ids_for_shot()
 		var gold_temp: bool = magazine.is_slot_temporary(hammer)
 		_fire_total_damage += _apply_shot_to_enemies(ammo_id, base_dmg, pierce, gas, fire, water, thunder)
 		_discard_append(ammo_id, gold_temp)
@@ -1594,9 +1653,7 @@ func _run_enemy_turn() -> void:
 		_move_enemy(e)
 		if can_attack_player(e):
 			var incoming: int = int(round(float(e.atk) * _incoming_pride_multiplier()))
-			player_hp = maxi(0, player_hp - incoming)
-			if incoming > 0:
-				wave_took_damage = true
+			_apply_player_damage(incoming, "")
 			_log("%s 攻击玩家，造成 %d（玩家 HP %d/%d · 射程 %d%s）" % [
 				e.name_zh, incoming, player_hp, player_max_hp, e.attack_range,
 				(" · 傲慢×%d" % _muzzle_pride) if _muzzle_pride > 0 else ""
