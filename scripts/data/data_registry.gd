@@ -71,6 +71,14 @@ func is_ammo_ephemeral(ammo_id: int) -> bool:
 	return bool(get_ammo(ammo_id).get("ephemeral", false))
 
 
+func is_sin_ammo(ammo_id: int) -> bool:
+	## 标签「罪孽」：商店不可移除（设计：初始罪孽不能被删除）。
+	var tags = get_ammo(ammo_id).get("tags", [])
+	if tags is Array:
+		return "罪孽" in tags
+	return false
+
+
 func is_ammo_reward_eligible(ammo_id: int) -> bool:
 	## 奖励/商店池：启用且非 ephemeral；可用 in_reward_pool 显式覆盖。
 	var def: Dictionary = get_ammo(ammo_id)

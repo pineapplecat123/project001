@@ -1,6 +1,6 @@
 class_name ShopState
 ## 商店会话逻辑（纯数据）。打开时拷贝 gold/bag；离开时写回 RunState。
-## 库存随机、无稀有度权重；购买入袋；移除费用单店递增，离店重置。
+## 库存随机、无稀有度权重；购买入袋；移除费用单店递增，离店重置；罪孽弹药不可去除。
 
 const ShopConstants = preload("res://scripts/shop/shop_constants.gd")
 
@@ -92,10 +92,15 @@ func can_remove_at(bag_index: int) -> bool:
 		return false
 	if bag_index < 0 or bag_index >= bag.size():
 		return false
+	if DataRegistry.is_sin_ammo(int(bag[bag_index])):
+		return false
 	return gold >= next_remove_cost()
 
 
 func remove_at(bag_index: int) -> bool:
+	if bag_index >= 0 and bag_index < bag.size() and DataRegistry.is_sin_ammo(int(bag[bag_index])):
+		last_message = "罪孽弹药不可去除。"
+		return false
 	if not can_remove_at(bag_index):
 		last_message = "无法移除（索引无效或金币不足）。"
 		return false

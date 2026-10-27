@@ -152,3 +152,50 @@ func test_ghost_never_in_reward_choices() -> void:
 func test_ghost_damage_is_two() -> void:
 	assert_eq(FireResolver.base_damage_for(FireResolver.ID_TOMBSTONE, [FireResolver.ID_TOMBSTONE], 0, 0), 2)
 	assert_eq(FireResolver.base_damage_for(FireResolver.ID_GHOST, [FireResolver.ID_GHOST], 0, 0), 2)
+
+func test_bag_can_hold_multiple_tombstones() -> void:
+	## 设计未限制墓碑唯一；袋可持有多发。奖励/商店入袋可叠加（地图 run 保留；无限每波胜利会整袋回 10+5 后再叠当波奖励）。
+	var cs := CombatState.new(1919)
+	cs.start_graybox(1919)
+	cs.bag.clear()
+	cs.bag_temp.clear()
+	cs._bag_append(FireResolver.ID_TOMBSTONE, false)
+	cs._bag_append(FireResolver.ID_TOMBSTONE, false)
+	cs._bag_append(CombatConstants.WHITE_AMMO_ID, false)
+	var n := 0
+	for id in cs.bag:
+		if int(id) == FireResolver.ID_TOMBSTONE:
+			n += 1
+	assert_eq(n, 2)
+	assert_eq(cs.bag.size(), 3)
+
+
+func test_endless_win_reset_wipes_prior_tombstones_then_reward_adds_one() -> void:
+	## 无限每波胜利：袋回 10+5（含先前墓碑一并清），再领奖可再入 1 发——故跨波看起来「永远只有一发墓碑」。
+	var cs := CombatState.new(1920)
+	cs.start_graybox(1920, true, FireResolver.ID_WRATH)
+	cs._bag_append(FireResolver.ID_TOMBSTONE, false)
+	cs._bag_append(FireResolver.ID_TOMBSTONE, false)
+	var before := 0
+	for id in cs.bag:
+		if int(id) == FireResolver.ID_TOMBSTONE:
+			before += 1
+	assert_eq(before, 2)
+	cs.enemies[0].hp = 1
+	cs.enemies[0].max_hp = 1
+	cs.dev_force_load([CombatConstants.WHITE_AMMO_ID] as Array[int])
+	assert_true(cs.begin_fire())
+	while cs.phase == CombatState.Phase.FIRING:
+		cs.fire_next_shot()
+	assert_eq(cs.phase, CombatState.Phase.WON)
+	assert_eq(cs.bag.size(), CombatConstants.STARTER_BAG_TOTAL)
+	for id in cs.bag:
+		assert_ne(int(id), FireResolver.ID_TOMBSTONE)
+	cs.reward_choices = [FireResolver.ID_TOMBSTONE, CombatConstants.WHITE_AMMO_ID, CombatConstants.WHITE_AMMO_ID]
+	assert_true(cs.pick_reward_ammo(0))
+	var after := 0
+	for id in cs.bag:
+		if int(id) == FireResolver.ID_TOMBSTONE:
+			after += 1
+	assert_eq(after, 1)
+

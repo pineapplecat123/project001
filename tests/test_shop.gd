@@ -132,3 +132,37 @@ func test_visit_placeholder_rejects_shop() -> void:
 	var msg := RunState.visit_placeholder(3)
 	assert_string_contains(msg, "商店")
 	assert_false(RunState.is_completed(3))
+
+func test_cannot_remove_sin_ammo() -> void:
+	## 设计：罪孽弹药不能被删除；商店移除须拦截（平庸仍可删）。
+	var shop := ShopState.new()
+	var bag: Array[int] = [
+		CombatConstants.WHITE_AMMO_ID,
+		FireResolver.ID_WRATH,
+		FireResolver.ID_PRIDE,
+		FireResolver.ID_GREED,
+	]
+	shop.begin(100, bag, 3, 66)
+	assert_false(DataRegistry.is_sin_ammo(CombatConstants.WHITE_AMMO_ID))
+	assert_true(DataRegistry.is_sin_ammo(FireResolver.ID_WRATH))
+	assert_true(DataRegistry.is_sin_ammo(FireResolver.ID_PRIDE))
+	assert_true(DataRegistry.is_sin_ammo(FireResolver.ID_GREED))
+	# 罪孽索引不可移除
+	assert_false(shop.can_remove_at(1))
+	assert_false(shop.remove_at(1))
+	assert_string_contains(shop.last_message, "罪孽")
+	assert_eq(shop.bag.size(), 4)
+	assert_eq(shop.gold, 100)
+	assert_eq(shop.removes_done, 0)
+	assert_false(shop.remove_at(2))
+	assert_false(shop.remove_at(3))
+	# 平庸仍可删
+	assert_true(shop.can_remove_at(0))
+	assert_true(shop.remove_at(0))
+	assert_eq(shop.bag.size(), 3)
+	assert_eq(shop.removes_done, 1)
+	assert_eq(shop.gold, 100 - ShopConstants.REMOVE_BASE_COST)
+	# 删后袋内只剩罪孽，仍不可删
+	assert_false(shop.can_remove_at(0))
+	assert_false(shop.remove_at(0))
+

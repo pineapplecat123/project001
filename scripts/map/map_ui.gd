@@ -325,7 +325,7 @@ func _refresh_shop_panel() -> void:
 	shop_title.text = "商店 · 灰盒"
 	shop_gold_label.text = "金币 %d" % _shop.gold
 	shop_gold_label.add_theme_color_override("font_color", COL_GOLD)
-	shop_hint.text = "购买：单价 %d 金/发（灰盒暂定）。重随：免费 %d 次，之后每次 %d 金（灰盒暂定）。移除：仅商店可删，费用本店递增（%d、再 +%d…），离店重置。" % [
+	shop_hint.text = "购买：单价 %d 金/发（灰盒暂定）。重随：免费 %d 次，之后每次 %d 金（灰盒暂定）。移除：仅商店可删，费用本店递增（%d、再 +%d…），离店重置；罪孽弹药不可去除。" % [
 		ShopConstants.AMMO_PRICE,
 		ShopConstants.FREE_REROLLS,
 		ShopConstants.REROLL_COST,
@@ -405,11 +405,16 @@ func _refresh_shop_bag() -> void:
 		info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.add_child(info)
 		var btn := Button.new()
-		btn.text = "移除 %d 金" % _shop.next_remove_cost()
-		btn.custom_minimum_size = Vector2(120, 36)
 		var aid: int = int(ammo_id)
-		btn.disabled = _shop.gold < _shop.next_remove_cost()
-		btn.pressed.connect(func(): _on_shop_remove_ammo(aid))
+		var idx := _shop.bag.find(aid)
+		if DataRegistry.is_sin_ammo(aid):
+			btn.text = "不可去除"
+			btn.disabled = true
+		else:
+			btn.text = "移除 %d 金" % _shop.next_remove_cost()
+			btn.disabled = not _shop.can_remove_at(idx)
+			btn.pressed.connect(func(): _on_shop_remove_ammo(aid))
+		btn.custom_minimum_size = Vector2(120, 36)
 		row.add_child(btn)
 		shop_bag_list.add_child(row)
 

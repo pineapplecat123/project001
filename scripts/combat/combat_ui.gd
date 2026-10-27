@@ -1225,6 +1225,8 @@ func _animate_fire_shots() -> void:
 			# 每空仓一格时长，总时长随步数变长，保证能看见转到有弹处
 			var skip_dur: float = _paced(STEP_ROT_DURATION) * float(skip_n)
 			await _animate_disk_to(_wheel_visual_steps + float(skip_n), skip_dur)
+			# _animate_disk_to 结束会清 animating；射击序列未完，重新占住避免 signal 抢跑
+			_wheel_animating = true
 			_refresh_mag_contents()
 		_pending_hit_vfx.clear()
 		# 不 defer 飘字：pace 下扣血在命中帧，enemy_damaged 当场飘字
@@ -1235,8 +1237,9 @@ func _animate_fire_shots() -> void:
 		var blank: bool = state.last_shot_was_blank
 		skip_n = int(state.last_blank_skip_steps)
 		if not blank:
-			_flash_fire_at_top(fired_slot)
+			# 先刷仓内容，再闪正上仓；避免 paint 冲掉闪白 modulate
 			_refresh_mag_contents()
+			_flash_fire_at_top(fired_slot)
 			# 只刷转轮/顶栏；怪 HP 仍是开火前，等拖尾命中再变
 			_refresh_hud_only()
 			# 实弹：彗星拖尾飞掠；途经命中帧结算伤害+飚血+飘字
@@ -2157,7 +2160,7 @@ func _refresh_endless_shop_panel() -> void:
 		return
 	_shop_title.text = "无限商店 · 第 %d 波后" % state.wave_index
 	_shop_gold_label.text = "金币 %d" % _shop.gold
-	_shop_hint.text = "购买：单价 %d 金/发。重随：免费 %d 次，之后每次 %d 金。移除：本店递增（%d、再 +%d…），离店重置。逛完后才可下一波。" % [
+	_shop_hint.text = "购买：单价 %d 金/发。重随：免费 %d 次，之后每次 %d 金。移除：本店递增（%d、再 +%d…），离店重置；罪孽弹药不可去除。逛完后才可下一波。" % [
 		ShopConstants.AMMO_PRICE,
 		ShopConstants.FREE_REROLLS,
 		ShopConstants.REROLL_COST,
@@ -2236,11 +2239,16 @@ func _refresh_endless_shop_bag() -> void:
 		info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.add_child(info)
 		var btn := Button.new()
-		btn.text = "移除 %d 金" % _shop.next_remove_cost()
-		btn.custom_minimum_size = Vector2(120, 36)
 		var aid: int = int(ammo_id)
-		btn.disabled = _shop.gold < _shop.next_remove_cost()
-		btn.pressed.connect(func(): _on_endless_shop_remove(aid))
+		var idx := _shop.bag.find(aid)
+		if DataRegistry.is_sin_ammo(aid):
+			btn.text = "不可去除"
+			btn.disabled = true
+		else:
+			btn.text = "移除 %d 金" % _shop.next_remove_cost()
+			btn.disabled = not _shop.can_remove_at(idx)
+			btn.pressed.connect(func(): _on_endless_shop_remove(aid))
+		btn.custom_minimum_size = Vector2(120, 36)
 		row.add_child(btn)
 		_shop_bag_list.add_child(row)
 
@@ -3152,12 +3160,16 @@ func _refresh_mag() -> void:
 
 func _paint_mag_chambers() -> void:
 	var start_i: int = state.magazine.start_index
+	var flash_busy: bool = (
+		_fire_flash_tween != null
+		and _fire_flash_tween.is_valid()
+		and _fire_flash_tween.is_running()
+	)
+	var fired_slot: int = int(state.last_fired_slot) if state != null else -1
 	for slot_i in CombatConstants.MAGAZINE_SIZE:
 		var panel: Panel = _chamber_panels[slot_i]
 		var info: Label = panel.get_node("Info")
 		var ammo_id: int = state.magazine.slots[slot_i]
-		var order_k: int = (slot_i - start_i + CombatConstants.MAGAZINE_SIZE) % CombatConstants.MAGAZINE_SIZE
-		var order_num: int = order_k + 1
 		var style := StyleBoxFlat.new()
 		style.set_corner_radius_all(999)
 		style.set_border_width_all(2)
@@ -3166,7 +3178,6 @@ func _paint_mag_chambers() -> void:
 			style.border_color = Color(0.4, 0.4, 0.45)
 			info.text = "空"
 			info.add_theme_color_override("font_color", Color(0.7, 0.7, 0.75))
-			panel.modulate = Color(1, 1, 1, 1)
 		else:
 			var def: Dictionary = DataRegistry.get_ammo(ammo_id)
 			var short: String
@@ -3183,13 +3194,8 @@ func _paint_mag_chambers() -> void:
 				style.border_color = Color(0.95, 0.4, 0.4)
 			info.text = short
 			info.add_theme_color_override("font_color", colors["fg"])
-			# 临时额外罪孽：半透明
-			if state.magazine.is_slot_temporary(slot_i):
-				panel.modulate = Color(1, 1, 1, 0.48)
-			else:
-				panel.modulate = Color(1, 1, 1, 1)
-		# 高亮跟屏幕固定标走：用盘面视觉步数，避免逻辑 start 已+1 而 Tween 未完成时错位
-		var visual_start: int = int(round(fposmod(_wheel_visual_steps, float(CombatConstants.MAGAZINE_SIZE))))
+		# 红/装边框跟屏幕固定标走：用盘面视觉步数（向下取整，避免半步 round 跳仓）
+		var visual_start: int = int(floor(fposmod(_wheel_visual_steps, float(CombatConstants.MAGAZINE_SIZE))))
 		var at_fire: bool = slot_i == posmod(visual_start + CombatConstants.FIRE_PORT_OFFSET_STEPS, CombatConstants.MAGAZINE_SIZE)
 		var at_load: bool = slot_i == posmod(visual_start + CombatConstants.LOAD_PORT_OFFSET_STEPS, CombatConstants.MAGAZINE_SIZE)
 		if _loading and at_load:
@@ -3198,6 +3204,14 @@ func _paint_mag_chambers() -> void:
 		elif at_fire:
 			style.border_color = Color(1.0, 0.15, 0.12)
 			style.set_border_width_all(4)
-			if _firing:
-				style.bg_color = style.bg_color.lightened(0.25)
+		# 击发白蒙版锁在本发 last_fired_slot，不跟转盘跳到别的仓
+		if _firing and fired_slot == slot_i and fired_slot >= 0:
+			style.bg_color = style.bg_color.lightened(0.25)
 		panel.add_theme_stylebox_override("panel", style)
+		# 闪白进行中勿重置本发仓 modulate；其余仓照常（临时罪孽半透明）
+		if flash_busy and fired_slot == slot_i:
+			continue
+		if ammo_id != Magazine.EMPTY and state.magazine.is_slot_temporary(slot_i):
+			panel.modulate = Color(1, 1, 1, 0.48)
+		else:
+			panel.modulate = Color(1, 1, 1, 1)
