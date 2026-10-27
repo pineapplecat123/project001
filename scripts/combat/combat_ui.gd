@@ -45,15 +45,17 @@ const DMG_FLOAT_FONT_MAX := 40
 const SHAKE_MIN_PX := 8.0
 const SHAKE_MAX_PX := 42.0
 const SHAKE_DURATION := 0.28
-## 射击轨迹占位：无弹头，仅彗星渐隐拖尾线快速飞掠；芯色=弹药，描边=枪口罪孽
-## 拖尾长度相对 v0.2.41（130）约 2.3 倍，段数加密，略提亮/提速，一眼能看出更长
-const SHOT_TRAIL_LEN := 300.0
-const SHOT_TRAIL_THICK := 4.6
-const SHOT_OUTLINE_PAD := 2.4
-const SHOT_GLOW_PAD := 6.5
-const SHOT_COMET_SEGS := 16
-const SHOT_TRAVEL_SEC := 0.06
-const SHOT_TRAVEL_SEC_PER_CELL := 0.015
+## 射击轨迹：圆亮彗星头 + 渐隐长尾；芯色=弹药，描边=枪口罪孽
+## 尾长相对 v0.2.42/43（300）再加长；开炮瞬间按已飞距离裁切，避免尾巴伸到玩家左侧
+const SHOT_TRAIL_LEN := 480.0
+const SHOT_TRAIL_THICK := 5.8
+const SHOT_OUTLINE_PAD := 2.6
+const SHOT_GLOW_PAD := 7.0
+const SHOT_COMET_SEGS := 22
+const SHOT_HEAD_SIZE := 18.0
+const SHOT_HEAD_GLOW := 28.0
+const SHOT_TRAVEL_SEC := 0.07
+const SHOT_TRAVEL_SEC_PER_CELL := 0.016
 const BLOOD_BURST_MIN := 8
 const BLOOD_BURST_MAX := 40
 const BLOOD_GRAVITY := 980.0
@@ -1284,7 +1286,7 @@ func _cell_unit_global_center(cell: int) -> Vector2:
 
 
 func _play_shot_beam_and_impact() -> void:
-	## 彗星渐隐拖尾线从玩家飞向命中怪（无弹头）；穿透则飞到沿途最后一命中格，途经各怪飚血。
+	## 圆亮彗星从玩家单位飞向命中怪；穿透则飞到沿途最后一命中格，途经各怪飚血。
 	if state == null:
 		return
 	var hit_cells: Array = state.last_shot_hit_cells.duplicate()
@@ -1319,8 +1321,10 @@ func _animate_shot_projectile(
 	from_g: Vector2, to_g: Vector2, core_col: Color, outline_cols: Array[Color],
 	waypoints: Array, travel_sec: float
 ) -> void:
-	## 无独立弹头：只有彗星状渐隐拖尾线快速飞掠（头亮尾淡），可带枪口色描边。
+	## 圆亮彗星头 + 渐隐长尾，从玩家单位飞向目标；开炮瞬间裁切尾巴，不从屏幕左侧伸进来。
 	var delta: Vector2 = to_g - from_g
+	if delta.length_squared() < 0.01:
+		delta = Vector2.RIGHT
 	var host := Control.new()
 	host.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	host.z_index = 48
@@ -1328,49 +1332,75 @@ func _animate_shot_projectile(
 	host.global_position = from_g
 	host.rotation = delta.angle()
 	var n_out: int = outline_cols.size()
+	var trail_parts: Array = []
 	var seg_w: float = SHOT_TRAIL_LEN / float(SHOT_COMET_SEGS)
-	# 由尾到头建段：越靠后（更负 x）越淡、略细 → 彗星渐隐
+	# 尾→头：更实的渐隐尾（整体不透明度抬高）
 	for si in SHOT_COMET_SEGS:
-		var u: float = float(si) / float(maxi(SHOT_COMET_SEGS - 1, 1))  # 0=最尾，1=最头
-		var alpha: float = lerpf(0.2, 1.0, pow(u, 1.35))  # 尾仍淡，中段更亮便于辨认长拖尾
-		var thick: float = lerpf(SHOT_TRAIL_THICK * 0.5, SHOT_TRAIL_THICK, u)
+		var u: float = float(si) / float(maxi(SHOT_COMET_SEGS - 1, 1))  # 0=最尾，1=近头
+		var alpha: float = lerpf(0.38, 0.95, pow(u, 1.15))
+		var thick: float = lerpf(SHOT_TRAIL_THICK * 0.35, SHOT_TRAIL_THICK, pow(u, 0.85))
 		var x0: float = -SHOT_TRAIL_LEN + float(si) * seg_w
-		# 软辉光段
+		var back_mid: float = -(x0 + seg_w * 0.5)  # 该段距彗星头的距离
 		var glow := ColorRect.new()
 		glow.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		glow.color = Color(core_col.r, core_col.g, core_col.b, alpha * 0.5)
-		glow.position = Vector2(x0, -(thick * 0.5 + SHOT_GLOW_PAD * lerpf(0.4, 1.0, u)))
-		glow.size = Vector2(seg_w + 1.0, thick + SHOT_GLOW_PAD * lerpf(0.8, 2.0, u))
+		glow.visible = false
+		glow.color = Color(core_col.r, core_col.g, core_col.b, alpha * 0.55)
+		glow.position = Vector2(x0, -(thick * 0.5 + SHOT_GLOW_PAD * lerpf(0.35, 1.0, u)))
+		glow.size = Vector2(seg_w + 1.0, thick + SHOT_GLOW_PAD * lerpf(0.7, 1.8, u))
 		host.add_child(glow)
-		# 枪口描边段（外→内）
+		trail_parts.append({"node": glow, "back": back_mid})
 		for oi in n_out:
-			var pad: float = float(n_out - oi) * SHOT_OUTLINE_PAD * lerpf(0.5, 1.0, u)
+			var pad: float = float(n_out - oi) * SHOT_OUTLINE_PAD * lerpf(0.45, 1.0, u)
 			var oc: Color = outline_cols[oi]
 			var edge := ColorRect.new()
 			edge.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			edge.color = Color(oc.r, oc.g, oc.b, alpha * 0.7)
+			edge.visible = false
+			edge.color = Color(oc.r, oc.g, oc.b, alpha * 0.85)
 			edge.position = Vector2(x0, -(thick * 0.5 + pad))
 			edge.size = Vector2(seg_w + 1.0, thick + pad * 2.0)
 			host.add_child(edge)
-		# 弹药色芯段
+			trail_parts.append({"node": edge, "back": back_mid})
 		var core := ColorRect.new()
 		core.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		core.visible = false
 		core.color = Color(core_col.r, core_col.g, core_col.b, alpha)
 		core.position = Vector2(x0, -thick * 0.5)
 		core.size = Vector2(seg_w + 1.0, thick)
 		host.add_child(core)
-	# 飞行：按进度触发途经飚血
+		trail_parts.append({"node": core, "back": back_mid})
+	# 圆亮彗星头（始终在玩家/飞行尖端）
+	var head_glow := _make_shot_orb(
+		SHOT_HEAD_GLOW,
+		Color(mini(core_col.r + 0.35, 1.0), mini(core_col.g + 0.35, 1.0), mini(core_col.b + 0.35, 1.0), 0.55)
+	)
+	host.add_child(head_glow)
+	for oi in n_out:
+		var oc2: Color = outline_cols[oi]
+		var ring_sz: float = SHOT_HEAD_SIZE + float(n_out - oi) * SHOT_OUTLINE_PAD * 2.2
+		var ring := _make_shot_orb(ring_sz, Color(oc2.r, oc2.g, oc2.b, 0.95))
+		host.add_child(ring)
+	var head_core := _make_shot_orb(
+		SHOT_HEAD_SIZE,
+		Color(mini(core_col.r + 0.45, 1.0), mini(core_col.g + 0.45, 1.0), mini(core_col.b + 0.45, 1.0), 1.0)
+	)
+	host.add_child(head_core)
+	var head_hot := _make_shot_orb(
+		SHOT_HEAD_SIZE * 0.45,
+		Color(1.0, 1.0, 1.0, 0.95)
+	)
+	host.add_child(head_hot)
 	var ctx := {
 		"host": host,
 		"from": from_g,
 		"to": to_g,
 		"waypoints": waypoints,
 		"fired": {},
+		"trail_parts": trail_parts,
 	}
+	_shot_projectile_step(0.0, ctx)
 	var tw := create_tween()
 	tw.tween_method(_shot_projectile_step.bind(ctx), 0.0, 1.0, maxf(travel_sec, 0.05)).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 	await tw.finished
-	# 补漏：末点未触发的命中结算/飚血
 	var fired: Dictionary = ctx.get("fired", {})
 	for wi in waypoints.size():
 		if fired.has(wi):
@@ -1388,6 +1418,20 @@ func _animate_shot_projectile(
 		host.queue_free()
 
 
+func _make_shot_orb(diameter: float, col: Color) -> Panel:
+	## 圆形彗星头/辉光（StyleBox 圆角=半径）。
+	var p := Panel.new()
+	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	p.size = Vector2(diameter, diameter)
+	p.position = Vector2(-diameter * 0.5, -diameter * 0.5)
+	var st := StyleBoxFlat.new()
+	st.bg_color = col
+	st.set_corner_radius_all(int(ceilf(diameter * 0.5)))
+	st.set_border_width_all(0)
+	p.add_theme_stylebox_override("panel", st)
+	return p
+
+
 func _shot_projectile_step(t: float, ctx: Dictionary) -> void:
 	var host: Control = ctx.get("host") as Control
 	if host == null or not is_instance_valid(host):
@@ -1395,6 +1439,14 @@ func _shot_projectile_step(t: float, ctx: Dictionary) -> void:
 	var from_g: Vector2 = ctx.get("from", Vector2.ZERO)
 	var to_g: Vector2 = ctx.get("to", Vector2.ZERO)
 	host.global_position = from_g.lerp(to_g, t)
+	# 只显示「已经飞过」的拖尾：未飞出的尾巴不画，避免从屏幕左侧穿过玩家
+	var traveled: float = from_g.distance_to(host.global_position)
+	for item in ctx.get("trail_parts", []):
+		var node: CanvasItem = item.get("node") as CanvasItem
+		if node == null or not is_instance_valid(node):
+			continue
+		var back: float = float(item.get("back", 0.0))
+		node.visible = back <= traveled + 6.0
 	var waypoints: Array = ctx.get("waypoints", [])
 	var fired: Dictionary = ctx.get("fired", {})
 	var path_len: float = maxf(from_g.distance_to(to_g), 1.0)
