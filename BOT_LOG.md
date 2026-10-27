@@ -1,3 +1,9 @@
+## 2026-10-27 — 恢复 Regular 字重观感（v0.2.48）
+
+- 根因：v0.2.47 从 NotoSansSC-VF 直接 subset，VF 默认 wght=100（Thin），字形更圆更细。
+- 改动：先实例化 wght=400 Regular 静态 TTF 再 subset；仍为 glyf；HUD 仍不覆盖 font。
+- 自测：pre_push_check；GUT；字体 weight/name 断言。
+
 ## 2026-10-27 — 练习战斗 HUD 方块字（v0.2.47）
 
 - 根因（对照 Pages 截图）：`_ensure_top_labels_uncropped` 给顶栏/弹夹/弹药盒标题套了 `FontVariation`，底字体落到 `ThemeDB.fallback_font`（无中文）→ hex tofu；同区域未覆盖的「共15·袋15」仍用项目 Theme 所以正常。主菜单不受该函数影响。

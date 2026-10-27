@@ -128,6 +128,15 @@ def main() -> int:
             )
             print("  Fix: bash tools/rebuild_ui_font.sh", file=sys.stderr)
             errors += 1
+        else:
+            w = int(_f["OS/2"].usWeightClass)
+            if w != 400:
+                print(
+                    f"ERROR: NotoSansSC-UI.ttf weight must be Regular(400), got {w} (VF default Thin=100 looks too round).",
+                    file=sys.stderr,
+                )
+                print("  Fix: bash tools/rebuild_ui_font.sh  # instantiates wght=400", file=sys.stderr)
+                errors += 1
     except Exception as e:
         print(f"ERROR: cannot inspect UI font: {e}", file=sys.stderr)
         errors += 1

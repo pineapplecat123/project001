@@ -2,6 +2,14 @@
   "version": 1,
   "entries": [
     {
+      "version": "0.2.48",
+      "date": "2026-10-27",
+      "items": [
+        "字体恢复 Noto Sans SC Regular 观感（不再用 VF 默认 Thin 面）",
+        "保留战斗 HUD 不覆盖中文字体的修复，网页仍用 TrueType 防方块"
+      ]
+    },
+    {
       "version": "0.2.47",
       "date": "2026-10-27",
       "items": [
