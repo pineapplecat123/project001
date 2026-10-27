@@ -46,16 +46,16 @@ const SHAKE_MIN_PX := 8.0
 const SHAKE_MAX_PX := 42.0
 const SHAKE_DURATION := 0.28
 ## 射击轨迹：圆亮彗星头 + 渐隐长尾；芯色=弹药，描边=枪口罪孽
-## 尾长相对 v0.2.42/43（300）再加长；开炮瞬间按已飞距离裁切，避免尾巴伸到玩家左侧
-const SHOT_TRAIL_LEN := 960.0
+## 尾长相对 v0.2.55（960）再 ×2；飞行时长 ×2（速度约减半）；开炮瞬间按已飞距离裁切
+const SHOT_TRAIL_LEN := 1920.0
 const SHOT_TRAIL_THICK := 5.8
 const SHOT_OUTLINE_PAD := 2.6
 const SHOT_GLOW_PAD := 7.0
-const SHOT_COMET_SEGS := 22
+const SHOT_COMET_SEGS := 44
 const SHOT_HEAD_SIZE := 18.0
 const SHOT_HEAD_GLOW := 28.0
-const SHOT_TRAVEL_SEC := 0.07
-const SHOT_TRAVEL_SEC_PER_CELL := 0.016
+const SHOT_TRAVEL_SEC := 0.14
+const SHOT_TRAVEL_SEC_PER_CELL := 0.032
 const BLOOD_BURST_MIN := 8
 const BLOOD_BURST_MAX := 40
 const BLOOD_GRAVITY := 980.0
