@@ -26,6 +26,11 @@ const ROLL_ANIM_PER_STEP := 0.06
 const ROLL_ANIM_MAX := 1.05
 const ROLL_VISUAL_EXTRA_TURNS := 1
 const LOAD_INSERT_PAUSE := 0.14
+## 战斗节奏全局倍率：装弹间隔 / 射击间隔与拖尾飞行 / 转轮旋转 统一除以该值（越大越快）
+const COMBAT_SPEED_MIN := 0.5
+const COMBAT_SPEED_MAX := 2.0
+const COMBAT_SPEED_STEP := 0.25
+const COMBAT_SPEED_DEFAULT := 1.0
 const BAG_GRID_COLS := 3
 const BAG_CELL_MIN := Vector2(56, 56)
 const ACTION_BTN_SIZE := 76.0
@@ -41,13 +46,14 @@ const SHAKE_MIN_PX := 8.0
 const SHAKE_MAX_PX := 42.0
 const SHAKE_DURATION := 0.28
 ## 射击轨迹占位：无弹头，仅彗星渐隐拖尾线快速飞掠；芯色=弹药，描边=枪口罪孽
-const SHOT_TRAIL_LEN := 130.0
-const SHOT_TRAIL_THICK := 3.8
-const SHOT_OUTLINE_PAD := 2.2
-const SHOT_GLOW_PAD := 5.0
-const SHOT_COMET_SEGS := 10
-const SHOT_TRAVEL_SEC := 0.07
-const SHOT_TRAVEL_SEC_PER_CELL := 0.018
+## 拖尾长度相对 v0.2.41（130）约 2.3 倍，段数加密，略提亮/提速，一眼能看出更长
+const SHOT_TRAIL_LEN := 300.0
+const SHOT_TRAIL_THICK := 4.6
+const SHOT_OUTLINE_PAD := 2.4
+const SHOT_GLOW_PAD := 6.5
+const SHOT_COMET_SEGS := 16
+const SHOT_TRAVEL_SEC := 0.06
+const SHOT_TRAVEL_SEC_PER_CELL := 0.015
 const BLOOD_BURST_MIN := 8
 const BLOOD_BURST_MAX := 40
 const BLOOD_GRAVITY := 980.0
@@ -93,6 +99,11 @@ var _disk_tween: Tween
 var _fire_ring: Panel = null
 var _load_marker: Label = null
 var _muzzle_label: Label = null
+var _muzzle_slot: Control = null  ## 固定占位，防枪口状态文字撑开 MagCol
+var _combat_speed: float = COMBAT_SPEED_DEFAULT
+var _speed_row: HBoxContainer = null
+var _speed_slider: HSlider = null
+var _speed_value_label: Label = null
 var _muzzle_panel: PanelContainer = null
 var _muzzle_tip_panel: PanelContainer = null
 var _muzzle_tip_body: RichTextLabel = null
@@ -195,6 +206,7 @@ func _ready() -> void:
 	_ensure_top_labels_uncropped()
 	_ensure_combat_layout()
 	_ensure_muzzle_hud()
+	_ensure_speed_hud()
 	if RunState.is_in_map_run() and RunState.pending_combat_node_id >= 0:
 		state.start_from_run(RunState.combat_snapshot())
 		btn_menu.text = "放弃回地图"
@@ -549,38 +561,53 @@ func _ensure_log_panel_on_right(bottom: HBoxContainer) -> void:
 
 
 func _ensure_muzzle_hud() -> void:
-	if _muzzle_panel != null:
+	if _muzzle_slot != null:
 		return
+	# 固定槽：与 MagWheel 同宽，高度锁死；状态文字再长也不撑开 MagCol / 周围 UI
+	_muzzle_slot = Control.new()
+	_muzzle_slot.name = "MuzzleStatusSlot"
+	_muzzle_slot.custom_minimum_size = Vector2(220, 44)
+	_muzzle_slot.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	_muzzle_slot.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	_muzzle_slot.clip_contents = true
+	_muzzle_slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_muzzle_panel = PanelContainer.new()
 	_muzzle_panel.name = "MuzzleStatusPanel"
 	_muzzle_panel.z_index = 5
-	_muzzle_panel.visible = false
+	_muzzle_panel.visible = true
 	_muzzle_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	_muzzle_panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_muzzle_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_muzzle_panel.grow_vertical = Control.GROW_DIRECTION_BOTH
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0.18, 0.08, 0.06, 0.92)
 	style.set_border_width_all(2)
 	style.border_color = Color(1.0, 0.45, 0.2, 1.0)
 	style.set_corner_radius_all(8)
-	style.content_margin_left = 12
-	style.content_margin_right = 12
-	style.content_margin_top = 8
-	style.content_margin_bottom = 8
+	style.content_margin_left = 10
+	style.content_margin_right = 10
+	style.content_margin_top = 6
+	style.content_margin_bottom = 6
 	_muzzle_panel.add_theme_stylebox_override("panel", style)
 	_muzzle_label = Label.new()
 	_muzzle_label.name = "MuzzleStatusLabel"
 	_muzzle_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_muzzle_label.add_theme_font_size_override("font_size", 18)
+	_muzzle_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_muzzle_label.clip_text = true
+	_muzzle_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	_muzzle_label.add_theme_font_size_override("font_size", 16)
 	_muzzle_label.add_theme_color_override("font_color", Color(1.0, 0.85, 0.35))
 	_muzzle_label.text = "枪口：—"
 	_muzzle_panel.add_child(_muzzle_label)
+	_muzzle_slot.add_child(_muzzle_panel)
 	# 挂在弹夹列标题下，醒目
 	var mag_col: Node = mag_title.get_parent() if mag_title != null else self
 	if mag_col != null:
-		mag_col.add_child(_muzzle_panel)
+		mag_col.add_child(_muzzle_slot)
 		if mag_title != null:
-			mag_col.move_child(_muzzle_panel, mag_title.get_index() + 1)
+			mag_col.move_child(_muzzle_slot, mag_title.get_index() + 1)
 	else:
-		add_child(_muzzle_panel)
+		add_child(_muzzle_slot)
 	_muzzle_panel.mouse_entered.connect(_on_muzzle_hover_enter)
 	_muzzle_panel.mouse_exited.connect(_on_muzzle_hover_exit)
 	_muzzle_panel.gui_input.connect(_on_muzzle_gui_input)
@@ -591,38 +618,85 @@ func _refresh_muzzle_hud() -> void:
 	if _muzzle_label == null or state == null:
 		return
 	var text := state.muzzle_status_text()
+	# 边框/边距恒定：只改颜色，不因有状态而加粗边框撑布局
+	var style := StyleBoxFlat.new()
+	style.set_border_width_all(2)
+	style.set_corner_radius_all(8)
+	style.content_margin_left = 10
+	style.content_margin_right = 10
+	style.content_margin_top = 6
+	style.content_margin_bottom = 6
 	if text.is_empty():
 		_muzzle_label.text = "枪口：无"
 		_muzzle_label.add_theme_color_override("font_color", Color(0.65, 0.62, 0.58))
-		if _muzzle_panel != null:
-			var idle := StyleBoxFlat.new()
-			idle.bg_color = Color(0.14, 0.14, 0.16, 0.85)
-			idle.set_border_width_all(2)
-			idle.border_color = Color(0.45, 0.45, 0.5, 0.8)
-			idle.set_corner_radius_all(8)
-			idle.content_margin_left = 12
-			idle.content_margin_right = 12
-			idle.content_margin_top = 8
-			idle.content_margin_bottom = 8
-			_muzzle_panel.add_theme_stylebox_override("panel", idle)
-			_muzzle_panel.visible = true
+		style.bg_color = Color(0.14, 0.14, 0.16, 0.85)
+		style.border_color = Color(0.45, 0.45, 0.5, 0.8)
 	else:
 		_muzzle_label.text = text + "（本回合后续弹附带）"
 		_muzzle_label.add_theme_color_override("font_color", Color(1.0, 0.88, 0.35))
-		if _muzzle_panel != null:
-			var hot := StyleBoxFlat.new()
-			hot.bg_color = Color(0.28, 0.1, 0.05, 0.95)
-			hot.set_border_width_all(3)
-			hot.border_color = Color(1.0, 0.55, 0.15, 1.0)
-			hot.set_corner_radius_all(8)
-			hot.content_margin_left = 12
-			hot.content_margin_right = 12
-			hot.content_margin_top = 8
-			hot.content_margin_bottom = 8
-			_muzzle_panel.add_theme_stylebox_override("panel", hot)
-			_muzzle_panel.visible = true
+		style.bg_color = Color(0.28, 0.1, 0.05, 0.95)
+		style.border_color = Color(1.0, 0.55, 0.15, 1.0)
+	if _muzzle_panel != null:
+		_muzzle_panel.add_theme_stylebox_override("panel", style)
+		_muzzle_panel.visible = true
+	if _muzzle_slot != null:
+		_muzzle_slot.visible = true
 	if _muzzle_tip_open:
 		_refresh_muzzle_tip_body()
+
+
+func _paced(sec: float) -> float:
+	## 全局战斗速度：秒数 / 倍率；2× → 等待减半，0.5× → 等待加倍。
+	return maxf(sec / maxf(_combat_speed, 0.01), 0.0)
+
+
+func _ensure_speed_hud() -> void:
+	if _speed_row != null:
+		return
+	_speed_row = HBoxContainer.new()
+	_speed_row.name = "CombatSpeedRow"
+	_speed_row.custom_minimum_size = Vector2(220, 28)
+	_speed_row.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	_speed_row.add_theme_constant_override("separation", 6)
+	var title := Label.new()
+	title.text = "速度"
+	title.add_theme_font_size_override("font_size", 14)
+	title.add_theme_color_override("font_color", Color(0.85, 0.88, 0.95))
+	title.custom_minimum_size = Vector2(36, 0)
+	_speed_row.add_child(title)
+	_speed_slider = HSlider.new()
+	_speed_slider.name = "CombatSpeedSlider"
+	_speed_slider.min_value = COMBAT_SPEED_MIN
+	_speed_slider.max_value = COMBAT_SPEED_MAX
+	_speed_slider.step = COMBAT_SPEED_STEP
+	_speed_slider.value = COMBAT_SPEED_DEFAULT
+	_speed_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_speed_slider.custom_minimum_size = Vector2(100, 22)
+	_speed_slider.value_changed.connect(_on_combat_speed_changed)
+	_speed_row.add_child(_speed_slider)
+	_speed_value_label = Label.new()
+	_speed_value_label.name = "CombatSpeedValue"
+	_speed_value_label.custom_minimum_size = Vector2(44, 0)
+	_speed_value_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_speed_value_label.add_theme_font_size_override("font_size", 14)
+	_speed_value_label.add_theme_color_override("font_color", Color(1.0, 0.92, 0.55))
+	_speed_value_label.text = "1.0×"
+	_speed_row.add_child(_speed_value_label)
+	var mag_col: Node = mag_title.get_parent() if mag_title != null else self
+	if mag_col != null:
+		mag_col.add_child(_speed_row)
+		# 放在 MagWheel 下方，玩家摸得到；固定高度不顶开其它列
+		var wheel: Node = mag_col.get_node_or_null("MagWheel")
+		if wheel != null:
+			mag_col.move_child(_speed_row, wheel.get_index() + 1)
+	else:
+		add_child(_speed_row)
+
+
+func _on_combat_speed_changed(v: float) -> void:
+	_combat_speed = clampf(v, COMBAT_SPEED_MIN, COMBAT_SPEED_MAX)
+	if _speed_value_label != null:
+		_speed_value_label.text = "%.2g×" % _combat_speed
 
 
 func _ensure_long_press_timer() -> void:
@@ -960,7 +1034,7 @@ func _run_load_sequence() -> void:
 		_refresh_mag_contents()
 		_refresh_hud_only()
 		if LOAD_INSERT_PAUSE > 0.0:
-			await get_tree().create_timer(LOAD_INSERT_PAUSE).timeout
+			await get_tree().create_timer(_paced(LOAD_INSERT_PAUSE)).timeout
 		if bool(result.get("done", false)):
 			break
 		# 入弹可见后再逻辑转盘 + Tween 60°（先占住 _wheel_animating，避免 signal refresh 按新 start 误高亮）
@@ -972,7 +1046,7 @@ func _run_load_sequence() -> void:
 			target = before_steps + 1.0
 		_wheel_animating = true
 		state.apply_load_rotate()
-		await _animate_disk_to(target, STEP_ROT_DURATION)
+		await _animate_disk_to(target, _paced(STEP_ROT_DURATION))
 		_refresh_mag_contents()
 	# 装满后：与 ROLL 按钮同一套随机转（_run_shared_cylinder_spin）
 	if needs_spin and state.can_start_roll():
@@ -1018,7 +1092,7 @@ func _run_manual_load_one() -> void:
 	_refresh_mag_contents()
 	_refresh_hud_only()
 	if LOAD_INSERT_PAUSE > 0.0:
-		await get_tree().create_timer(LOAD_INSERT_PAUSE).timeout
+		await get_tree().create_timer(_paced(LOAD_INSERT_PAUSE)).timeout
 	var done: bool = bool(result.get("done", false))
 	if not done:
 		var rotate_to: float = float(result.get("rotate_to", state.magazine.start_index))
@@ -1029,7 +1103,7 @@ func _run_manual_load_one() -> void:
 			target = before_steps + 1.0
 		_wheel_animating = true
 		state.apply_load_rotate()
-		await _animate_disk_to(target, STEP_ROT_DURATION)
+		await _animate_disk_to(target, _paced(STEP_ROT_DURATION))
 		_refresh_mag_contents()
 	else:
 		# 装满结束：与整匣装相同，可随机转
@@ -1062,7 +1136,7 @@ func _animate_gold_extra_load() -> void:
 		_refresh_mag_contents()
 		_refresh_hud_only()
 		if LOAD_INSERT_PAUSE > 0.0:
-			await get_tree().create_timer(LOAD_INSERT_PAUSE).timeout
+			await get_tree().create_timer(_paced(LOAD_INSERT_PAUSE)).timeout
 		if bool(result.get("done", false)):
 			break
 		var rotate_to: float = float(result.get("rotate_to", state.magazine.start_index))
@@ -1073,7 +1147,7 @@ func _animate_gold_extra_load() -> void:
 			target = before_steps + 1.0
 		_wheel_animating = true
 		state.apply_load_rotate()
-		await _animate_disk_to(target, STEP_ROT_DURATION)
+		await _animate_disk_to(target, _paced(STEP_ROT_DURATION))
 		_refresh_mag_contents()
 	if needs_spin and state.can_start_roll():
 		await _run_shared_cylinder_spin()
@@ -1102,13 +1176,13 @@ func _run_fire_sequence() -> void:
 		await _animate_gold_extra_load()
 		if state.magazine.is_empty() or not state.can_fire():
 			break
-		await get_tree().create_timer(FIRE_SHOT_DELAY * 0.5).timeout
+		await get_tree().create_timer(_paced(FIRE_SHOT_DELAY * 0.5)).timeout
 		if not state.begin_fire():
 			break
 		await _animate_fire_shots()
 	# 射击序列结束 → 可见间隔 → 再结算怪回合（含流血等状态伤）
 	if state.post_fire_enemy_pending():
-		await get_tree().create_timer(POST_FIRE_STATUS_DELAY).timeout
+		await get_tree().create_timer(_paced(POST_FIRE_STATUS_DELAY)).timeout
 		state.resolve_post_fire_enemy_turn()
 	if state.has_corpse_enemies():
 		state.flush_dead_enemies()
@@ -1131,7 +1205,7 @@ func _animate_fire_shots() -> void:
 		var skip_n: int = state.peek_blank_skip_steps()
 		if skip_n > 0:
 			# 每空仓一格时长，总时长随步数变长，保证能看见转到有弹处
-			var skip_dur: float = STEP_ROT_DURATION * float(skip_n)
+			var skip_dur: float = _paced(STEP_ROT_DURATION) * float(skip_n)
 			await _animate_disk_to(_wheel_visual_steps + float(skip_n), skip_dur)
 			_refresh_mag_contents()
 		_pending_hit_vfx.clear()
@@ -1157,7 +1231,7 @@ func _animate_fire_shots() -> void:
 				state.flush_dead_enemies()
 			else:
 				_refresh_board()
-			await get_tree().create_timer(FIRE_FLASH_HOLD).timeout
+			await get_tree().create_timer(_paced(FIRE_FLASH_HOLD)).timeout
 		else:
 			if state.has_paced_shot_pending():
 				state.finalize_paced_shot()
@@ -1171,9 +1245,9 @@ func _animate_fire_shots() -> void:
 			var remain: int = (start_after - expected_visual + CombatConstants.MAGAZINE_SIZE) % CombatConstants.MAGAZINE_SIZE
 			if remain == 0:
 				remain = 1
-			await _animate_disk_to(_wheel_visual_steps + float(remain), STEP_ROT_DURATION)
+			await _animate_disk_to(_wheel_visual_steps + float(remain), _paced(STEP_ROT_DURATION))
 			_refresh_mag_contents()
-			await get_tree().create_timer(FIRE_SHOT_DELAY).timeout
+			await get_tree().create_timer(_paced(FIRE_SHOT_DELAY)).timeout
 		else:
 			_wheel_animating = false
 			break
@@ -1221,7 +1295,7 @@ func _play_shot_beam_and_impact() -> void:
 		var g: Vector2 = _cell_unit_global_center(c)
 		var amt: int = int(hit_amts[i]) if i < hit_amts.size() else 0
 		waypoints.append({"g": g, "amount": amt, "cell": c, "hit_index": i})
-	var travel: float = SHOT_TRAVEL_SEC + SHOT_TRAVEL_SEC_PER_CELL * float(maxi(hit_cells.size() - 1, 0))
+	var travel: float = _paced(SHOT_TRAVEL_SEC + SHOT_TRAVEL_SEC_PER_CELL * float(maxi(hit_cells.size() - 1, 0)))
 	await _animate_shot_projectile(from_g, to_g, core_col, outline_cols, waypoints, travel)
 
 
@@ -1242,13 +1316,13 @@ func _animate_shot_projectile(
 	# 由尾到头建段：越靠后（更负 x）越淡、略细 → 彗星渐隐
 	for si in SHOT_COMET_SEGS:
 		var u: float = float(si) / float(maxi(SHOT_COMET_SEGS - 1, 1))  # 0=最尾，1=最头
-		var alpha: float = lerpf(0.14, 1.0, u * u)  # 尾更淡、头更亮
+		var alpha: float = lerpf(0.2, 1.0, pow(u, 1.35))  # 尾仍淡，中段更亮便于辨认长拖尾
 		var thick: float = lerpf(SHOT_TRAIL_THICK * 0.5, SHOT_TRAIL_THICK, u)
 		var x0: float = -SHOT_TRAIL_LEN + float(si) * seg_w
 		# 软辉光段
 		var glow := ColorRect.new()
 		glow.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		glow.color = Color(core_col.r, core_col.g, core_col.b, alpha * 0.42)
+		glow.color = Color(core_col.r, core_col.g, core_col.b, alpha * 0.5)
 		glow.position = Vector2(x0, -(thick * 0.5 + SHOT_GLOW_PAD * lerpf(0.4, 1.0, u)))
 		glow.size = Vector2(seg_w + 1.0, thick + SHOT_GLOW_PAD * lerpf(0.8, 2.0, u))
 		host.add_child(glow)
@@ -1430,11 +1504,11 @@ func _run_shared_cylinder_spin() -> int:
 func _play_roll_spin_visual(logic_steps: int) -> void:
 	var extra: int = CombatConstants.MAGAZINE_SIZE * ROLL_VISUAL_EXTRA_TURNS
 	var visual: float = float(logic_steps + extra)
-	var dur: float = clampf(
+	var dur: float = _paced(clampf(
 		ROLL_ANIM_BASE + visual * ROLL_ANIM_PER_STEP,
 		ROLL_ANIM_BASE,
 		ROLL_ANIM_MAX
-	)
+	))
 	await _animate_disk_to(_wheel_visual_steps + visual, dur)
 
 
