@@ -2,7 +2,7 @@
 """Ensure UI charset + subset font cover every player-visible char.
 
 Fails non-zero when:
-  - tools/ui_charset.txt is stale vs fresh collect from data/scenes/scripts
+  - tools/ui_charset.txt is stale vs fresh collect from data/scenes/scripts/tools
   - assets/fonts/NotoSansSC-UI.ttf is missing any required glyph
   - .godot/imported/NotoSansSC-UI.ttf-*.fontdata exists but is older/smaller than source TTF
 
@@ -69,6 +69,20 @@ def collect_chars() -> set[str]:
         for m in zh_re.finditer(src):
             add_text(m.group(0))
 
+    for sp in (ROOT / "tools").rglob("*"):
+        if sp.suffix.lower() not in {".py", ".sh", ".md", ".txt", ".html", ".js"}:
+            continue
+        if sp.name == "ui_charset.txt":
+            continue
+        try:
+            src = sp.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        for m in zh_re.finditer(src):
+            add_text(m.group(0))
+        for m in str_re.finditer(src):
+            add_text(m.group(0)[1:-1].replace("\\n", "\n"))
+
     return chars
 
 
@@ -92,7 +106,7 @@ def main() -> int:
     if committed != expected_str:
         only_code = sorted(set(committed) - expected, key=ord)
         only_fresh = sorted(expected - set(committed), key=ord)
-        print("ERROR: tools/ui_charset.txt is stale vs data/scenes/scripts.", file=sys.stderr)
+        print("ERROR: tools/ui_charset.txt is stale vs data/scenes/scripts/tools.", file=sys.stderr)
         if only_fresh:
             print(f"  missing from charset.txt ({len(only_fresh)}): {''.join(only_fresh)}", file=sys.stderr)
         if only_code:

@@ -61,8 +61,8 @@ jobs:
       - name: Install fonttools for charset check
         run: pip install --user fonttools
 
-      - name: Check UI charset / subset font coverage
-        run: bash tools/check_ui_charset.sh
+      - name: Pre-push gate (version + UI charset)
+        run: bash tools/pre_push_check.sh
 
       - name: Export Web
         run: |

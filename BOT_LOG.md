@@ -1,3 +1,9 @@
+## 2026-10-27 — 修方块字 + push 前 charset 门禁（v0.2.46）
+
+- 根因：新中文文案未进 NotoSansSC-UI 子集（或导入缓存旧）→ 方块字。
+- 改动：collect 覆盖 tools/；全量 rebuild+重导入；`tools/pre_push_check.sh` + git pre-push hook；CI/Pages 改跑该门禁；harness v1.3.8。
+- 自测：pre_push_check；GUT。
+
 ## 2026-10-27 — 清理缓存入口 + 修速度标签（v0.2.45）
 
 - 任务：首页清 Pages cookies/缓存以便进最新版；速度标签乱码。

@@ -1,4 +1,4 @@
-# Project 001 — Harness（完整版 v1.3.7）
+# Project 001 — Harness（完整版 v1.3.8）
 
 ## 一、项目参数（锁定）
 
@@ -124,11 +124,13 @@ Bot 每次遇到需决策事项时，先自评重要度，再按对应时机行�
 2. 你亲自试玩网页版。
 3. 两者通过后任务完成，进入 commit 流程。
 4. **涉及 UI 中文的任务**：验收前必须跑 `bash tools/check_ui_charset.sh`（全绿）；每次文本改动后都要测试文本库是否覆盖；改过字体还须重导入后再截图/导出。
+5. **每次准备 push 之前**：必须跑 `bash tools/pre_push_check.sh`（含 charset + 版本检查）；不通过不得推。本地应安装 `bash tools/install_git_hooks.sh`，由 `pre-push` hook 自动拦截。
 
-### 5.4 Commit 规则
+### 5.4 Commit / Push 规则
 - 每次任务完成时申请一次 commit（一般重要级）。
 - **任务粒度**：一次任务指一个较大的效果或模块（非整句琐事拆碎）；同一任务内相关改动可同一次提交。不同大任务**不合并**提交，分批提交。
 - 你批准后 bot 自行提交。
+- **push 前门禁（硬性）**：`tools/pre_push_check.sh` 必须全绿（`check_version` + `check_ui_charset`）。缺字/字符集过期/导入缓存过期 → 禁止推送。CI 与 Pages 工作流同样跑此检查。
 - 提交后告知你更新内容。
 - Commit message 自由格式，写清楚内容即可。
 
@@ -156,14 +158,18 @@ Bot 每次遇到需决策事项时，先自评重要度，再按对应时机行�
 - 提交前可跑 `tools/check_version.sh`；GUT `test_game_version.gd` 也会卡住重复定义。
 
 **UI 中文与字体子集**（工作流硬性要求）：
+- **根因备忘**：新文案若未进 `NotoSansSC-UI` 子集（或导入缓存过期），页面就会出方块字（tofu）。
 - **每次文本改动后都要测试文本库是否覆盖**（老大原话）：改玩家可见中文后，验收/截图/发版前必须跑文本库覆盖检查，不得跳过。
-- 玩家可见中文（`data/*.json`、场景 `text=`、脚本字符串）必须被 `tools/ui_charset.txt` 与 `assets/fonts/NotoSansSC-UI.ttf` 覆盖。
+- **每次 push 之前**必须再跑一遍覆盖检测：`bash tools/pre_push_check.sh`（不通过不得推）。
+- 玩家可见中文（`data/*.json`、场景 `text=`、脚本字符串、`tools/` 内可能进 Pages 的中文）必须被 `tools/ui_charset.txt` 与 `assets/fonts/NotoSansSC-UI.ttf` 覆盖。
 - **凡改动玩家可见中文文案后**的固定步骤：
   1. `python3 tools/collect_ui_charset.py` + `bash tools/rebuild_ui_font.sh`（或至少 `bash tools/check_ui_charset.sh` 全绿）。
   2. 若改过/重建了字体：清 `.godot/imported/NotoSansSC-UI.ttf-*` 后 `godot --headless --path . --import` 强制重导入，再截图或 Web 导出（源 TTF OK 但导入缓存旧仍会豆腐块）。
   3. `check_ui_charset` 也会校验导入缓存相对源 TTF 的 mtime/体积；缓存过期 → 非零失败。
+- **门禁落地**：
+  - 本地：`tools/pre_push_check.sh`；`bash tools/install_git_hooks.sh` 安装 `.git/hooks/pre-push` 自动拦 push。
+  - CI / Pages：工作流步骤跑 `bash tools/pre_push_check.sh`。
 - **禁止带着缺字推送**；乱码多半是子集缺字形或导入缓存过期，不是 JSON 编码坏了。
-- CI 会跑 `tools/check_ui_charset.sh`；本地发版前也要跑。
 
 **Web 导出约束**：
 - **Web 导出预设**必须使用 GL Compatibility 渲染器（当前主目标）。
@@ -183,6 +189,9 @@ Bot 每次遇到需决策事项时，先自评重要度，再按对应时机行�
 ---
 
 ## 修改日志
+
+### v1.3.8（2026-10-27 Asia/Shanghai）
+- 七 / 5.3 / 5.4：明确「每次 push 前必须 charset 覆盖检测」；落地 `tools/pre_push_check.sh` + `tools/git-hooks/pre-push` + CI/Pages 同跑；写明方块字根因是新文案未进子集。
 
 ### v1.3.7（2026-10-27 Asia/Shanghai）
 - 七、技术备忘 / UI 中文：把「每次文本改动后都要测试文本库是否覆盖」写死为工作流硬性要求；改字体后须清导入缓存并重导入再截图/导出；`check_ui_charset` 校验 `.godot/imported` 缓存不过期。

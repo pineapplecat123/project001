@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Installed by tools/install_git_hooks.sh — blocks push if charset/version checks fail.
+set -euo pipefail
+ROOT="$(git rev-parse --show-toplevel)"
+exec bash "$ROOT/tools/pre_push_check.sh"

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Collect every char that may appear in graybox UI (scenes/scripts/data)."""
+"""Collect every char that may appear in graybox UI (scenes/scripts/data/tools)."""
 from pathlib import Path
 import re, json
 
@@ -43,6 +43,21 @@ for sp in (root / "scripts").rglob("*.gd"):
         add_text(m.group(0)[1:-1].replace("\\n", "\n"))
     for m in zh_re.finditer(src):
         add_text(m.group(0))
+
+# tools：HTML 注入文案等也可能进 Pages
+for sp in (root / "tools").rglob("*"):
+    if sp.suffix.lower() not in {".py", ".sh", ".md", ".txt", ".html", ".js"}:
+        continue
+    if sp.name == "ui_charset.txt":
+        continue
+    try:
+        src = sp.read_text(encoding="utf-8")
+    except Exception:
+        continue
+    for m in zh_re.finditer(src):
+        add_text(m.group(0))
+    for m in str_re.finditer(src):
+        add_text(m.group(0)[1:-1].replace("\\n", "\n"))
 
 charset = "".join(sorted(chars, key=ord))
 (root / "tools" / "ui_charset.txt").write_text(charset, encoding="utf-8")

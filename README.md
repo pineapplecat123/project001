@@ -36,6 +36,15 @@ godot --headless --import                         # 首次需导入资源
 godot --headless -s addons/gut/gut_cmdln.gd -gexit
 ```
 
+## Push 前门禁（字符集）
+
+```bash
+bash tools/install_git_hooks.sh   # 一次：安装 pre-push hook
+bash tools/pre_push_check.sh      # 手动：版本 + UI 字符集覆盖；不绿不得推
+```
+
+有玩家可见中文改动时，先 `bash tools/rebuild_ui_font.sh` 再检查。方块字（□）通常是新文案未进字体子集。
+
 也可以在编辑器底部的 **GUT** 面板中运行。新增测试：在 `tests/` 下新建 `test_xxx.gd`，`extends GutTest`，方法名以 `test_` 开头。
 
 ## 导出与部署
