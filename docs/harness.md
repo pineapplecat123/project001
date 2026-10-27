@@ -1,4 +1,4 @@
-# Project 001 — Harness（完整版 v1.3.8）
+# Project 001 — Harness（完整版 v1.3.9）
 
 ## 一、项目参数（锁定）
 
@@ -73,6 +73,12 @@
 - 记录：每次决策、遇到的问题、待确认事项、正在进行的任务、任务状态。
 
 ---
+
+### 3.5 设计表管理文档（数值源）
+
+- 设计源 Excel：`docs/data/design-tables.xlsx`（副本 `docs/design/弹药种类表新版.xlsx`）。
+- 可读全文：`docs/data/ammo.md`、`muzzle-status.md`、`buffs.md`、`enemies.md`、`enemy-tags.md`、`endless-spawn-pool.md`。
+- 运行时：`data/*.json`；新弹药**一种一版验收**，勿一口气全做。
 
 ## 四、重要度分级与响应时机
 
@@ -189,6 +195,9 @@ Bot 每次遇到需决策事项时，先自评重要度，再按对应时机行�
 ---
 
 ## 修改日志
+
+### v1.3.9（2026-10-28 Asia/Shanghai）
+- 3.5：设计表管理文档索引（弹药/枪口/buff/敌人/标签/无限池）。
 
 ### v1.3.8（2026-10-27 Asia/Shanghai）
 - 七 / 5.3 / 5.4：明确「每次 push 前必须 charset 覆盖检测」；落地 `tools/pre_push_check.sh` + `tools/git-hooks/pre-push` + CI/Pages 同跑；写明方块字根因是新文案未进子集。
