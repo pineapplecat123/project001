@@ -1092,7 +1092,7 @@ func test_pierce_shot_records_all_hit_cells() -> void:
 
 
 func test_pace_killing_shot_keeps_corpse_until_flush() -> void:
-	## pace 开火：致死后先留尸体在 enemies，flush 后才移除（供 UI 先飚血）。
+	## pace 开火：视觉命中前不扣血；finalize 后致死留尸体，flush 后才移除。
 	var cs := CombatState.new(930)
 	cs.start_graybox(930)
 	cs.pace_after_fire = true
@@ -1108,8 +1108,16 @@ func test_pace_killing_shot_keeps_corpse_until_flush() -> void:
 		CombatConstants.WHITE_AMMO_ID,
 	] as Array[int])
 	assert_true(cs.begin_fire())
-	var cont: bool = cs.fire_next_shot()
-	assert_false(cont, "killing shot should end fire sequence")
+	cs.fire_next_shot()
+	assert_true(cs.has_paced_shot_pending(), "pace defers damage until visual hit")
+	assert_eq(cs.enemies[0].hp, 3, "HP must not drop on fire start")
+	assert_gte(cs.last_shot_hit_cells.size(), 1)
+	# 匣内还有弹时 more 可为 true；清场在 finalize
+	var dealt: int = cs.resolve_paced_hit(0)
+	assert_eq(dealt, 3)
+	assert_eq(cs.enemies[0].hp, 0)
+	cs.finalize_paced_shot()
+	assert_false(cs.has_paced_shot_pending())
 	# 白弹伤害 3，刚好打死；pace 下尸体仍在
 	assert_true(cs.alive_enemies().is_empty())
 	assert_true(cs.has_corpse_enemies(), "corpse should remain until flush")
@@ -1118,6 +1126,7 @@ func test_pace_killing_shot_keeps_corpse_until_flush() -> void:
 		if e.cell == cell and e.hp <= 0:
 			found = true
 	assert_true(found)
+	assert_eq(cs.phase, CombatState.Phase.WON)
 	cs.flush_dead_enemies()
 	assert_false(cs.has_corpse_enemies())
 	assert_eq(cs.enemies.size(), 0)
@@ -1134,7 +1143,38 @@ func test_last_shot_keeps_hit_data_after_finish() -> void:
 	assert_eq(cs.magazine.loaded_count(), 1)
 	assert_true(cs.begin_fire())
 	assert_false(cs.fire_next_shot())
+	assert_true(cs.has_paced_shot_pending())
 	assert_false(cs.last_shot_was_blank)
 	assert_eq(cs.last_shot_ammo_id, CombatConstants.WHITE_AMMO_ID)
 	assert_gte(cs.last_shot_hit_cells.size(), 1)
+	# 开火瞬间尚未结算
+	assert_eq(cs.last_shot_dealt, 0)
+	cs.finalize_paced_shot()
 	assert_gt(cs.last_shot_dealt, 0)
+	assert_gte(cs.last_shot_hit_cells.size(), 1)
+
+
+func test_pace_damage_applies_only_on_resolve() -> void:
+	## pace：fire_next_shot 不扣血；resolve_paced_hit 才对齐视觉命中结算。
+	var cs := CombatState.new(932)
+	cs.start_graybox(932)
+	cs.pace_after_fire = true
+	cs.enemies[0].hp = 10
+	cs.enemies[0].max_hp = 10
+	var hp0: int = cs.enemies[0].hp
+	cs.dev_force_load([
+		CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID,
+	] as Array[int])
+	assert_true(cs.begin_fire())
+	assert_true(cs.fire_next_shot())
+	assert_eq(cs.enemies[0].hp, hp0)
+	var dealt: int = cs.resolve_paced_hit(0)
+	assert_gt(dealt, 0)
+	assert_eq(cs.enemies[0].hp, hp0 - dealt)
+	cs.finalize_paced_shot()
+	assert_false(cs.has_paced_shot_pending())

@@ -41,15 +41,16 @@ const SHAKE_MIN_PX := 8.0
 const SHAKE_MAX_PX := 42.0
 const SHAKE_DURATION := 0.28
 ## 射击轨迹占位：无弹头，仅彗星渐隐拖尾线快速飞掠；芯色=弹药，描边=枪口罪孽
-const SHOT_TRAIL_LEN := 96.0
-const SHOT_TRAIL_THICK := 3.0
-const SHOT_OUTLINE_PAD := 2.0
-const SHOT_GLOW_PAD := 4.0
-const SHOT_COMET_SEGS := 8
-const SHOT_TRAVEL_SEC := 0.1
-const SHOT_TRAVEL_SEC_PER_CELL := 0.028
-const BLOOD_BURST_MIN := 10
-const BLOOD_BURST_MAX := 22
+const SHOT_TRAIL_LEN := 130.0
+const SHOT_TRAIL_THICK := 3.8
+const SHOT_OUTLINE_PAD := 2.2
+const SHOT_GLOW_PAD := 5.0
+const SHOT_COMET_SEGS := 10
+const SHOT_TRAVEL_SEC := 0.07
+const SHOT_TRAVEL_SEC_PER_CELL := 0.018
+const BLOOD_BURST_MIN := 8
+const BLOOD_BURST_MAX := 40
+const BLOOD_GRAVITY := 980.0
 
 const COL_PHASE := Color(1.0, 0.92, 0.45)
 const COL_HP_OK := Color(0.45, 0.95, 0.55)
@@ -1133,10 +1134,10 @@ func _animate_fire_shots() -> void:
 			var skip_dur: float = STEP_ROT_DURATION * float(skip_n)
 			await _animate_disk_to(_wheel_visual_steps + float(skip_n), skip_dur)
 			_refresh_mag_contents()
-		_defer_hit_vfx = true
 		_pending_hit_vfx.clear()
-		var more: bool = state.fire_next_shot()
+		# 不 defer 飘字：pace 下扣血在命中帧，enemy_damaged 当场飘字
 		_defer_hit_vfx = false
+		var more: bool = state.fire_next_shot()
 		# fire_next_shot 内会瞬推 skip_n（与上面动画对齐）并消耗实弹后再 +1
 		var fired_slot: int = state.last_fired_slot
 		var blank: bool = state.last_shot_was_blank
@@ -1144,11 +1145,12 @@ func _animate_fire_shots() -> void:
 		if not blank:
 			_flash_fire_at_top(fired_slot)
 			_refresh_mag_contents()
+			# 只刷转轮/顶栏；怪 HP 仍是开火前，等拖尾命中再变
 			_refresh_hud_only()
-			# 实弹：彗星拖尾线飞向目标（穿透飞穿沿途），命中再飚血/飘字抖动
+			# 实弹：彗星拖尾飞掠；途经命中帧结算伤害+飚血+飘字
 			await _play_shot_beam_and_impact()
-			for hit in _pending_hit_vfx:
-				_spawn_damage_float(int(hit.get("cell", -1)), int(hit.get("amount", 0)), str(hit.get("kind", "")))
+			if state.has_paced_shot_pending():
+				state.finalize_paced_shot()
 			_pending_hit_vfx.clear()
 			# 飚血已在怪还在场时播完；现在再清尸体
 			if state.has_corpse_enemies():
@@ -1157,6 +1159,8 @@ func _animate_fire_shots() -> void:
 				_refresh_board()
 			await get_tree().create_timer(FIRE_FLASH_HOLD).timeout
 		else:
+			if state.has_paced_shot_pending():
+				state.finalize_paced_shot()
 			_pending_hit_vfx.clear()
 			_refresh_mag_contents()
 			_refresh_hud_only()
@@ -1216,7 +1220,7 @@ func _play_shot_beam_and_impact() -> void:
 		var c: int = int(hit_cells[i])
 		var g: Vector2 = _cell_unit_global_center(c)
 		var amt: int = int(hit_amts[i]) if i < hit_amts.size() else 0
-		waypoints.append({"g": g, "amount": amt, "cell": c})
+		waypoints.append({"g": g, "amount": amt, "cell": c, "hit_index": i})
 	var travel: float = SHOT_TRAVEL_SEC + SHOT_TRAVEL_SEC_PER_CELL * float(maxi(hit_cells.size() - 1, 0))
 	await _animate_shot_projectile(from_g, to_g, core_col, outline_cols, waypoints, travel)
 
@@ -1238,13 +1242,13 @@ func _animate_shot_projectile(
 	# 由尾到头建段：越靠后（更负 x）越淡、略细 → 彗星渐隐
 	for si in SHOT_COMET_SEGS:
 		var u: float = float(si) / float(maxi(SHOT_COMET_SEGS - 1, 1))  # 0=最尾，1=最头
-		var alpha: float = lerpf(0.08, 0.95, u * u)  # 尾更淡
-		var thick: float = lerpf(SHOT_TRAIL_THICK * 0.45, SHOT_TRAIL_THICK, u)
+		var alpha: float = lerpf(0.14, 1.0, u * u)  # 尾更淡、头更亮
+		var thick: float = lerpf(SHOT_TRAIL_THICK * 0.5, SHOT_TRAIL_THICK, u)
 		var x0: float = -SHOT_TRAIL_LEN + float(si) * seg_w
 		# 软辉光段
 		var glow := ColorRect.new()
 		glow.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		glow.color = Color(core_col.r, core_col.g, core_col.b, alpha * 0.28)
+		glow.color = Color(core_col.r, core_col.g, core_col.b, alpha * 0.42)
 		glow.position = Vector2(x0, -(thick * 0.5 + SHOT_GLOW_PAD * lerpf(0.4, 1.0, u)))
 		glow.size = Vector2(seg_w + 1.0, thick + SHOT_GLOW_PAD * lerpf(0.8, 2.0, u))
 		host.add_child(glow)
@@ -1254,7 +1258,7 @@ func _animate_shot_projectile(
 			var oc: Color = outline_cols[oi]
 			var edge := ColorRect.new()
 			edge.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			edge.color = Color(oc.r, oc.g, oc.b, alpha * 0.55)
+			edge.color = Color(oc.r, oc.g, oc.b, alpha * 0.7)
 			edge.position = Vector2(x0, -(thick * 0.5 + pad))
 			edge.size = Vector2(seg_w + 1.0, thick + pad * 2.0)
 			host.add_child(edge)
@@ -1276,13 +1280,18 @@ func _animate_shot_projectile(
 	var tw := create_tween()
 	tw.tween_method(_shot_projectile_step.bind(ctx), 0.0, 1.0, maxf(travel_sec, 0.05)).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 	await tw.finished
-	# 补漏：末点未触发的飚血
+	# 补漏：末点未触发的命中结算/飚血
 	var fired: Dictionary = ctx.get("fired", {})
 	for wi in waypoints.size():
 		if fired.has(wi):
 			continue
 		var wp2: Dictionary = waypoints[wi]
-		var amt2: int = int(wp2.get("amount", 0))
+		var amt2: int = 0
+		var hi2: int = int(wp2.get("hit_index", -1))
+		if hi2 >= 0 and state != null and state.has_paced_shot_pending():
+			amt2 = state.resolve_paced_hit(hi2)
+		else:
+			amt2 = int(wp2.get("amount", 0))
 		if amt2 > 0:
 			_spawn_blood_burst(wp2.get("g", to_g), amt2)
 	if is_instance_valid(host):
@@ -1307,35 +1316,57 @@ func _shot_projectile_step(t: float, ctx: Dictionary) -> void:
 		var wt: float = from_g.distance_to(wg) / path_len
 		if t + 0.02 >= wt:
 			fired[wi] = true
-			var amt: int = int(wp.get("amount", 0))
+			var amt: int = 0
+			var hi: int = int(wp.get("hit_index", -1))
+			if hi >= 0 and state != null and state.has_paced_shot_pending():
+				# 视觉命中瞬间结算伤害（飘字由 enemy_damaged 触发）
+				amt = state.resolve_paced_hit(hi)
+			else:
+				amt = int(wp.get("amount", 0))
 			if amt > 0:
 				_spawn_blood_burst(wg, amt)
 
 
 func _spawn_blood_burst(at_g: Vector2, amount: int) -> void:
-	## 命中飚血占位：红色小块向外飞散淡出；伤害越大颗粒略多。
+	## 命中飙血：抛物线往下掉；伤害越高血滴越多。
 	if amount <= 0:
 		return
-	var t: float = clampf(float(amount) / 14.0, 0.0, 1.0)
+	var t: float = clampf(float(amount) / 12.0, 0.0, 1.0)
 	var n: int = int(round(lerpf(float(BLOOD_BURST_MIN), float(BLOOD_BURST_MAX), t)))
 	for _i in n:
 		var drop := ColorRect.new()
 		drop.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		drop.z_index = 49
-		var sz: float = randf_range(5.0, 11.0) * (0.85 + 0.35 * t)
-		drop.size = Vector2(sz, sz)
+		var sz: float = randf_range(4.5, 11.5) * (0.85 + 0.4 * t)
+		drop.size = Vector2(sz, sz * randf_range(0.85, 1.25))
 		drop.color = Color(randf_range(0.75, 1.0), randf_range(0.05, 0.22), randf_range(0.05, 0.18), 0.95)
 		add_child(drop)
-		drop.global_position = at_g - drop.size * 0.5
-		var dir := Vector2.from_angle(randf_range(-PI, PI))
-		var dist := randf_range(22.0, 58.0) * (0.9 + 0.4 * t)
-		var end_p: Vector2 = at_g + dir * dist - drop.size * 0.5
-		var dur := randf_range(0.28, 0.48)
+		var start_p: Vector2 = at_g - drop.size * 0.5 + Vector2(randf_range(-6.0, 6.0), randf_range(-4.0, 2.0))
+		drop.global_position = start_p
+		# 初速：略向上+左右散开，再受重力下落
+		var vx: float = randf_range(-160.0, 160.0) * (0.85 + 0.35 * t)
+		var vy: float = randf_range(-320.0, -90.0) * (0.9 + 0.35 * t)
+		var dur: float = randf_range(0.42, 0.72)
+		var bctx := {"drop": drop, "start": start_p, "vx": vx, "vy": vy}
 		var tw := create_tween()
 		tw.set_parallel(true)
-		tw.tween_property(drop, "global_position", end_p, dur).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
-		tw.tween_property(drop, "modulate:a", 0.0, dur).set_delay(dur * 0.25)
+		tw.tween_method(_blood_drop_step.bind(bctx), 0.0, dur, dur)
+		tw.tween_property(drop, "modulate:a", 0.0, dur).set_delay(dur * 0.35)
 		tw.chain().tween_callback(drop.queue_free)
+
+
+func _blood_drop_step(elapsed: float, bctx: Dictionary) -> void:
+	var drop: ColorRect = bctx.get("drop") as ColorRect
+	if drop == null or not is_instance_valid(drop):
+		return
+	var start_p: Vector2 = bctx.get("start", Vector2.ZERO)
+	var vx: float = float(bctx.get("vx", 0.0))
+	var vy: float = float(bctx.get("vy", 0.0))
+	# x = x0 + vx*t ; y = y0 + vy*t + 0.5*g*t^2
+	drop.global_position = Vector2(
+		start_p.x + vx * elapsed,
+		start_p.y + vy * elapsed + 0.5 * BLOOD_GRAVITY * elapsed * elapsed
+	)
 
 
 ## 在正上击发点（红圈下）打出发黄闪；chamber 在盘上此时应对准正上。

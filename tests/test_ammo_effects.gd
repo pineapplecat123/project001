@@ -844,8 +844,12 @@ func test_begin_gold_extra_load_is_stepwise_not_instant() -> void:
 		CombatConstants.WHITE_AMMO_ID,
 	] as Array[int])
 	assert_true(cs.begin_fire())
-	while cs.phase == CombatState.Phase.FIRING:
+	var guard := 0
+	while cs.phase == CombatState.Phase.FIRING and guard < 20:
 		cs.fire_next_shot()
+		if cs.has_paced_shot_pending():
+			cs.finalize_paced_shot()
+		guard += 1
 	assert_gt(cs.pending_gold_autofires(), 0)
 	assert_true(cs.begin_gold_extra_load())
 	assert_true(cs.is_busy_loading())

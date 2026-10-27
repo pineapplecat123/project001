@@ -117,6 +117,8 @@ var last_shot_muzzle_outline_ids: Array[int] = []
 var last_shot_hit_cells: Array[int] = []
 var last_shot_hit_amounts: Array[int] = []
 var last_shot_was_pierce: bool = false
+## pace：本发已规划、待视觉命中时再结算的命中（空=无待结算）
+var _paced_shot: Dictionary = {}
 
 
 func _init(seed_value: int = 0) -> void:
@@ -268,6 +270,7 @@ func _reset_fire_session() -> void:
 	last_shot_was_blank = false
 	last_blank_skip_steps = 0
 	last_fired_slot = -1
+	_paced_shot.clear()
 
 
 
@@ -1081,6 +1084,11 @@ func peek_blank_skip_steps() -> int:
 func fire_next_shot() -> bool:
 	if phase != Phase.FIRING:
 		return false
+	# 上一发未视觉结算则先收束，避免卡住 FIRING
+	if pace_after_fire and not _paced_shot.is_empty():
+		finalize_paced_shot()
+		if phase != Phase.FIRING:
+			return false
 	if _fire_index >= _fire_queue.size():
 		_finish_fire()
 		return false
@@ -1145,17 +1153,42 @@ func fire_next_shot() -> bool:
 	last_shot_hit_cells.clear()
 	last_shot_hit_amounts.clear()
 	last_shot_was_pierce = pierce
-	var dealt_total := _apply_shot_to_enemies(ammo_id, base_dmg, pierce, gas, fire, water, thunder)
-	_fire_total_damage += dealt_total
-	_discard_append(ammo_id, shot_temp)
 
+	_discard_append(ammo_id, shot_temp)
 	# 元素枪口：本发后挂上，供后续击发附带
 	_mount_muzzle_from(flags)
-
 	_fire_index += 1
-	# pace（UI 逐步射击）：先不移除尸体，等弹点命中飚血后再 flush_dead_enemies
-	if not pace_after_fire:
-		_remove_dead()
+
+	if pace_after_fire:
+		# 只规划命中路径；扣血/飘字等拖尾飞到怪身上再 resolve_paced_hit
+		var plan: Array = _build_shot_plan(base_dmg, pierce)
+		for h in plan:
+			last_shot_hit_cells.append(int(h.get("cell", -1)))
+			last_shot_hit_amounts.append(0)
+		if not plan.is_empty():
+			last_shot_hit_cell = int(plan[0].get("cell", -1))
+			last_shot_dealt = 0
+		var more_paced: bool = _fire_index < _fire_queue.size()
+		_paced_shot = {
+			"ammo_id": ammo_id,
+			"base_dmg": base_dmg,
+			"pierce": pierce,
+			"gas": gas,
+			"fire": fire,
+			"water": water,
+			"thunder": thunder,
+			"hits": plan,
+			"thunder_done": false,
+			"resolved_total": 0,
+			"gold": ammo_id == FireResolver.ID_GOLD,
+			"await_finish": not more_paced,
+		}
+		_emit()
+		return more_paced
+
+	var dealt_total := _apply_shot_to_enemies(ammo_id, base_dmg, pierce, gas, fire, water, thunder)
+	_fire_total_damage += dealt_total
+	_remove_dead()
 
 	# 金色：本匣击发计入待追加轮数；整匣打完（或中途清场归袋）后再额外自动装填射击。
 	# 额外轮内的金色不再叠加轮数。
@@ -1174,6 +1207,123 @@ func fire_next_shot() -> bool:
 		_finish_fire()
 		return false
 	return true
+
+
+
+func has_paced_shot_pending() -> bool:
+	return not _paced_shot.is_empty()
+
+
+func _build_shot_plan(base_dmg: int, pierce: bool) -> Array:
+	## 规划本发命中顺序（前→后），不扣血。
+	var plan: Array = []
+	var targets: Array = []
+	for e in enemies_sorted_by_cell():
+		if e != null and e.is_alive():
+			targets.append(e)
+	if targets.is_empty():
+		return plan
+	if pierce:
+		var dmg := base_dmg
+		for e in targets:
+			if dmg <= 0:
+				break
+			plan.append({"enemy": e, "cell": e.cell, "dmg": dmg, "resolved": false, "dealt": 0})
+			dmg -= 1
+	else:
+		var e0: EnemyInstance = targets[0]
+		plan.append({"enemy": e0, "cell": e0.cell, "dmg": base_dmg, "resolved": false, "dealt": 0})
+	return plan
+
+
+func resolve_paced_hit(hit_index: int) -> int:
+	## UI：拖尾飞到第 hit_index 个目标时结算该格伤害；返回实际扣血。
+	if _paced_shot.is_empty():
+		return 0
+	var hits: Array = _paced_shot.get("hits", [])
+	if hit_index < 0 or hit_index >= hits.size():
+		return 0
+	var h: Dictionary = hits[hit_index]
+	if bool(h.get("resolved", false)):
+		return int(h.get("dealt", 0))
+	var e: EnemyInstance = h.get("enemy") as EnemyInstance
+	var dealt := 0
+	if e != null:
+		dealt = _hit_enemy_with_elements(
+			e,
+			int(h.get("dmg", 0)),
+			int(_paced_shot.get("ammo_id", -1)),
+			bool(_paced_shot.get("gas", false)),
+			bool(_paced_shot.get("fire", false)),
+			bool(_paced_shot.get("water", false)),
+			false,
+		)
+	h["resolved"] = true
+	h["dealt"] = dealt
+	hits[hit_index] = h
+	_paced_shot["hits"] = hits
+	if hit_index < last_shot_hit_amounts.size():
+		last_shot_hit_amounts[hit_index] = dealt
+	if hit_index == 0:
+		last_shot_dealt = dealt
+		last_shot_hit_cell = int(h.get("cell", -1))
+	_paced_shot["resolved_total"] = int(_paced_shot.get("resolved_total", 0)) + dealt
+	# 末命中后再导电链（湿可能由本发途经水弹挂上）
+	if hit_index == hits.size() - 1:
+		_resolve_paced_thunder_chain()
+	_emit()
+	return dealt
+
+
+func _resolve_paced_thunder_chain() -> void:
+	if _paced_shot.is_empty() or bool(_paced_shot.get("thunder_done", false)):
+		return
+	_paced_shot["thunder_done"] = true
+	if not bool(_paced_shot.get("thunder", false)):
+		return
+	var chain_origin: EnemyInstance = null
+	for h in _paced_shot.get("hits", []):
+		var e: EnemyInstance = h.get("enemy") as EnemyInstance
+		if e != null and e.wet_stacks > 0:
+			chain_origin = e
+			break
+	if chain_origin == null:
+		return
+	var extra: int = _thunder_chain(
+		chain_origin,
+		int(_paced_shot.get("base_dmg", 0)),
+		bool(_paced_shot.get("gas", false)),
+		bool(_paced_shot.get("fire", false)),
+		bool(_paced_shot.get("water", false)),
+	)
+	_paced_shot["resolved_total"] = int(_paced_shot.get("resolved_total", 0)) + extra
+
+
+func finalize_paced_shot() -> void:
+	## UI：本发拖尾飞完后收束（补结算、金计数、清场/整匣结束）。
+	if _paced_shot.is_empty():
+		return
+	var hits: Array = _paced_shot.get("hits", [])
+	for i in hits.size():
+		if not bool(hits[i].get("resolved", false)):
+			resolve_paced_hit(i)
+	if not bool(_paced_shot.get("thunder_done", false)):
+		_resolve_paced_thunder_chain()
+	var total: int = int(_paced_shot.get("resolved_total", 0))
+	_fire_total_damage += total
+	if bool(_paced_shot.get("gold", false)):
+		_pending_gold_autofires += 1
+		_log("金色弹药：本匣已击发金 ×%d（整匣后再额外轮）。" % _pending_gold_autofires)
+	var await_finish: bool = bool(_paced_shot.get("await_finish", false))
+	_paced_shot.clear()
+	# pace：仍留尸体给 UI 飚血后再 flush；此处只判断存活
+	if alive_enemies().is_empty():
+		_abort_fire_cleared()
+		return
+	if await_finish:
+		_finish_fire()
+		return
+	_emit()
 
 
 func _apply_shot_to_enemies(
