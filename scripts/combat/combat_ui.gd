@@ -40,12 +40,13 @@ const DMG_FLOAT_FONT_MAX := 40
 const SHAKE_MIN_PX := 8.0
 const SHAKE_MAX_PX := 42.0
 const SHAKE_DURATION := 0.28
-## 射击射线占位：加粗芯线 + 枪口罪孽描边；飞行再淡出，避免瞬闪
-const RAY_CORE_THICKNESS := 18.0
-const RAY_OUTLINE_PAD := 8.0
-const RAY_TRAVEL_SEC := 0.2
-const RAY_HOLD_SEC := 0.08
-const RAY_FADE_SEC := 0.12
+## 射击弹点占位：细弹头快速飞掠 + 短拖尾（非整段激光）；芯色=弹药，描边=枪口罪孽
+const SHOT_HEAD_SIZE := 9.0
+const SHOT_OUTLINE_PAD := 3.0
+const SHOT_TRAIL_LEN := 28.0
+const SHOT_TRAIL_THICK := 4.0
+const SHOT_TRAVEL_SEC := 0.16
+const SHOT_TRAVEL_SEC_PER_CELL := 0.045
 const BLOOD_BURST_MIN := 10
 const BLOOD_BURST_MAX := 22
 
@@ -1141,7 +1142,7 @@ func _animate_fire_shots() -> void:
 			_flash_fire_at_top(fired_slot)
 			_refresh_mag_contents()
 			_refresh_hud_only()
-			# 实弹：粗射线（弹药色+枪口描边）飞到目标，命中再飚血/飘字抖动
+			# 实弹：细弹点+短拖尾飞向目标（穿透飞穿沿途），命中再飚血/飘字抖动
 			await _play_shot_beam_and_impact()
 			for hit in _pending_hit_vfx:
 				_spawn_damage_float(int(hit.get("cell", -1)), int(hit.get("amount", 0)), str(hit.get("kind", "")))
@@ -1181,14 +1182,19 @@ func _cell_unit_global_center(cell: int) -> Vector2:
 
 
 func _play_shot_beam_and_impact() -> void:
-	## 从玩家打到本发主命中怪：粗芯线=弹药色，外圈描边=枪口罪孽色（怒→傲→贪可多层）；命中且有伤则飚血。
+	## 细弹点+短拖尾从玩家飞向命中怪；穿透则飞到沿途最后一命中格，途经各怪飚血。
 	if state == null:
 		return
-	var hit_cell: int = int(state.last_shot_hit_cell)
-	if hit_cell < 0:
+	var hit_cells: Array = state.last_shot_hit_cells.duplicate()
+	var hit_amts: Array = state.last_shot_hit_amounts.duplicate()
+	if hit_cells.is_empty() and int(state.last_shot_hit_cell) >= 0:
+		hit_cells = [int(state.last_shot_hit_cell)]
+		hit_amts = [int(state.last_shot_dealt)]
+	if hit_cells.is_empty():
 		return
 	var from_g: Vector2 = _cell_unit_global_center(CombatConstants.PLAYER_CELL)
-	var to_g: Vector2 = _cell_unit_global_center(hit_cell)
+	var end_cell: int = int(hit_cells[hit_cells.size() - 1])
+	var to_g: Vector2 = _cell_unit_global_center(end_cell)
 	if from_g == Vector2.ZERO or to_g == Vector2.ZERO:
 		return
 	var ammo_id: int = int(state.last_shot_ammo_id)
@@ -1196,52 +1202,107 @@ func _play_shot_beam_and_impact() -> void:
 	var outline_cols: Array[Color] = []
 	for mid in state.last_shot_muzzle_outline_ids:
 		outline_cols.append(_ammo_colors(int(mid)).get("bg", Color(1, 1, 1)))
-	await _animate_thick_shot_ray(from_g, to_g, core_col, outline_cols)
-	if int(state.last_shot_dealt) > 0:
-		_spawn_blood_burst(to_g, int(state.last_shot_dealt))
+	# 途经点：用于飞行中按时飚血
+	var waypoints: Array = []
+	for i in hit_cells.size():
+		var c: int = int(hit_cells[i])
+		var g: Vector2 = _cell_unit_global_center(c)
+		var amt: int = int(hit_amts[i]) if i < hit_amts.size() else 0
+		waypoints.append({"g": g, "amount": amt, "cell": c})
+	var travel: float = SHOT_TRAVEL_SEC + SHOT_TRAVEL_SEC_PER_CELL * float(maxi(hit_cells.size() - 1, 0))
+	await _animate_shot_projectile(from_g, to_g, core_col, outline_cols, waypoints, travel)
 
 
-func _animate_thick_shot_ray(from_g: Vector2, to_g: Vector2, core_col: Color, outline_cols: Array[Color]) -> void:
-	## 加粗射线：多层描边在外、弹药色芯在内；长度从短拉满再短暂停淡出。
+func _animate_shot_projectile(
+	from_g: Vector2, to_g: Vector2, core_col: Color, outline_cols: Array[Color],
+	waypoints: Array, travel_sec: float
+) -> void:
+	## 弹头小点飞掠；身后固定短拖尾跟着走（看得出路径，不是整段同时亮的激光）。
 	var delta: Vector2 = to_g - from_g
-	var length: float = maxf(delta.length(), 8.0)
 	var host := Control.new()
 	host.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	host.z_index = 48
-	host.pivot_offset = Vector2.ZERO
 	add_child(host)
 	host.global_position = from_g
 	host.rotation = delta.angle()
-	var layer_rects: Array[ColorRect] = []
-	# 描边由外到内（数组顺序=怒→傲→贪，最外层最先画）
+	# 拖尾在弹头后方（局部 -x）
 	var n_out: int = outline_cols.size()
 	for i in n_out:
-		var pad: float = float(n_out - i) * RAY_OUTLINE_PAD
-		var rect := ColorRect.new()
-		rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		rect.color = outline_cols[i]
-		rect.position = Vector2(0.0, -(RAY_CORE_THICKNESS * 0.5 + pad))
-		rect.size = Vector2(0.0, RAY_CORE_THICKNESS + pad * 2.0)
-		host.add_child(rect)
-		layer_rects.append(rect)
-	var core := ColorRect.new()
-	core.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	core.color = core_col
-	core.position = Vector2(0.0, -RAY_CORE_THICKNESS * 0.5)
-	core.size = Vector2(0.0, RAY_CORE_THICKNESS)
-	host.add_child(core)
-	layer_rects.append(core)
+		var pad: float = float(n_out - i) * (SHOT_OUTLINE_PAD * 0.65)
+		var trail_o := ColorRect.new()
+		trail_o.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var oc: Color = outline_cols[i]
+		trail_o.color = Color(oc.r, oc.g, oc.b, 0.55)
+		trail_o.position = Vector2(-SHOT_TRAIL_LEN, -(SHOT_TRAIL_THICK * 0.5 + pad))
+		trail_o.size = Vector2(SHOT_TRAIL_LEN, SHOT_TRAIL_THICK + pad * 2.0)
+		host.add_child(trail_o)
+	var trail := ColorRect.new()
+	trail.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	trail.color = Color(core_col.r, core_col.g, core_col.b, 0.7)
+	trail.position = Vector2(-SHOT_TRAIL_LEN, -SHOT_TRAIL_THICK * 0.5)
+	trail.size = Vector2(SHOT_TRAIL_LEN, SHOT_TRAIL_THICK)
+	host.add_child(trail)
+	# 弹头（描边 + 芯）
+	for i in n_out:
+		var pad2: float = float(n_out - i) * SHOT_OUTLINE_PAD
+		var ring := ColorRect.new()
+		ring.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		ring.color = outline_cols[i]
+		var s: float = SHOT_HEAD_SIZE + pad2 * 2.0
+		ring.size = Vector2(s, s)
+		ring.position = Vector2(-s * 0.5, -s * 0.5)
+		host.add_child(ring)
+	var head := ColorRect.new()
+	head.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	head.color = core_col
+	head.size = Vector2(SHOT_HEAD_SIZE, SHOT_HEAD_SIZE)
+	head.position = Vector2(-SHOT_HEAD_SIZE * 0.5, -SHOT_HEAD_SIZE * 0.5)
+	host.add_child(head)
+	# 飞行：按进度触发途经飚血
+	var ctx := {
+		"host": host,
+		"from": from_g,
+		"to": to_g,
+		"waypoints": waypoints,
+		"fired": {},
+	}
 	var tw := create_tween()
-	for rect in layer_rects:
-		tw.parallel().tween_property(rect, "size:x", length, RAY_TRAVEL_SEC).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tw.tween_method(_shot_projectile_step.bind(ctx), 0.0, 1.0, maxf(travel_sec, 0.08)).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 	await tw.finished
-	if RAY_HOLD_SEC > 0.0:
-		await get_tree().create_timer(RAY_HOLD_SEC).timeout
-	var fade := create_tween()
-	fade.tween_property(host, "modulate:a", 0.0, RAY_FADE_SEC)
-	await fade.finished
+	# 补漏：末点未触发的飚血
+	var fired: Dictionary = ctx.get("fired", {})
+	for wi in waypoints.size():
+		if fired.has(wi):
+			continue
+		var wp2: Dictionary = waypoints[wi]
+		var amt2: int = int(wp2.get("amount", 0))
+		if amt2 > 0:
+			_spawn_blood_burst(wp2.get("g", to_g), amt2)
 	if is_instance_valid(host):
 		host.queue_free()
+
+
+func _shot_projectile_step(t: float, ctx: Dictionary) -> void:
+	var host: Control = ctx.get("host") as Control
+	if host == null or not is_instance_valid(host):
+		return
+	var from_g: Vector2 = ctx.get("from", Vector2.ZERO)
+	var to_g: Vector2 = ctx.get("to", Vector2.ZERO)
+	host.global_position = from_g.lerp(to_g, t)
+	var waypoints: Array = ctx.get("waypoints", [])
+	var fired: Dictionary = ctx.get("fired", {})
+	var path_len: float = maxf(from_g.distance_to(to_g), 1.0)
+	for wi in waypoints.size():
+		if fired.has(wi):
+			continue
+		var wp: Dictionary = waypoints[wi]
+		var wg: Vector2 = wp.get("g", Vector2.ZERO)
+		var wt: float = from_g.distance_to(wg) / path_len
+		if t + 0.02 >= wt:
+			fired[wi] = true
+			var amt: int = int(wp.get("amount", 0))
+			if amt > 0:
+				_spawn_blood_burst(wg, amt)
 
 
 func _spawn_blood_burst(at_g: Vector2, amount: int) -> void:

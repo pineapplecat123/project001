@@ -1059,3 +1059,33 @@ func test_blank_shot_clears_last_shot_hit() -> void:
 	while cs.phase == CombatState.Phase.FIRING:
 		cs.fire_next_shot()
 	assert_eq(cs.magazine.loaded_count(), 0)
+
+
+func test_pierce_shot_records_all_hit_cells() -> void:
+	## 穿透弹：last_shot_hit_cells 含沿途所有命中格（前→后），was_pierce=true。
+	var cs := CombatState.new(922)
+	cs.start_graybox(922)
+	cs.enemies.clear()
+	cs.dev_spawn_enemy(1, 2)
+	cs.dev_spawn_enemy(1, 4)
+	cs.enemies[0].hp = 50
+	cs.enemies[0].max_hp = 50
+	cs.enemies[1].hp = 50
+	cs.enemies[1].max_hp = 50
+	cs.dev_force_load([
+		FireResolver.ID_PIERCE,
+		CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID,
+	] as Array[int])
+	cs.magazine.set_start(0)
+	assert_true(cs.begin_fire())
+	assert_true(cs.fire_next_shot())
+	assert_true(cs.last_shot_was_pierce)
+	assert_eq(cs.last_shot_ammo_id, FireResolver.ID_PIERCE)
+	assert_gte(cs.last_shot_hit_cells.size(), 2)
+	assert_eq(cs.last_shot_hit_cells[0], 2)
+	assert_eq(cs.last_shot_hit_cells[1], 4)
+	assert_eq(cs.last_shot_hit_amounts.size(), cs.last_shot_hit_cells.size())

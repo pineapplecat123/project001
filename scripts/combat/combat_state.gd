@@ -113,6 +113,10 @@ var last_shot_ammo_id: int = -1
 var last_shot_hit_cell: int = -1
 var last_shot_dealt: int = 0
 var last_shot_muzzle_outline_ids: Array[int] = []
+## 本发命中格（前→后）；穿透时多格，弹点飞到末格；每格可飚血
+var last_shot_hit_cells: Array[int] = []
+var last_shot_hit_amounts: Array[int] = []
+var last_shot_was_pierce: bool = false
 
 
 func _init(seed_value: int = 0) -> void:
@@ -267,6 +271,9 @@ func _reset_fire_session() -> void:
 	last_shot_hit_cell = -1
 	last_shot_dealt = 0
 	last_shot_muzzle_outline_ids.clear()
+	last_shot_hit_cells.clear()
+	last_shot_hit_amounts.clear()
+	last_shot_was_pierce = false
 
 
 
@@ -1101,6 +1108,9 @@ func fire_next_shot() -> bool:
 		last_shot_hit_cell = -1
 		last_shot_dealt = 0
 		last_shot_muzzle_outline_ids.clear()
+		last_shot_hit_cells.clear()
+		last_shot_hit_amounts.clear()
+		last_shot_was_pierce = false
 		_finish_fire()
 		return false
 	var hammer: int = magazine.chamber_at_fire_port()
@@ -1111,6 +1121,9 @@ func fire_next_shot() -> bool:
 		last_shot_hit_cell = -1
 		last_shot_dealt = 0
 		last_shot_muzzle_outline_ids.clear()
+		last_shot_hit_cells.clear()
+		last_shot_hit_amounts.clear()
+		last_shot_was_pierce = false
 		_finish_fire()
 		return false
 
@@ -1135,6 +1148,9 @@ func fire_next_shot() -> bool:
 	last_shot_hit_cell = -1
 	last_shot_dealt = 0
 	last_shot_muzzle_outline_ids = _muzzle_outline_ammo_ids_for_shot()
+	last_shot_hit_cells.clear()
+	last_shot_hit_amounts.clear()
+	last_shot_was_pierce = pierce
 	var dealt_total := _apply_shot_to_enemies(ammo_id, base_dmg, pierce, gas, fire, water, thunder)
 	_fire_total_damage += dealt_total
 	_discard_append(ammo_id, shot_temp)
@@ -1175,20 +1191,20 @@ func _apply_shot_to_enemies(
 	if pierce:
 		var dmg := base_dmg
 		var chain_origin: EnemyInstance = null
-		var first := true
 		for e in targets:
 			if dmg <= 0:
 				break
 			var dealt_e: int = _hit_enemy_with_elements(e, dmg, ammo_id, gas, fire, water, thunder)
 			total += dealt_e
-			if first:
-				last_shot_hit_cell = e.cell
-				last_shot_dealt = dealt_e
-				first = false
+			last_shot_hit_cells.append(e.cell)
+			last_shot_hit_amounts.append(dealt_e)
 			# 穿透：以首个「有湿」目标为导电起点（含水本发刚挂上的湿）
 			if thunder and chain_origin == null and e.wet_stacks > 0:
 				chain_origin = e
 			dmg -= 1
+		if not last_shot_hit_cells.is_empty():
+			last_shot_hit_cell = last_shot_hit_cells[0]
+			last_shot_dealt = last_shot_hit_amounts[0]
 		if thunder and chain_origin != null:
 			total += _thunder_chain(chain_origin, base_dmg, gas, fire, water)
 	else:
@@ -1197,6 +1213,8 @@ func _apply_shot_to_enemies(
 		total += dealt_e
 		last_shot_hit_cell = e.cell
 		last_shot_dealt = dealt_e
+		last_shot_hit_cells.append(e.cell)
+		last_shot_hit_amounts.append(dealt_e)
 		if thunder and e.wet_stacks > 0:
 			total += _thunder_chain(e, base_dmg, gas, fire, water)
 	return total
@@ -1522,6 +1540,9 @@ func _auto_load_and_fire_once() -> bool:
 		last_shot_hit_cell = -1
 		last_shot_dealt = 0
 		last_shot_muzzle_outline_ids = _muzzle_outline_ammo_ids_for_shot()
+		last_shot_hit_cells.clear()
+		last_shot_hit_amounts.clear()
+		last_shot_was_pierce = pierce
 		var gold_temp: bool = magazine.is_slot_temporary(hammer)
 		_fire_total_damage += _apply_shot_to_enemies(ammo_id, base_dmg, pierce, gas, fire, water, thunder)
 		_discard_append(ammo_id, gold_temp)
