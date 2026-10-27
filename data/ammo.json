@@ -20,7 +20,7 @@
       "base_damage_mode": "fixed",
       "special": "基础伤害0。本次装填中黑色数量严格最多时，本匣全部伤害×3；与其它颜色并列最多则不触发。",
       "tags": [],
-      "enabled_in_combat": true,
+      "enabled_in_combat": false,
       "blurb": "黑严格最多则本匣×3"
     },
     {
@@ -31,7 +31,7 @@
       "base_damage_mode": "fixed",
       "special": "基础伤害2。仅末尾连续的绿色生效：最后一发×2、倒数第二×3，以此类推。中间被其它颜色打断则只计与末尾相连的那段。若本匣全是绿色，则全部造成0伤害。",
       "tags": [],
-      "enabled_in_combat": true,
+      "enabled_in_combat": false,
       "blurb": "末尾连绿倍率；全绿0"
     },
     {
@@ -42,7 +42,7 @@
       "base_damage_mode": "formula",
       "special": "按本匣黄色数量决定每发伤害：1/2/3/4/5/6发→1/2/3/4/5/5。同匣每发黄伤害相同。",
       "tags": [],
-      "enabled_in_combat": true,
+      "enabled_in_combat": false,
       "blurb": "黄越多伤越高（上限5）"
     },
     {
@@ -53,7 +53,7 @@
       "base_damage_mode": "formula",
       "special": "按本匣内相连紫色段长度决定该段每发伤害：1/2/3/4/5/6连→0/3/4/5/5/5。单发紫为0伤。",
       "tags": [],
-      "enabled_in_combat": true,
+      "enabled_in_combat": false,
       "blurb": "相连紫越多伤越高"
     },
     {
@@ -64,7 +64,7 @@
       "base_damage_mode": "fixed",
       "special": "基础伤害3。按本匣黄色数量加成：黄1/2/3/4/5→+1/+3/+5/+6/+7（无黄不加）。",
       "tags": [],
-      "enabled_in_combat": true,
+      "enabled_in_combat": false,
       "blurb": "随本匣黄数量加伤"
     },
     {
@@ -75,7 +75,7 @@
       "base_damage_mode": "fixed",
       "special": "伤害=1+本匣不同弹药种数。若本匣含蓝色且种数达6，本匣全部伤害再×2。",
       "tags": [],
-      "enabled_in_combat": true,
+      "enabled_in_combat": false,
       "blurb": "按种类加伤；满6种匣×2"
     },
     {
@@ -86,7 +86,7 @@
       "base_damage_mode": "fixed",
       "special": "基础伤害0。整匣打完后，按本匣击发的金色数量追加同等次数的额外自动装填射击（不跳过怪物回合）；额外轮内的金色不再叠加新轮。枪口效果跨金色额外轮保留，回合结束才清。",
       "tags": [],
-      "enabled_in_combat": true,
+      "enabled_in_combat": false,
       "blurb": "整匣打完后按金数追加额外轮"
     },
     {
@@ -97,7 +97,7 @@
       "base_damage_mode": "fixed",
       "special": "基础伤害3+本局永久加成。一次卸除（UNLOAD）中只要含粉色，粉色伤害永久+1（同次多粉只计一次；所有粉色共享该加成）。",
       "tags": [],
-      "enabled_in_combat": true,
+      "enabled_in_combat": false,
       "blurb": "UNLOAD后粉色永久+1"
     },
     {
@@ -108,7 +108,7 @@
       "base_damage_mode": "formula",
       "special": "装填时变成上次装填中数量最多的那种弹药；并列最多则随机。本局尚无上次装填记录则不变形。",
       "tags": [],
-      "enabled_in_combat": true,
+      "enabled_in_combat": false,
       "blurb": "变成上次装填最多的弹"
     },
     {
@@ -119,7 +119,7 @@
       "base_damage_mode": "fixed",
       "special": "基础伤害3。自带穿透：本发生效，并挂到枪口——本回合后续击发都附带穿透，回合结束清枪口。穿透：从最近敌人起依次命中，每穿一个伤害-1，减到0为止。",
       "tags": [],
-      "enabled_in_combat": true,
+      "enabled_in_combat": false,
       "blurb": "挂枪口穿透，递减穿怪"
     },
     {
@@ -130,7 +130,7 @@
       "base_damage_mode": "fixed",
       "special": "基础伤害1。自带汽油：本发生效，并挂到枪口——本回合后续击发都附带，回合结束清枪口。命中施加等同本次伤害的汽油层；若目标已在燃烧，则改为追加等量伤害。被火命中时，所有格子相连且带汽油的敌人同时引爆：造成等同汽油层的伤害、叠加等层燃烧、清空汽油。",
       "tags": [],
-      "enabled_in_combat": true,
+      "enabled_in_combat": false,
       "blurb": "挂枪口汽油；火可连片引爆"
     },
     {
@@ -141,7 +141,7 @@
       "base_damage_mode": "fixed",
       "special": "基础伤害3。自带火：本发生效，并挂到枪口——本回合后续击发都附带，回合结束清枪口。命中叠加等同本次伤害的燃烧；若目标处于汽油连片中则先引爆该片。",
       "tags": [],
-      "enabled_in_combat": true,
+      "enabled_in_combat": false,
       "blurb": "挂枪口火；加燃烧/引爆汽油"
     },
     {
@@ -152,7 +152,7 @@
       "base_damage_mode": "fixed",
       "special": "基础伤害2。自带水：本发生效，并挂到枪口——本回合后续击发都附带，回合结束清枪口。命中施加等同本次伤害的湿，并清除目标燃烧。",
       "tags": [],
-      "enabled_in_combat": true,
+      "enabled_in_combat": false,
       "blurb": "挂枪口水；加湿并清燃烧"
     },
     {
@@ -163,7 +163,7 @@
       "base_damage_mode": "fixed",
       "special": "基础伤害3。自带电：本发生效，并挂到枪口——本回合后续击发都附带，回合结束清枪口。若首个目标有湿，伤害传导到相邻有湿的敌人，可继续传导；每个敌人至多被传导一次。",
       "tags": [],
-      "enabled_in_combat": true,
+      "enabled_in_combat": false,
       "blurb": "挂枪口电；湿敌相邻传导"
     },
     {

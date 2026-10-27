@@ -7,8 +7,8 @@ const MAGAZINE_SIZE := 6
 const PLAYER_MAX_HP := 20
 const WHITE_AMMO_ID := 1
 const CIVILIAN_ENEMY_ID := 1
-const ZOMBIE_ENEMY_ID := 6
-const SUPER_ZOMBIE_ENEMY_ID := 7
+const ZOMBIE_ENEMY_ID := 4
+const SUPER_ZOMBIE_ENEMY_ID := 5
 ## 灰盒开局：平庸弹 + 所选罪孽弹。
 const STARTER_WHITE_COUNT := 10
 const STARTER_SIN_COUNT := 5

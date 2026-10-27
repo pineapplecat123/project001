@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "items": [
     {
       "id": 1,
@@ -42,32 +42,6 @@
     },
     {
       "id": 4,
-      "name": "骷髅",
-      "hp": 10,
-      "atk": 1,
-      "mobility": 1,
-      "special": "无",
-      "tags": [
-        "骷髅"
-      ],
-      "type": "小怪",
-      "enabled_in_combat": true
-    },
-    {
-      "id": 5,
-      "name": "石头人",
-      "hp": 20,
-      "atk": 2,
-      "mobility": 1,
-      "special": "无",
-      "tags": [
-        "石头"
-      ],
-      "type": "小怪",
-      "enabled_in_combat": false
-    },
-    {
-      "id": 6,
       "name": "僵尸",
       "hp": 50,
       "atk": 1,
@@ -77,19 +51,45 @@
         "僵尸"
       ],
       "type": "小怪",
-      "enabled_in_combat": false
+      "enabled_in_combat": true
     },
     {
-      "id": 7,
+      "id": 5,
       "name": "超级僵尸",
       "hp": 100,
       "atk": 1,
       "mobility": 1,
-      "special": "每回合在面前生成1个僵尸，没有空间则不生成",
+      "special": "每回合在面前生成1个僵尸，如果没有空间则不生成",
       "tags": [
         "僵尸"
       ],
       "type": "Boss",
+      "enabled_in_combat": true
+    },
+    {
+      "id": 104,
+      "name": "骷髅",
+      "hp": 10,
+      "atk": 1,
+      "mobility": 1,
+      "special": "无",
+      "tags": [
+        "骷髅"
+      ],
+      "type": "小怪",
+      "enabled_in_combat": false
+    },
+    {
+      "id": 105,
+      "name": "石头人",
+      "hp": 20,
+      "atk": 2,
+      "mobility": 1,
+      "special": "无",
+      "tags": [
+        "石头"
+      ],
+      "type": "小怪",
       "enabled_in_combat": false
     }
   ]

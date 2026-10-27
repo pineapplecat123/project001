@@ -213,8 +213,12 @@ func test_map_run_win_does_not_reset_bag() -> void:
 		"encounter": "normal",
 	}, 812)
 	assert_true(cs.from_map_run)
+	cs.enemies.clear()
+	cs.dev_spawn_enemy(CombatConstants.CIVILIAN_ENEMY_ID, 8)
+	cs.enemies[0].hp = 10
+	cs.enemies[0].max_hp = 10
 	cs.dev_force_load([1, 1, 1, 1, 1, 1] as Array[int])
-	# 平民 10HP，4 白清场，剩 2 归袋
+	# 10HP，4 白清场，剩 2 归袋
 	assert_true(cs.begin_fire())
 	var shots := 0
 	while cs.phase == CombatState.Phase.FIRING:
@@ -222,25 +226,27 @@ func test_map_run_win_does_not_reset_bag() -> void:
 		shots += 1
 	assert_eq(shots, 4)
 	assert_eq(cs.phase, CombatState.Phase.WON)
-	# 原袋 8 + 归还未击发 2 = 10；弃牌 4
+	# 原袋 2（金）+ 归还未击发 2 = 4… 实际：袋在 force_load 前含 8 发，装走 6 后剩 2；清场归还 2 → 袋 4？
+	# force_load 不从袋扣弹，袋仍 8；未击发 2 归袋 → 10；弃牌 4
 	assert_eq(cs.bag.size(), 10)
 	assert_eq(cs.discard.size(), 4)
 
 
 func test_stone_enemy_disabled_in_combat_pool() -> void:
-	## 石头人暂时禁用：不进刷怪池；设计数据仍在。
-	var def: Dictionary = DataRegistry.get_enemy(5)
+	## 石头人/骷髅禁用：不进刷怪池；设计数据仍在（legacy id）。
+	var def: Dictionary = DataRegistry.get_enemy(105)
 	assert_eq(str(def.get("name", "")), "石头人")
 	assert_false(bool(def.get("enabled_in_combat", true)))
+	assert_false(bool(DataRegistry.get_enemy(104).get("enabled_in_combat", true)))
 	var cs := CombatState.new(821)
 	cs.start_graybox(821)
-	# 多刷几波，池中不应出现 id=5
 	for _w in 12:
 		cs.enemies.clear()
 		cs.wave_index = _w + 1
 		cs._spawn_wave_enemies()
 		for e in cs.enemies:
-			assert_ne(e.def_id, 5, "stone must not spawn when disabled")
+			assert_ne(e.def_id, 105, "stone must not spawn when disabled")
+			assert_ne(e.def_id, 104, "skeleton must not spawn when disabled")
 
 
 func test_red_bonus_from_yellow_count() -> void:
@@ -779,12 +785,12 @@ func test_pierce_thunder_chains_from_wet() -> void:
 
 
 func test_endless_spawns_zombies_and_boss_super() -> void:
+	## 新表：第1波平民池；第10波超级僵尸×1。
 	var cs := CombatState.new(843)
 	cs.start_graybox(843, true)
 	assert_true(cs.endless_mode)
 	assert_eq(cs.enemies.size(), 1)
-	assert_eq(cs.enemies[0].def_id, CombatConstants.ZOMBIE_ENEMY_ID)
-	# 推进到第 10 波 Boss
+	assert_eq(cs.enemies[0].def_id, 1)
 	cs.phase = CombatState.Phase.WON
 	cs.reward_resolved = true
 	cs.reward_pending = false

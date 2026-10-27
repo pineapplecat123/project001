@@ -2126,11 +2126,67 @@ func start_next_wave() -> bool:
 
 
 func _configure_endless_wave_encounter() -> void:
-	## 无限：普通波全僵尸（数量随波升，封顶）；每 10 波超级僵尸 Boss。
+	## 无限：按敌人生成池表；10 的倍数为超级僵尸 Boss 波。
 	if wave_index > 0 and wave_index % 10 == 0:
 		encounter_kind = EncounterKind.BOSS
 	else:
 		encounter_kind = EncounterKind.NORMAL
+
+
+func _endless_wave_enemy_ids() -> Array[int]:
+	## 波次→种类数字串→数量；10 的倍数：超级僵尸 ×(波次/10)。
+	var w: int = wave_index
+	var out: Array[int] = []
+	if w > 0 and w % 10 == 0:
+		var n: int = int(w / 10)
+		for _i in n:
+			out.append(CombatConstants.SUPER_ZOMBIE_ENEMY_ID)
+		return out
+	var pool: Array[int] = []
+	var count: int = 1
+	if w == 1:
+		pool = [1]
+		count = 1
+	elif w == 2:
+		pool = [1, 2]
+		count = 1
+	elif w == 3:
+		pool = [1, 2, 3]
+		count = 2
+	elif w == 4:
+		pool = [4]
+		count = 2
+	elif w == 5 or w == 6:
+		pool = [1, 2, 3, 4]
+		count = 2
+	elif w == 7 or w == 8 or w == 9:
+		pool = [1, 2, 3, 4]
+		count = 3
+	elif w == 11:
+		pool = [1]
+		count = 3
+	elif w == 12:
+		pool = [1, 2]
+		count = 3
+	elif w == 13:
+		pool = [1, 2, 3]
+		count = 3
+	elif w == 14:
+		pool = [4]
+		count = 3
+	elif w == 15 or w == 16 or w == 17:
+		pool = [1, 2, 3, 4]
+		count = 4
+	elif w == 18 or w == 19:
+		pool = [1, 2, 3, 4]
+		count = 5
+	else:
+		# >20 且非 10 倍数
+		pool = [1, 2, 3, 4]
+		count = 5
+	for _j in count:
+		out.append(pool[rng.randi_range(0, pool.size() - 1)])
+	return out
 
 
 func _spawn_wave_enemies(force_ids: Array = []) -> void:
@@ -2139,20 +2195,18 @@ func _spawn_wave_enemies(force_ids: Array = []) -> void:
 		for x in force_ids:
 			ids.append(int(x))
 	elif endless_mode:
-		if encounter_kind == EncounterKind.BOSS:
-			ids.append(CombatConstants.SUPER_ZOMBIE_ENEMY_ID)
-		else:
-			var zcount: int = mini(wave_index, CombatConstants.ENDLESS_MAX_ZOMBIES_PER_WAVE)
-			zcount = maxi(1, zcount)
-			for _i in zcount:
-				ids.append(CombatConstants.ZOMBIE_ENEMY_ID)
+		ids.append_array(_endless_wave_enemy_ids())
 	elif encounter_kind == EncounterKind.BOSS:
 		ids.append(CombatConstants.BOSS_BODY_ENEMY_ID)
 	else:
 		var pool: Array[int] = []
 		for item in DataRegistry.all_enemies():
-			if bool(item.get("enabled_in_combat", false)):
-				pool.append(int(item["id"]))
+			if not bool(item.get("enabled_in_combat", false)):
+				continue
+			# 普通/精英随机池只用小怪；Boss 仅由遭遇类型或无限表指定
+			if str(item.get("type", "")) == "Boss":
+				continue
+			pool.append(int(item["id"]))
 		if pool.is_empty():
 			pool.append(CombatConstants.CIVILIAN_ENEMY_ID)
 		var count: int

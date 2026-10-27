@@ -263,7 +263,7 @@ func test_force_load_yellow_and_fire() -> void:
 
 
 func test_skeleton_does_not_bleed() -> void:
-	var def: Dictionary = DataRegistry.get_enemy(4)
+	var def: Dictionary = DataRegistry.get_enemy(104)
 	var e := EnemyInstance.new(def, 5)
 	assert_true(e.has_tag("骷髅"))
 	e.apply_hit(3)
@@ -287,7 +287,7 @@ func test_bio_bleeds_and_ticks() -> void:
 
 
 func test_stone_ignores_damage_under_4() -> void:
-	var def: Dictionary = DataRegistry.get_enemy(5)
+	var def: Dictionary = DataRegistry.get_enemy(105)
 	var e := EnemyInstance.new(def, 5)
 	assert_eq(e.apply_hit(3), 0)
 	assert_eq(e.hp, e.max_hp)
@@ -296,7 +296,7 @@ func test_stone_ignores_damage_under_4() -> void:
 
 
 func test_stone_ignores_bleed_dot_under_4() -> void:
-	var def: Dictionary = DataRegistry.get_enemy(5)
+	var def: Dictionary = DataRegistry.get_enemy(105)
 	var e := EnemyInstance.new(def, 5)
 	e.bleed_stacks = 3  # 强行叠层
 	var dealt := e.apply_damage(e.bleed_stacks)

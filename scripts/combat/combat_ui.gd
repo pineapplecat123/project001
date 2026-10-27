@@ -47,7 +47,7 @@ const SHAKE_MAX_PX := 42.0
 const SHAKE_DURATION := 0.28
 ## 射击轨迹：圆亮彗星头 + 渐隐长尾；芯色=弹药，描边=枪口罪孽
 ## 尾长相对 v0.2.42/43（300）再加长；开炮瞬间按已飞距离裁切，避免尾巴伸到玩家左侧
-const SHOT_TRAIL_LEN := 480.0
+const SHOT_TRAIL_LEN := 960.0
 const SHOT_TRAIL_THICK := 5.8
 const SHOT_OUTLINE_PAD := 2.6
 const SHOT_GLOW_PAD := 7.0
@@ -56,9 +56,11 @@ const SHOT_HEAD_SIZE := 18.0
 const SHOT_HEAD_GLOW := 28.0
 const SHOT_TRAVEL_SEC := 0.07
 const SHOT_TRAVEL_SEC_PER_CELL := 0.016
-const BLOOD_BURST_MIN := 8
-const BLOOD_BURST_MAX := 40
-const BLOOD_GRAVITY := 980.0
+const BLOOD_BURST_MIN := 6
+const BLOOD_BURST_MAX := 28
+const BLOOD_STREAK_SEGS := 8
+const BLOOD_STREAK_LEN_MIN := 28.0
+const BLOOD_STREAK_LEN_MAX := 72.0
 
 const COL_PHASE := Color(1.0, 0.92, 0.45)
 const COL_HP_OK := Color(0.45, 0.95, 0.55)
@@ -1463,45 +1465,78 @@ func _shot_projectile_step(t: float, ctx: Dictionary) -> void:
 
 
 func _spawn_blood_burst(at_g: Vector2, amount: int) -> void:
-	## 命中飙血：抛物线往下掉；伤害越高血滴越多。
+	## 命中飙血：带拖尾的线段轨迹（非抛物线血滴）；伤害越高条数越多、越长。
 	if amount <= 0:
 		return
 	var t: float = clampf(float(amount) / 12.0, 0.0, 1.0)
 	var n: int = int(round(lerpf(float(BLOOD_BURST_MIN), float(BLOOD_BURST_MAX), t)))
 	for _i in n:
-		var drop := ColorRect.new()
-		drop.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		drop.z_index = 49
-		var sz: float = randf_range(4.5, 11.5) * (0.85 + 0.4 * t)
-		drop.size = Vector2(sz, sz * randf_range(0.85, 1.25))
-		drop.color = Color(randf_range(0.75, 1.0), randf_range(0.05, 0.22), randf_range(0.05, 0.18), 0.95)
-		add_child(drop)
-		var start_p: Vector2 = at_g - drop.size * 0.5 + Vector2(randf_range(-6.0, 6.0), randf_range(-4.0, 2.0))
-		drop.global_position = start_p
-		# 初速：略向上+左右散开，再受重力下落
-		var vx: float = randf_range(-160.0, 160.0) * (0.85 + 0.35 * t)
-		var vy: float = randf_range(-320.0, -90.0) * (0.9 + 0.35 * t)
-		var dur: float = randf_range(0.42, 0.72)
-		var bctx := {"drop": drop, "start": start_p, "vx": vx, "vy": vy}
+		var ang: float = randf_range(-PI * 0.85, PI * 0.85)
+		# 略偏右飞出（射击方向），夹杂上下散开
+		if randf() < 0.55:
+			ang = randf_range(-0.55, 0.55)
+		var dir := Vector2(cos(ang), sin(ang))
+		var streak_len: float = lerpf(BLOOD_STREAK_LEN_MIN, BLOOD_STREAK_LEN_MAX, t) * randf_range(0.75, 1.2)
+		var thick0: float = lerpf(2.2, 4.6, t) * randf_range(0.85, 1.15)
+		var speed: float = lerpf(220.0, 420.0, t) * randf_range(0.85, 1.2)
+		var dur: float = randf_range(0.22, 0.38)
+		var origin: Vector2 = at_g + Vector2(randf_range(-4.0, 4.0), randf_range(-5.0, 5.0))
+		var segs: Array = []
+		var seg_w: float = streak_len / float(BLOOD_STREAK_SEGS)
+		for si in BLOOD_STREAK_SEGS:
+			var u: float = float(si) / float(maxi(BLOOD_STREAK_SEGS - 1, 1))  # 0=尾 1=头
+			var rect := ColorRect.new()
+			rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			rect.z_index = 49
+			var thick: float = thick0 * lerpf(0.25, 1.0, pow(u, 0.8))
+			rect.size = Vector2(seg_w + 1.0, thick)
+			var a: float = lerpf(0.15, 0.95, pow(u, 0.7))
+			rect.color = Color(randf_range(0.78, 1.0), randf_range(0.04, 0.18), randf_range(0.04, 0.16), a)
+			rect.pivot_offset = Vector2(0.0, thick * 0.5)
+			rect.rotation = dir.angle()
+			add_child(rect)
+			segs.append(rect)
+		var bctx := {
+			"segs": segs,
+			"origin": origin,
+			"dir": dir,
+			"speed": speed,
+			"streak_len": streak_len,
+			"seg_w": seg_w,
+		}
 		var tw := create_tween()
 		tw.set_parallel(true)
-		tw.tween_method(_blood_drop_step.bind(bctx), 0.0, dur, dur)
-		tw.tween_property(drop, "modulate:a", 0.0, dur).set_delay(dur * 0.35)
-		tw.chain().tween_callback(drop.queue_free)
+		tw.tween_method(_blood_streak_step.bind(bctx), 0.0, dur, dur)
+		for rect2 in segs:
+			tw.tween_property(rect2, "modulate:a", 0.0, dur).set_delay(dur * 0.25)
+		tw.chain().tween_callback(_blood_streak_cleanup.bind(segs))
 
 
-func _blood_drop_step(elapsed: float, bctx: Dictionary) -> void:
-	var drop: ColorRect = bctx.get("drop") as ColorRect
-	if drop == null or not is_instance_valid(drop):
+func _blood_streak_step(elapsed: float, bctx: Dictionary) -> void:
+	var segs: Array = bctx.get("segs", [])
+	if segs.is_empty():
 		return
-	var start_p: Vector2 = bctx.get("start", Vector2.ZERO)
-	var vx: float = float(bctx.get("vx", 0.0))
-	var vy: float = float(bctx.get("vy", 0.0))
-	# x = x0 + vx*t ; y = y0 + vy*t + 0.5*g*t^2
-	drop.global_position = Vector2(
-		start_p.x + vx * elapsed,
-		start_p.y + vy * elapsed + 0.5 * BLOOD_GRAVITY * elapsed * elapsed
-	)
+	var origin: Vector2 = bctx.get("origin", Vector2.ZERO)
+	var dir: Vector2 = bctx.get("dir", Vector2.RIGHT)
+	var speed: float = float(bctx.get("speed", 300.0))
+	var streak_len: float = float(bctx.get("streak_len", 40.0))
+	var seg_w: float = float(bctx.get("seg_w", 4.0))
+	var head: Vector2 = origin + dir * (speed * elapsed)
+	# 头在前，尾在后；按段贴在头→尾方向上
+	for si in segs.size():
+		var rect: ColorRect = segs[si] as ColorRect
+		if rect == null or not is_instance_valid(rect):
+			continue
+		var u: float = float(si) / float(maxi(segs.size() - 1, 1))
+		var along: float = -streak_len + float(si) * seg_w
+		var p: Vector2 = head + dir * along
+		rect.global_position = p - Vector2(0.0, rect.size.y * 0.5)
+
+
+func _blood_streak_cleanup(segs: Array) -> void:
+	for rect in segs:
+		if rect != null and is_instance_valid(rect):
+			rect.queue_free()
 
 
 ## 在正上击发点（红圈下）打出发黄闪；chamber 在盘上此时应对准正上。

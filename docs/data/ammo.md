@@ -1,3 +1,4 @@
+<!-- v0.2.49：旧彩色弹 enabled_in_combat=false，奖励/商店池仅平庸+罪孽。 -->
 # 弹药种类表（管理文档）
 
 > **设计源会随新表替换**：你后续会定期提供新版 Excel；届时以新表覆盖 `design-tables.xlsx` 并同步本管理文档与 `data/*.json`。

@@ -122,10 +122,10 @@ func test_enemy_table_hp_and_zombie_tag() -> void:
 	assert_eq(int(DataRegistry.get_enemy(1).get("hp")), 20)
 	assert_eq(int(DataRegistry.get_enemy(2).get("hp")), 30)
 	assert_eq(int(DataRegistry.get_enemy(3).get("hp")), 40)
-	assert_eq(int(DataRegistry.get_enemy(6).get("hp")), 50)
-	var tags = DataRegistry.get_enemy(6).get("tags", [])
+	assert_eq(int(DataRegistry.get_enemy(4).get("hp")), 50)
+	var tags = DataRegistry.get_enemy(4).get("tags", [])
 	assert_true("僵尸" in tags)
-	assert_eq(int(DataRegistry.get_enemy(7).get("hp")), 100)
+	assert_eq(int(DataRegistry.get_enemy(5).get("hp")), 100)
 
 
 func test_super_zombie_summons_in_front() -> void:
