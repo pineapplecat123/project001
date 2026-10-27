@@ -66,6 +66,23 @@ func is_ammo_enabled(ammo_id: int) -> bool:
 	return bool(get_ammo(ammo_id).get("enabled_in_combat", false))
 
 
+func is_ammo_ephemeral(ammo_id: int) -> bool:
+	## 战斗衍生物（如幽灵）：战后消失，不进奖励/商店。
+	return bool(get_ammo(ammo_id).get("ephemeral", false))
+
+
+func is_ammo_reward_eligible(ammo_id: int) -> bool:
+	## 奖励/商店池：启用且非 ephemeral；可用 in_reward_pool 显式覆盖。
+	var def: Dictionary = get_ammo(ammo_id)
+	if def.is_empty():
+		return false
+	if not bool(def.get("enabled_in_combat", false)):
+		return false
+	if def.has("in_reward_pool"):
+		return bool(def["in_reward_pool"])
+	return not bool(def.get("ephemeral", false))
+
+
 func is_enemy_enabled(enemy_id: int) -> bool:
 	return bool(get_enemy(enemy_id).get("enabled_in_combat", false))
 

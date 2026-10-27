@@ -204,6 +204,36 @@
       ],
       "enabled_in_combat": true,
       "blurb": "枪口贪婪；装≥3扣金"
+    },
+    {
+      "id": 19,
+      "name": "墓碑弹药",
+      "rarity": null,
+      "base_damage": 2,
+      "base_damage_mode": "fixed",
+      "special": "基础伤害2。每发射1发：生成1颗幽灵弹药入袋，并立即用袋内幽灵填满当前弹夹所有空位（爆发续射）。",
+      "tags": [
+        "召唤"
+      ],
+      "enabled_in_combat": true,
+      "ephemeral": false,
+      "in_reward_pool": true,
+      "blurb": "发射产幽灵并填空仓"
+    },
+    {
+      "id": 20,
+      "name": "幽灵弹药",
+      "rarity": null,
+      "base_damage": 2,
+      "base_damage_mode": "fixed",
+      "special": "基础伤害2。由墓碑弹药生成入袋；战斗结束后从袋/膛/弃牌消失。不进奖励与商店池。",
+      "tags": [
+        "衍生物"
+      ],
+      "enabled_in_combat": true,
+      "ephemeral": true,
+      "in_reward_pool": false,
+      "blurb": "墓碑衍生物；战后消失"
     }
   ]
 }

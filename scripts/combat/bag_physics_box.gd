@@ -132,12 +132,46 @@ func _physics_process(delta: float) -> void:
 	var top := WALL_PAD
 	var bottom := sz.y - WALL_PAD
 	# integrate
+	# 墓碑锚点：幽灵尽量围着漂
+	var tomb_anchors: Array[Vector2] = []
+	for tb in _balls:
+		if int(tb.get("id", -1)) == FireResolver.ID_TOMBSTONE:
+			tomb_anchors.append(tb["pos"])
 	for b in _balls:
 		if bool(b["asleep"]):
-			continue
+			# 幽灵不睡死在底：轻推回漂浮
+			if int(b.get("id", -1)) == FireResolver.ID_GHOST:
+				b["asleep"] = false
+				b["freeze"] = 0
+			else:
+				continue
 		var vel: Vector2 = b["vel"]
-		vel.y += GRAVITY * delta
-		vel *= AIR_DRAG
+		var aid: int = int(b.get("id", -1))
+		if aid == FireResolver.ID_GHOST:
+			# 低重力 + 轻正弦漂浮
+			vel.y += GRAVITY * 0.12 * delta
+			vel.y += sin(Time.get_ticks_msec() * 0.004 + float(b["pos"].x) * 0.05) * 18.0 * delta
+			if not tomb_anchors.is_empty():
+				var nearest: Vector2 = tomb_anchors[0] as Vector2
+				var best_d: float = float(b["pos"].distance_squared_to(nearest))
+				for apos in tomb_anchors:
+					var d2: float = b["pos"].distance_squared_to(apos)
+					if d2 < best_d:
+						best_d = d2
+						nearest = apos
+				var pull: Vector2 = nearest - b["pos"]
+				var pd: float = pull.length()
+				if pd > 1.0:
+					# 围着墓碑：径向拉力 + 切向环绕
+					var nrm: Vector2 = pull / pd
+					var tangent := Vector2(-nrm.y, nrm.x)
+					var orbit_r := 28.0
+					vel += nrm * clampf(orbit_r - pd, -40.0, 40.0) * 0.9 * delta
+					vel += tangent * 26.0 * delta
+			vel *= 0.985
+		else:
+			vel.y += GRAVITY * delta
+			vel *= AIR_DRAG
 		var pos: Vector2 = b["pos"]
 		pos += vel * delta
 		var r: float = float(b["r"])

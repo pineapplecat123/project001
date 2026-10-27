@@ -992,6 +992,7 @@ func _lose_ammo_exhausted() -> void:
 	lose_reason = LoseReason.AMMO_EXHAUSTED
 	_clear_all_sin_muzzle(true)
 	_reset_muzzle()
+	_purge_ghost_ammo()
 	if not from_map_run:
 		_clear_combat_bonus_ammo()
 		magazine = Magazine.new()
@@ -1026,6 +1027,7 @@ func _lose_hp() -> void:
 	lose_reason = LoseReason.HP
 	_clear_all_sin_muzzle(true)
 	_reset_muzzle()
+	_purge_ghost_ammo()
 	if not from_map_run:
 		_clear_combat_bonus_ammo()
 		magazine = Magazine.new()
@@ -1044,6 +1046,78 @@ func _reshuffle_discard_into_bag() -> void:
 	discard_temp.clear()
 	_shuffle_bag()
 	_log("弃牌堆洗回弹药袋（%d 发）。" % bag.size())
+
+
+func _take_one_ammo_from_bag(ammo_id: int) -> bool:
+	## 从袋中取出一发指定 id（优先靠后），同步 temp 标记。
+	_sync_temp_arrays()
+	for i in range(bag.size() - 1, -1, -1):
+		if int(bag[i]) == ammo_id:
+			bag.remove_at(i)
+			if i < bag_temp.size():
+				bag_temp.remove_at(i)
+			return true
+	return false
+
+
+func _fill_empty_chambers_with_ghosts() -> int:
+	## 用袋内幽灵填满弹夹所有空位；返回填入数量。
+	if magazine == null:
+		return 0
+	var filled := 0
+	for i in magazine.slots.size():
+		if magazine.slots[i] != Magazine.EMPTY:
+			continue
+		if not _take_one_ammo_from_bag(FireResolver.ID_GHOST):
+			break
+		magazine.set_slot(i, FireResolver.ID_GHOST, false)
+		filled += 1
+	return filled
+
+
+func _apply_tombstone_on_fire() -> void:
+	## 墓碑击发：幽灵入袋 → 立即填空仓 → 按当前膛内剩余重建射击队列（爆发续射）。
+	_bag_append(FireResolver.ID_GHOST, false)
+	var filled: int = _fill_empty_chambers_with_ghosts()
+	_log("墓碑弹药：生成幽灵入袋，并用幽灵填入空仓 ×%d。" % filled)
+	if magazine == null or magazine.is_empty():
+		_fire_queue = []
+		_fire_damages = []
+		_fire_index = 0
+		return
+	_fire_queue = magazine.fire_order()
+	_fire_damages = FireResolver.compute_shot_damages(_fire_queue, pink_bonus)
+	_fire_index = 0
+
+
+func _purge_ghost_ammo() -> int:
+	## 战斗结束：清除袋/弃/膛中的幽灵弹药。返回清除数量。
+	var n := 0
+	_sync_temp_arrays()
+	var i := bag.size() - 1
+	while i >= 0:
+		if int(bag[i]) == FireResolver.ID_GHOST:
+			bag.remove_at(i)
+			if i < bag_temp.size():
+				bag_temp.remove_at(i)
+			n += 1
+		i -= 1
+	i = discard.size() - 1
+	while i >= 0:
+		if int(discard[i]) == FireResolver.ID_GHOST:
+			discard.remove_at(i)
+			if i < discard_temp.size():
+				discard_temp.remove_at(i)
+			n += 1
+		i -= 1
+	if magazine != null:
+		for s in magazine.slots.size():
+			if magazine.slots[s] == FireResolver.ID_GHOST:
+				magazine.set_slot(s, Magazine.EMPTY, false)
+				n += 1
+	if n > 0:
+		_log("战斗结束：幽灵弹药消散 ×%d。" % n)
+	return n
 
 
 func begin_fire() -> bool:
@@ -1157,7 +1231,10 @@ func fire_next_shot() -> bool:
 	_discard_append(ammo_id, shot_temp)
 	# 元素枪口：本发后挂上，供后续击发附带
 	_mount_muzzle_from(flags)
-	_fire_index += 1
+	if ammo_id == FireResolver.ID_TOMBSTONE:
+		_apply_tombstone_on_fire()
+	else:
+		_fire_index += 1
 
 	if pace_after_fire:
 		# 只规划命中路径；扣血/飘字等拖尾飞到怪身上再 resolve_paced_hit
@@ -1693,7 +1770,10 @@ func _auto_load_and_fire_once() -> bool:
 		_fire_total_damage += _apply_shot_to_enemies(ammo_id, base_dmg, pierce, gas, fire, water, thunder)
 		_discard_append(ammo_id, gold_temp)
 		_mount_muzzle_from(flags)
-		_fire_index += 1
+		if ammo_id == FireResolver.ID_TOMBSTONE:
+			_apply_tombstone_on_fire()
+		else:
+			_fire_index += 1
 		_remove_dead()
 	# 额外轮未打完的弹归袋（中途清场时）
 	if not magazine.is_empty():
@@ -1961,6 +2041,7 @@ func _enter_won() -> void:
 	# 枪口（含罪孽层）一律清掉；练习/无限每波：战斗结束清额外罪孽袋回 10+5 再发奖；地图 run 保留构筑袋
 	_clear_all_sin_muzzle(true)
 	_reset_muzzle()
+	_purge_ghost_ammo()
 	if not from_map_run:
 		_reset_practice_ammo_to_starter()
 	# 无限：每 5 波（5/10/15…）奖励后须进商店，逛完才可下一波
@@ -2011,8 +2092,9 @@ func _begin_reward() -> void:
 func generate_reward_choices() -> Array[int]:
 	var pool: Array[int] = []
 	for item in DataRegistry.all_ammo():
-		if bool(item.get("enabled_in_combat", false)):
-			pool.append(int(item["id"]))
+		var aid: int = int(item.get("id", 0))
+		if DataRegistry.is_ammo_reward_eligible(aid):
+			pool.append(aid)
 	if pool.is_empty():
 		pool.append(CombatConstants.WHITE_AMMO_ID)
 	var out: Array[int] = []

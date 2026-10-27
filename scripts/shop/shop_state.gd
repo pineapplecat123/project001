@@ -149,8 +149,9 @@ func _roll_stock() -> void:
 func _enabled_ammo_ids() -> Array[int]:
 	var out: Array[int] = []
 	for item in DataRegistry.all_ammo():
-		if bool(item.get("enabled_in_combat", false)):
-			out.append(int(item["id"]))
+		var aid: int = int(item.get("id", 0))
+		if DataRegistry.is_ammo_reward_eligible(aid):
+			out.append(aid)
 	return out
 
 
