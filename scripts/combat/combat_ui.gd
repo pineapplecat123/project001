@@ -70,6 +70,12 @@ const Z_SHOT_VFX := 42
 const Z_DMG_FLOAT := 43
 const Z_MODAL_DIMMER := 80
 const Z_MODAL_PANEL := 90
+const Z_WAVE_BANNER := 100
+## 清场后等飙血播一会儿再弹三选一（墙钟秒，不受战斗速度滑条影响）
+const REWARD_SHOW_DELAY_SEC := 1.0
+const WAVE_BANNER_FADE_IN := 0.28
+const WAVE_BANNER_HOLD := 0.70
+const WAVE_BANNER_FADE_OUT := 0.40
 
 const COL_PHASE := Color(1.0, 0.92, 0.45)
 const COL_HP_OK := Color(0.45, 0.95, 0.55)
@@ -133,6 +139,11 @@ var _cell_shake_tweens: Dictionary = {}
 var _defer_hit_vfx: bool = false
 var _pending_hit_vfx: Array = []
 var _reward_open: bool = false
+## 胜利后延迟弹出奖励：token 用于取消过期 await
+var _reward_delaying: bool = false
+var _reward_delay_token: int = 0
+var _wave_banner_label: Label = null
+var _wave_bannering: bool = false
 var _ammo_detail_panel: PanelContainer = null
 var _ammo_detail_body: RichTextLabel = null
 var _shop: ShopState = ShopState.new()
@@ -1035,7 +1046,7 @@ func _ammo_colors(ammo_id: int) -> Dictionary:
 
 
 func _busy() -> bool:
-	return _firing or _rolling or _loading or _wheel_animating or _sin_pick_open
+	return _firing or _rolling or _loading or _wheel_animating or _sin_pick_open or _wave_bannering or _reward_delaying
 
 
 func _on_load() -> void:
@@ -1829,6 +1840,8 @@ func _on_next_wave() -> void:
 	state.start_next_wave()
 	btn_next_wave.text = "下一波 NEXT"
 	_set_reward_open(false)
+	if state.endless_mode:
+		await _play_wave_banner(state.wave_index)
 
 
 func _toggle_dev() -> void:
@@ -1848,6 +1861,8 @@ func _update_dimmer() -> void:
 
 
 func _set_reward_open(open: bool) -> void:
+	if open:
+		_cancel_reward_show_delay()
 	_reward_open = open
 	reward_panel.visible = open
 	if open:
@@ -1856,6 +1871,9 @@ func _set_reward_open(open: bool) -> void:
 		_hide_ammo_detail()
 		_hide_muzzle_tip()
 		_refresh_reward_panel()
+	else:
+		# 关面板时若仍在等弹奖，一并取消，避免晚到的 await 再打开
+		_cancel_reward_show_delay()
 	_update_dimmer()
 
 
@@ -2898,6 +2916,8 @@ func _on_sin_picked(sin_ammo_id: int) -> void:
 	state.start_graybox(0, _pending_start_endless, sin_ammo_id)
 	state.pace_after_fire = true
 	_refresh()
+	if state.endless_mode:
+		await _play_wave_banner(state.wave_index)
 
 
 func _wire_dev_buttons() -> void:
@@ -3019,6 +3039,73 @@ func _dev_add_btn(parent: Control, label: String, cb: Callable) -> void:
 	parent.add_child(b)
 
 
+func _cancel_reward_show_delay() -> void:
+	_reward_delay_token += 1
+	_reward_delaying = false
+
+
+func _start_reward_show_delay() -> void:
+	## 怪死/清场后等 REWARD_SHOW_DELAY_SEC 再弹奖励面板（练习/无限/地图共用）。
+	if _reward_open or state == null or not state.reward_pending:
+		return
+	_reward_delaying = true
+	_reward_delay_token += 1
+	var token: int = _reward_delay_token
+	await get_tree().create_timer(REWARD_SHOW_DELAY_SEC).timeout
+	if not is_inside_tree():
+		return
+	if token != _reward_delay_token:
+		return
+	_reward_delaying = false
+	if state == null:
+		return
+	if state.phase != CombatState.Phase.WON or not state.reward_pending or _reward_open:
+		return
+	_set_reward_open(true)
+	if result_label != null:
+		result_label.text = "本波清空！请选择奖励"
+		result_label.visible = true
+
+
+func _ensure_wave_banner() -> void:
+	if _wave_banner_label != null and is_instance_valid(_wave_banner_label):
+		return
+	var lab := Label.new()
+	lab.name = "WaveBanner"
+	lab.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lab.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	lab.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	lab.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	lab.add_theme_font_size_override("font_size", 84)
+	lab.add_theme_color_override("font_color", Color(1.0, 0.94, 0.62, 1.0))
+	lab.add_theme_color_override("font_outline_color", Color(0.05, 0.05, 0.08, 0.92))
+	lab.add_theme_constant_override("outline_size", 10)
+	lab.z_index = Z_WAVE_BANNER
+	lab.visible = false
+	lab.modulate = Color(1, 1, 1, 0)
+	add_child(lab)
+	_wave_banner_label = lab
+
+
+func _play_wave_banner(wave_n: int) -> void:
+	## 无限模式：每波开战前大字居中「第N波」渐显→停→渐隐。
+	_ensure_wave_banner()
+	_wave_bannering = true
+	_wave_banner_label.text = "第%d波" % wave_n
+	_wave_banner_label.visible = true
+	_wave_banner_label.modulate = Color(1, 1, 1, 0)
+	_refresh_hud_only()
+	var tw := create_tween()
+	tw.tween_property(_wave_banner_label, "modulate:a", 1.0, WAVE_BANNER_FADE_IN).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	tw.tween_interval(WAVE_BANNER_HOLD)
+	tw.tween_property(_wave_banner_label, "modulate:a", 0.0, WAVE_BANNER_FADE_OUT).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
+	await tw.finished
+	if is_instance_valid(_wave_banner_label):
+		_wave_banner_label.visible = false
+	_wave_bannering = false
+	_refresh()
+
+
 func _refresh() -> void:
 	phase_label.text = "阶段：%s" % state.phase_name()
 	phase_label.add_theme_color_override("font_color", COL_PHASE)
@@ -3050,12 +3137,16 @@ func _refresh() -> void:
 	match state.phase:
 		CombatState.Phase.WON:
 			if state.reward_pending:
-				result_label.text = "本波清空！请选择奖励"
-				if not _reward_open:
-					_set_reward_open(true)
-				elif _reward_open:
+				if _reward_open:
+					result_label.text = "本波清空！请选择奖励"
 					_refresh_reward_panel()
+				else:
+					# 怪死后先留 1 秒给飙血/死亡表现，再弹三选一
+					result_label.text = "本波清空！"
+					if not _reward_delaying:
+						_start_reward_show_delay()
 			elif state.reward_resolved:
+				_cancel_reward_show_delay()
 				if state.from_map_run:
 					result_label.text = "奖励已领取 · 请返回地图"
 				elif state.needs_endless_shop():
@@ -3070,6 +3161,7 @@ func _refresh() -> void:
 			# 地图 run：只用奖励面板「返回地图」；练习战显示「下一波」
 			btn_next_wave.visible = state.reward_resolved and not state.from_map_run
 		CombatState.Phase.LOST:
+			_cancel_reward_show_delay()
 			if state.lose_reason == CombatState.LoseReason.AMMO_EXHAUSTED:
 				result_label.text = "失败：弹药耗尽"
 			else:
@@ -3084,6 +3176,7 @@ func _refresh() -> void:
 			if _reward_open:
 				_set_reward_open(false)
 		_:
+			_cancel_reward_show_delay()
 			result_label.visible = false
 			btn_next_wave.visible = false
 			if _reward_open:
