@@ -21,7 +21,14 @@ func test_fire_flash_yellow_only_cleared_before_rotate() -> void:
 	var clear_i := anim.find("_clear_fire_flash()", hold_i)
 	var rotate_i := anim.find("_animate_disk_to", clear_i)
 	assert_gt(rotate_i, clear_i, "disk rotate must come after clear in fire loop")
-	assert_true(anim.contains("_clear_fire_flash()\n\t_apply_disk_rotation"), "clear before end snap align")
+	# 末发后：先 +1 转再收束；空匣不硬对齐 start_index（否则红圈跳仓）
+	assert_true(anim.contains("_wheel_visual_steps + 1.0"), "last shot still rotates +1 step")
+	assert_true(anim.contains("not state.magazine.is_empty()"), "end align skipped when mag empty")
+	assert_true(
+		anim.contains("_clear_fire_flash()\n\tif state.magazine != null and not state.magazine.is_empty():")
+		or anim.contains("空匣保留末发后视觉落点"),
+		"clear then conditional align for non-empty only",
+	)
 	assert_false(
 		text.contains("if _firing and fired_slot == slot_i"),
 		"must not keep lightened for whole _firing via last_fired_slot"

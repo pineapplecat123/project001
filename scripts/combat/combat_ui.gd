@@ -1221,7 +1221,8 @@ func _run_fire_sequence() -> void:
 	if state.has_corpse_enemies():
 		state.flush_dead_enemies()
 	_clear_fire_flash()
-	_apply_disk_rotation(float(state.magazine.start_index))
+	if state.magazine != null and not state.magazine.is_empty():
+		_apply_disk_rotation(float(state.magazine.start_index))
 	_firing = false
 	_refresh()
 
@@ -1290,10 +1291,16 @@ func _animate_fire_shots() -> void:
 			_refresh_mag_contents()
 			await get_tree().create_timer(_paced(FIRE_SHOT_DELAY)).timeout
 		else:
+			# 末发：同样再转 60° 收束；禁止瞬间对齐 start_index。
+			# 空匣逻辑会把 start_index 置 0，硬对齐会让正上红圈/仓边框闪跳到别的仓再弹回。
+			await _animate_disk_to(_wheel_visual_steps + 1.0, _paced(STEP_ROT_DURATION))
+			_refresh_mag_contents()
 			_wheel_animating = false
 			break
 	_clear_fire_flash()
-	_apply_disk_rotation(float(state.magazine.start_index))
+	# 非空匣才对齐逻辑锤位；空匣保留末发后视觉落点，装弹会话再对齐
+	if state.magazine != null and not state.magazine.is_empty():
+		_apply_disk_rotation(float(state.magazine.start_index))
 
 
 func _cell_unit_global_center(cell: int) -> Vector2:
@@ -3201,7 +3208,11 @@ func _refresh_mag_contents() -> void:
 func _refresh_mag() -> void:
 	var start_i: int = state.magazine.start_index
 	# 逐步装/射/滚/Tween 期间禁止瞬间对齐，否则会跳过 60° 动画并造成标位错位
-	if not _wheel_animating and not _loading and not _firing and not _rolling:
+	# 空匣 start_index 常被清成 0：勿硬拉盘面，否则正上红圈会闪跳
+	if (
+		not _wheel_animating and not _loading and not _firing and not _rolling
+		and state.magazine != null and not state.magazine.is_empty()
+	):
 		var want := float(start_i)
 		if absf(fposmod(_wheel_visual_steps, float(CombatConstants.MAGAZINE_SIZE)) - want) > 0.01:
 			_apply_disk_rotation(want)

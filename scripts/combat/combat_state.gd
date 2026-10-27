@@ -1641,9 +1641,8 @@ func _consume_hammer_chamber(expected_id: int) -> void:
 				break
 			i = (i + 1) % magazine.size()
 			seen += 1
-	if magazine.is_empty():
-		magazine.start_index = 0
-		return
+	# 末发清空后也推进一格（与中途击发一致），避免 start_index 瞬跳到 0 让 UI 红圈闪位。
+	# 整匣收束 magazine.clear() 仍会归零；装弹会话会设 LOAD_SESSION_INITIAL_START。
 	_advance_cylinder_one_step()
 
 
