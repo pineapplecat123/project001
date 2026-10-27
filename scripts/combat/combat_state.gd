@@ -1159,7 +1159,9 @@ func fire_next_shot() -> bool:
 	_mount_muzzle_from(flags)
 
 	_fire_index += 1
-	_remove_dead()
+	# pace（UI 逐步射击）：先不移除尸体，等弹点命中飚血后再 flush_dead_enemies
+	if not pace_after_fire:
+		_remove_dead()
 
 	# 金色：本匣击发计入待追加轮数；整匣打完（或中途清场归袋）后再额外自动装填射击。
 	# 额外轮内的金色不再叠加轮数。
@@ -1652,6 +1654,19 @@ func _remove_dead() -> void:
 		else:
 			_log("%s 被击败。" % e.name_zh)
 	enemies = kept
+
+
+func flush_dead_enemies() -> void:
+	## UI：弹点命中飚血播完后再清尸体并刷新。
+	_remove_dead()
+	_emit()
+
+
+func has_corpse_enemies() -> bool:
+	for e in enemies:
+		if e != null and not e.is_alive():
+			return true
+	return false
 
 
 func _run_enemy_turn() -> void:

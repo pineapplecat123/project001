@@ -1108,6 +1108,8 @@ func _run_fire_sequence() -> void:
 	if state.post_fire_enemy_pending():
 		await get_tree().create_timer(POST_FIRE_STATUS_DELAY).timeout
 		state.resolve_post_fire_enemy_turn()
+	if state.has_corpse_enemies():
+		state.flush_dead_enemies()
 	_apply_disk_rotation(float(state.magazine.start_index))
 	_firing = false
 	_refresh()
@@ -1147,6 +1149,11 @@ func _animate_fire_shots() -> void:
 			for hit in _pending_hit_vfx:
 				_spawn_damage_float(int(hit.get("cell", -1)), int(hit.get("amount", 0)), str(hit.get("kind", "")))
 			_pending_hit_vfx.clear()
+			# 飚血已在怪还在场时播完；现在再清尸体
+			if state.has_corpse_enemies():
+				state.flush_dead_enemies()
+			else:
+				_refresh_board()
 			await get_tree().create_timer(FIRE_FLASH_HOLD).timeout
 		else:
 			_pending_hit_vfx.clear()
@@ -2683,7 +2690,10 @@ func _refresh() -> void:
 
 func _refresh_board() -> void:
 	var by_cell := {}
-	for e in state.alive_enemies():
+	# 含 hp<=0 尸体（pace 开火推迟移除），便于致死先飚血再消失
+	for e in state.enemies:
+		if e == null:
+			continue
 		by_cell[e.cell] = e
 	for i in CombatConstants.BOARD_SIZE:
 		var slot: Control = board_row.get_child(i) as Control

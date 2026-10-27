@@ -1089,3 +1089,35 @@ func test_pierce_shot_records_all_hit_cells() -> void:
 	assert_eq(cs.last_shot_hit_cells[0], 2)
 	assert_eq(cs.last_shot_hit_cells[1], 4)
 	assert_eq(cs.last_shot_hit_amounts.size(), cs.last_shot_hit_cells.size())
+
+
+func test_pace_killing_shot_keeps_corpse_until_flush() -> void:
+	## pace 开火：致死后先留尸体在 enemies，flush 后才移除（供 UI 先飚血）。
+	var cs := CombatState.new(930)
+	cs.start_graybox(930)
+	cs.pace_after_fire = true
+	cs.enemies[0].hp = 3
+	cs.enemies[0].max_hp = 3
+	var cell: int = cs.enemies[0].cell
+	cs.dev_force_load([
+		CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID,
+	] as Array[int])
+	assert_true(cs.begin_fire())
+	var cont: bool = cs.fire_next_shot()
+	assert_false(cont, "killing shot should end fire sequence")
+	# 白弹伤害 3，刚好打死；pace 下尸体仍在
+	assert_true(cs.alive_enemies().is_empty())
+	assert_true(cs.has_corpse_enemies(), "corpse should remain until flush")
+	var found := false
+	for e in cs.enemies:
+		if e.cell == cell and e.hp <= 0:
+			found = true
+	assert_true(found)
+	cs.flush_dead_enemies()
+	assert_false(cs.has_corpse_enemies())
+	assert_eq(cs.enemies.size(), 0)
