@@ -89,8 +89,10 @@ var _muzzle_pride: int = 0
 var _muzzle_greed: int = 0
 ## 本局所选罪孽弹药 id（愤怒/傲慢/贪婪之一）
 var selected_sin_ammo_id: int = FireResolver.ID_WRATH
-## 本场战斗内袋重置次数；每次重置灌袋 = 10 平庸 + 5 罪孽 + 本计数发额外罪孽。开局/下场清零。
+## 本场战斗内袋重置次数；每次重置灌袋 = 构筑基线 + 本计数发额外临时罪孽。开局/波末/下场清零。
 var bag_reset_count: int = 0
+## 本波构筑基线（非 ephemeral、非临时额外罪孽）；战斗内袋重置按此恢复，保留墓碑等永久弹。
+var _combat_bag_baseline: Array[int] = []
 var _pending_gold_autofires: int = 0
 ## UI 逐步表现：为 true 时整匣结束后不立刻跑金色额外轮/怪回合，由 UI 消费。
 var pace_after_fire: bool = false
@@ -142,6 +144,7 @@ func start_graybox(seed_value: int = 0, endless: bool = false, sin_ammo_id: int 
 	_apply_sin_choice(sin_ammo_id, false)
 	_fill_starter_bag()
 	_shuffle_bag()
+	_snapshot_combat_bag_baseline()
 	magazine = Magazine.new()
 	enemies.clear()
 	wave_index = 1
@@ -204,6 +207,7 @@ func start_from_run(payload: Dictionary, seed_value: int = 0) -> void:
 	discard.clear()
 	discard_temp.clear()
 	bag_reset_count = 0
+	_snapshot_combat_bag_baseline()
 	magazine = Magazine.new()
 	enemies.clear()
 	wave_index = 1
@@ -411,6 +415,7 @@ func _apply_sin_choice(sin_ammo_id: int, refill_bag: bool = true) -> void:
 		bag_reset_count = 0
 		_fill_starter_bag()
 		_shuffle_bag()
+		_snapshot_combat_bag_baseline()
 		_emit()
 
 
@@ -448,6 +453,53 @@ func _fill_starter_bag(extra_sin: int = 0) -> void:
 		_bag_append(selected_sin_ammo_id, true)
 
 
+func _snapshot_combat_bag_baseline() -> void:
+	## 记录本波永久构筑（跳过 ephemeral 与临时额外罪孽），供战斗内袋重置恢复。
+	_combat_bag_baseline.clear()
+	_sync_temp_arrays()
+	for i in bag.size():
+		var id: int = int(bag[i])
+		if DataRegistry.is_ammo_ephemeral(id):
+			continue
+		if i < bag_temp.size() and bool(bag_temp[i]):
+			continue
+		_combat_bag_baseline.append(id)
+
+
+func _strip_temporary_ammo_from_bag() -> void:
+	## 去掉袋内临时额外罪孽（半透明），保留永久弹。
+	_sync_temp_arrays()
+	var i := bag.size() - 1
+	while i >= 0:
+		if bool(bag_temp[i]):
+			bag.remove_at(i)
+			bag_temp.remove_at(i)
+		i -= 1
+
+
+func _extract_ghosts_from_bag_and_discard() -> int:
+	## 从袋/弃牌取出幽灵（不碰弹夹），供战斗内重置后放回袋。返回数量。
+	var n := 0
+	_sync_temp_arrays()
+	var i := bag.size() - 1
+	while i >= 0:
+		if int(bag[i]) == FireResolver.ID_GHOST:
+			bag.remove_at(i)
+			if i < bag_temp.size():
+				bag_temp.remove_at(i)
+			n += 1
+		i -= 1
+	i = discard.size() - 1
+	while i >= 0:
+		if int(discard[i]) == FireResolver.ID_GHOST:
+			discard.remove_at(i)
+			if i < discard_temp.size():
+				discard_temp.remove_at(i)
+			n += 1
+		i -= 1
+	return n
+
+
 func _shuffle_bag() -> void:
 	_sync_temp_arrays()
 	# Fisher–Yates 同步打乱 bag 与 bag_temp
@@ -462,9 +514,26 @@ func _shuffle_bag() -> void:
 
 
 func _reset_bag_in_combat() -> void:
-	## 战斗内袋重置：次数 +1，灌 10 平庸 + 5 罪孽 + 次数发额外罪孽。
+	## 战斗内袋重置：次数 +1；按构筑基线恢复永久弹（含墓碑等）+ 次数发额外临时罪孽；幽灵保留至波/战斗结束。
 	bag_reset_count += 1
-	_fill_starter_bag(bag_reset_count)
+	var ghost_n: int = _extract_ghosts_from_bag_and_discard()
+	bag.clear()
+	bag_temp.clear()
+	discard.clear()
+	discard_temp.clear()
+	if _combat_bag_baseline.is_empty():
+		# 兜底：无基线时退回 10+5（旧测试清袋未拍快照时仍可用）
+		for _i in CombatConstants.STARTER_WHITE_COUNT:
+			_bag_append(CombatConstants.WHITE_AMMO_ID, false)
+		for _i in CombatConstants.STARTER_SIN_COUNT:
+			_bag_append(selected_sin_ammo_id, false)
+	else:
+		for id in _combat_bag_baseline:
+			_bag_append(int(id), false)
+	for _i in bag_reset_count:
+		_bag_append(selected_sin_ammo_id, true)
+	for _i in ghost_n:
+		_bag_append(FireResolver.ID_GHOST, false)
 	_shuffle_bag()
 
 
@@ -483,17 +552,18 @@ func count_temporary_in_bag() -> int:
 
 
 func _clear_combat_bonus_ammo() -> void:
-	## 真正战斗结束：额外罪孽与临时标记清零，袋回 10+5。
+	## 练习战结束 / 失败：额外罪孽与临时标记清零，袋回 10+5。
 	bag_reset_count = 0
 	_fill_starter_bag(0)
 	_shuffle_bag()
 	discard.clear()
 	discard_temp.clear()
+	_snapshot_combat_bag_baseline()
 
 
 func _auto_reset_bag_if_empty_at_turn_start() -> bool:
-	## 玩家回合开始：袋空则自动战斗内重置（10+5+N 罪孽），便于手装；每回合至多一次（仅此处调用）。
-	## 练习/无限：清空弃牌，避免与新袋重复计数。地图 run：弃牌洗回以保留构筑，不走 starter 灌袋。
+	## 玩家回合开始：袋空则自动战斗内重置（构筑基线 + N 临时罪孽，保留幽灵），便于手装；每回合至多一次（仅此处调用）。
+	## 练习/无限：弃牌并入重置逻辑。地图 run：弃牌洗回以保留构筑，不走基线灌袋。
 	if not bag.is_empty():
 		return false
 	if from_map_run:
@@ -505,12 +575,9 @@ func _auto_reset_bag_if_empty_at_turn_start() -> bool:
 		_log("弹药袋已空且无弃牌可洗回。")
 		return false
 	_reset_bag_in_combat()
-	discard.clear()
-	discard_temp.clear()
 	needs_reshuffle_next_load = false
-	var sin_n: int = CombatConstants.STARTER_SIN_COUNT + bag_reset_count
-	_log("弹药袋已空：自动战斗内重置（平庸 ×%d + %s ×%d，第 %d 次）。" % [
-		CombatConstants.STARTER_WHITE_COUNT, _ammo_name(selected_sin_ammo_id), sin_n, bag_reset_count
+	_log("弹药袋已空：自动战斗内重置（构筑 %d + 临时罪孽 ×%d，第 %d 次）。" % [
+		_combat_bag_baseline.size(), bag_reset_count, bag_reset_count
 	])
 	return true
 
@@ -2038,11 +2105,15 @@ func _enter_won() -> void:
 		return
 	_set_phase(Phase.WON)
 	_log("胜利：敌人全灭。")
-	# 枪口（含罪孽层）一律清掉；练习/无限每波：战斗结束清额外罪孽袋回 10+5 再发奖；地图 run 保留构筑袋
+	# 枪口一律清；幽灵等 ephemeral 清；练习战袋回 10+5；无限每波保留构筑仅清临时；地图 run 保留构筑
 	_clear_all_sin_muzzle(true)
 	_reset_muzzle()
 	_purge_ghost_ammo()
-	if not from_map_run:
+	if from_map_run:
+		pass
+	elif endless_mode:
+		_end_wave_keep_build_ammo()
+	else:
 		_reset_practice_ammo_to_starter()
 	# 无限：每 5 波（5/10/15…）奖励后须进商店，逛完才可下一波
 	if endless_mode and wave_index > 0 and wave_index % 5 == 0:
@@ -2052,9 +2123,27 @@ func _enter_won() -> void:
 	_begin_reward()
 
 
+func _end_wave_keep_build_ammo() -> void:
+	## 无限每波胜利：保留构筑（奖励/墓碑/商店等）；幽灵已由 _purge_ghost_ammo 清除；
+	## 清 bag_reset_count 与临时额外罪孽；匣/弃并回袋。不打回 10+5。
+	_consolidate_ammo_into_bag()
+	_strip_temporary_ammo_from_bag()
+	bag_reset_count = 0
+	magazine = Magazine.new()
+	discard.clear()
+	discard_temp.clear()
+	needs_reshuffle_next_load = false
+	last_load_ids.clear()
+	_reset_fire_session()
+	_pending_gold_autofires = 0
+	_reset_load_session()
+	_snapshot_combat_bag_baseline()
+	_log("无限模式：本波结束，保留构筑（%d 发）；临时召唤物与额外罪孽已清。" % bag.size())
+
+
 func _reset_practice_ammo_to_starter() -> void:
-	## 练习战 / 无限每波胜利 = 战斗结束：清额外罪孽与临时标记，袋回 10+5。
-	## 同波内袋空自动重置仍按 bag_reset_count 累加临时罪孽；跨波不保留。
+	## 练习战胜利 = 战斗结束：清额外罪孽与临时标记，袋回 10+5。
+	## 同场内袋空自动重置仍按 bag_reset_count 累加临时罪孽。
 	magazine = Magazine.new()
 	discard.clear()
 	discard_temp.clear()
@@ -2066,9 +2155,8 @@ func _reset_practice_ammo_to_starter() -> void:
 	_clear_all_sin_muzzle(true)
 	_pending_gold_autofires = 0
 	_reset_load_session()
-	var mode_label := "无限模式" if endless_mode else "练习战"
-	_log("%s：弹药已重置（平庸 ×%d + %s ×%d；额外罪孽已清）。" % [
-		mode_label, CombatConstants.STARTER_WHITE_COUNT, _ammo_name(selected_sin_ammo_id), CombatConstants.STARTER_SIN_COUNT
+	_log("练习战：弹药已重置（平庸 ×%d + %s ×%d；额外罪孽已清）。" % [
+		CombatConstants.STARTER_WHITE_COUNT, _ammo_name(selected_sin_ammo_id), CombatConstants.STARTER_SIN_COUNT
 	])
 
 
@@ -2122,6 +2210,7 @@ func pick_reward_ammo(index: int) -> bool:
 		return false
 	var ammo_id: int = reward_choices[index]
 	_bag_append(ammo_id, false)
+	_snapshot_combat_bag_baseline()
 	reward_pending = false
 	reward_resolved = true
 	_log("奖励：选择 %s 加入弹药袋（袋内 %d）。" % [_ammo_name(ammo_id), bag.size()])
@@ -2172,12 +2261,13 @@ func apply_shop_payload(payload: Dictionary) -> void:
 	bag_temp.clear()
 	for x in payload.get("bag", []):
 		_bag_append(int(x), false)
+	_snapshot_combat_bag_baseline()
 	_emit()
 
 
 func can_start_next_wave() -> bool:
 
-	## 奖励结算完成后才可下一波；无限逢 5 波须先逛完商店。袋已在胜利时重置（地图 run 除外）。
+	## 奖励结算完成后才可下一波；无限逢 5 波须先逛完商店。练习胜利袋回 10+5；无限/地图保留构筑。
 	return phase == Phase.WON and reward_resolved and not reward_pending and endless_shop_done
 
 

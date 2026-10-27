@@ -159,8 +159,8 @@ func test_practice_win_resets_bag_and_magazine() -> void:
 
 
 
-func test_endless_win_clears_bonus_sin_like_practice() -> void:
-	## 无限每波胜利=战斗结束：清 bag_reset_count / 临时额外罪孽，袋回 10+5；奖励叠加；枪口清。
+func test_endless_win_keeps_build_clears_temp_sin() -> void:
+	## 无限每波胜利：清 bag_reset_count / 临时额外罪孽与幽灵；保留构筑（不打回 10+5）；奖励叠加；枪口清。
 	var cs := CombatState.new(840)
 	cs.start_graybox(840, true, FireResolver.ID_WRATH)
 	assert_eq(cs.from_map_run, false)
@@ -179,6 +179,7 @@ func test_endless_win_clears_bonus_sin_like_practice() -> void:
 	cs.bag_temp.clear()
 	cs._bag_append(FireResolver.ID_GOLD, false)
 	cs._bag_append(FireResolver.ID_FIRE, false)
+	cs._snapshot_combat_bag_baseline()
 	assert_true(cs.begin_fire())
 	var shots := 0
 	while cs.phase == CombatState.Phase.FIRING:
@@ -188,17 +189,19 @@ func test_endless_win_clears_bonus_sin_like_practice() -> void:
 	assert_eq(cs.phase, CombatState.Phase.WON)
 	assert_eq(cs.discard.size(), 0)
 	assert_eq(cs.bag_reset_count, 0)
-	assert_eq(cs.bag.size(), CombatConstants.STARTER_BAG_TOTAL)
 	assert_eq(cs.count_temporary_in_bag(), 0)
 	assert_eq(cs._muzzle_pride, 0)
 	assert_eq(cs._muzzle_wrath, 0)
+	# 保留波内构筑：基线含金/火等，不强制 STARTER_BAG_TOTAL
+	assert_true(FireResolver.ID_GOLD in cs.bag or FireResolver.ID_FIRE in cs.bag or cs.bag.size() >= CombatConstants.STARTER_BAG_TOTAL)
+	var size_before_reward: int = cs.bag.size()
 	assert_true(cs.pick_reward_ammo(0))
-	assert_eq(cs.bag.size(), CombatConstants.STARTER_BAG_TOTAL + 1)
+	assert_eq(cs.bag.size(), size_before_reward + 1)
 	assert_true(cs.can_start_next_wave())
 	assert_true(cs.start_next_wave())
 	assert_eq(cs.wave_index, 2)
 	assert_eq(cs.bag_reset_count, 0)
-	assert_eq(cs.bag.size(), CombatConstants.STARTER_BAG_TOTAL + 1)
+	assert_eq(cs.bag.size(), size_before_reward + 1)
 
 
 func test_map_run_win_does_not_reset_bag() -> void:

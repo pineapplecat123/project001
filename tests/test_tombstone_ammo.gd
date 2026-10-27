@@ -154,7 +154,7 @@ func test_ghost_damage_is_two() -> void:
 	assert_eq(FireResolver.base_damage_for(FireResolver.ID_GHOST, [FireResolver.ID_GHOST], 0, 0), 2)
 
 func test_bag_can_hold_multiple_tombstones() -> void:
-	## 设计未限制墓碑唯一；袋可持有多发。奖励/商店入袋可叠加（地图 run 保留；无限每波胜利会整袋回 10+5 后再叠当波奖励）。
+	## 设计未限制墓碑唯一；袋可持有多发。奖励/商店入袋可叠加（地图/无限均保留构筑；练习胜利仍回 10+5）。
 	var cs := CombatState.new(1919)
 	cs.start_graybox(1919)
 	cs.bag.clear()
@@ -170,12 +170,13 @@ func test_bag_can_hold_multiple_tombstones() -> void:
 	assert_eq(cs.bag.size(), 3)
 
 
-func test_endless_win_reset_wipes_prior_tombstones_then_reward_adds_one() -> void:
-	## 无限每波胜利：袋回 10+5（含先前墓碑一并清），再领奖可再入 1 发——故跨波看起来「永远只有一发墓碑」。
+func test_endless_win_keeps_tombstones_then_reward_stacks() -> void:
+	## 无限每波胜利：保留构筑（墓碑不打回 10+5）；幽灵清；再领奖可再叠墓碑。
 	var cs := CombatState.new(1920)
 	cs.start_graybox(1920, true, FireResolver.ID_WRATH)
 	cs._bag_append(FireResolver.ID_TOMBSTONE, false)
 	cs._bag_append(FireResolver.ID_TOMBSTONE, false)
+	cs._snapshot_combat_bag_baseline()
 	var before := 0
 	for id in cs.bag:
 		if int(id) == FireResolver.ID_TOMBSTONE:
@@ -188,14 +189,48 @@ func test_endless_win_reset_wipes_prior_tombstones_then_reward_adds_one() -> voi
 	while cs.phase == CombatState.Phase.FIRING:
 		cs.fire_next_shot()
 	assert_eq(cs.phase, CombatState.Phase.WON)
-	assert_eq(cs.bag.size(), CombatConstants.STARTER_BAG_TOTAL)
+	var mid := 0
 	for id in cs.bag:
-		assert_ne(int(id), FireResolver.ID_TOMBSTONE)
+		if int(id) == FireResolver.ID_TOMBSTONE:
+			mid += 1
+		assert_ne(int(id), FireResolver.ID_GHOST)
+	assert_eq(mid, 2, "tombstones must survive endless wave win")
+	assert_gt(cs.bag.size(), CombatConstants.STARTER_BAG_TOTAL)
 	cs.reward_choices = [FireResolver.ID_TOMBSTONE, CombatConstants.WHITE_AMMO_ID, CombatConstants.WHITE_AMMO_ID]
 	assert_true(cs.pick_reward_ammo(0))
 	var after := 0
 	for id in cs.bag:
 		if int(id) == FireResolver.ID_TOMBSTONE:
 			after += 1
-	assert_eq(after, 1)
+	assert_eq(after, 3)
+
+
+func test_mid_combat_bag_reset_keeps_tombstone_and_ghost() -> void:
+	## 同波袋空自动重置：墓碑（构筑基线）与幽灵（战斗临时）均保留；另加 1 发临时罪孽。
+	var cs := CombatState.new(1921)
+	cs.start_graybox(1921, true, FireResolver.ID_GREED)
+	cs._bag_append(FireResolver.ID_TOMBSTONE, false)
+	cs._snapshot_combat_bag_baseline()
+	# 模拟打空：永久弹进弃牌，幽灵在弃牌，袋空
+	cs.discard.clear()
+	cs.discard_temp.clear()
+	for id in cs.bag:
+		cs._discard_append(int(id), false)
+	cs._discard_append(FireResolver.ID_GHOST, false)
+	cs._discard_append(FireResolver.ID_GHOST, false)
+	cs.bag.clear()
+	cs.bag_temp.clear()
+	assert_true(cs._auto_reset_bag_if_empty_at_turn_start())
+	assert_eq(cs.bag_reset_count, 1)
+	assert_eq(cs.count_temporary_in_bag(), 1)
+	var tombs := 0
+	var ghosts := 0
+	for id in cs.bag:
+		if int(id) == FireResolver.ID_TOMBSTONE:
+			tombs += 1
+		elif int(id) == FireResolver.ID_GHOST:
+			ghosts += 1
+	assert_eq(tombs, 1, "tombstone must survive mid-combat bag reset")
+	assert_eq(ghosts, 2, "ghosts must survive mid-combat bag reset")
+	assert_eq(cs.discard.size(), 0)
 
