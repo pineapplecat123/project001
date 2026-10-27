@@ -2307,6 +2307,10 @@ func _inject_invalid_ammo(count: int, reason: String = "") -> void:
 # ——— 开发者工具 ———
 
 func dev_add_ammo(ammo_id: int, count: int = 1) -> void:
+	## 仅允许战斗启用弹药（平庸+罪孽）；老子弹等退役弹不可加袋。
+	if ammo_id != CombatConstants.INVALID_AMMO_ID and not DataRegistry.is_ammo_enabled(ammo_id):
+		_log("[开发] 已退役弹药不可添加：%s" % _ammo_name(ammo_id))
+		return
 	for _i in count:
 		_bag_append(ammo_id, false)
 	_log("[开发] 弹药袋 +%d × %s（现 %d）" % [count, _ammo_name(ammo_id), bag.size()])
@@ -2415,6 +2419,9 @@ func dev_spawn_enemy(enemy_id: int, cell: int = -1) -> void:
 	var def: Dictionary = DataRegistry.get_enemy(enemy_id)
 	if def.is_empty():
 		_log("[开发] 未知敌人 id=%d" % enemy_id)
+		return
+	if not bool(def.get("enabled_in_combat", false)):
+		_log("[开发] 已退役敌人不可生成：%s" % def.get("name", enemy_id))
 		return
 	var c := cell
 	if c < 0:

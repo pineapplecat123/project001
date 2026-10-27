@@ -56,11 +56,10 @@ const SHOT_HEAD_SIZE := 18.0
 const SHOT_HEAD_GLOW := 28.0
 const SHOT_TRAVEL_SEC := 0.07
 const SHOT_TRAVEL_SEC_PER_CELL := 0.016
-const BLOOD_BURST_MIN := 6
-const BLOOD_BURST_MAX := 28
-const BLOOD_STREAK_SEGS := 8
-const BLOOD_STREAK_LEN_MIN := 28.0
-const BLOOD_STREAK_LEN_MAX := 72.0
+const BLOOD_BURST_MIN := 8
+const BLOOD_BURST_MAX := 40
+const BLOOD_GRAVITY := 980.0
+const BLOOD_STAIN_FADE_SEC := 2.4
 
 const COL_PHASE := Color(1.0, 0.92, 0.45)
 const COL_HP_OK := Color(0.45, 0.95, 0.55)
@@ -1465,78 +1464,135 @@ func _shot_projectile_step(t: float, ctx: Dictionary) -> void:
 
 
 func _spawn_blood_burst(at_g: Vector2, amount: int) -> void:
-	## 命中飙血：带拖尾的线段轨迹（非抛物线血滴）；伤害越高条数越多、越长。
+	## 命中飙血：抛物线血滴下落；落地后留下血迹（可淡出叠加）。伤害越高血滴越多。
 	if amount <= 0:
 		return
 	var t: float = clampf(float(amount) / 12.0, 0.0, 1.0)
 	var n: int = int(round(lerpf(float(BLOOD_BURST_MIN), float(BLOOD_BURST_MAX), t)))
+	var ground_y: float = _board_ground_global_y()
 	for _i in n:
-		var ang: float = randf_range(-PI * 0.85, PI * 0.85)
-		# 略偏右飞出（射击方向），夹杂上下散开
-		if randf() < 0.55:
-			ang = randf_range(-0.55, 0.55)
-		var dir := Vector2(cos(ang), sin(ang))
-		var streak_len: float = lerpf(BLOOD_STREAK_LEN_MIN, BLOOD_STREAK_LEN_MAX, t) * randf_range(0.75, 1.2)
-		var thick0: float = lerpf(2.2, 4.6, t) * randf_range(0.85, 1.15)
-		var speed: float = lerpf(220.0, 420.0, t) * randf_range(0.85, 1.2)
-		var dur: float = randf_range(0.22, 0.38)
-		var origin: Vector2 = at_g + Vector2(randf_range(-4.0, 4.0), randf_range(-5.0, 5.0))
-		var segs: Array = []
-		var seg_w: float = streak_len / float(BLOOD_STREAK_SEGS)
-		for si in BLOOD_STREAK_SEGS:
-			var u: float = float(si) / float(maxi(BLOOD_STREAK_SEGS - 1, 1))  # 0=尾 1=头
-			var rect := ColorRect.new()
-			rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			rect.z_index = 49
-			var thick: float = thick0 * lerpf(0.25, 1.0, pow(u, 0.8))
-			rect.size = Vector2(seg_w + 1.0, thick)
-			var a: float = lerpf(0.15, 0.95, pow(u, 0.7))
-			rect.color = Color(randf_range(0.78, 1.0), randf_range(0.04, 0.18), randf_range(0.04, 0.16), a)
-			rect.pivot_offset = Vector2(0.0, thick * 0.5)
-			rect.rotation = dir.angle()
-			add_child(rect)
-			segs.append(rect)
+		var drop := ColorRect.new()
+		drop.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		drop.z_index = 49
+		var sz: float = randf_range(4.5, 11.5) * (0.85 + 0.4 * t)
+		drop.size = Vector2(sz, sz * randf_range(0.85, 1.25))
+		drop.color = Color(randf_range(0.75, 1.0), randf_range(0.05, 0.22), randf_range(0.05, 0.18), 0.95)
+		add_child(drop)
+		var start_p: Vector2 = at_g - drop.size * 0.5 + Vector2(randf_range(-6.0, 6.0), randf_range(-4.0, 2.0))
+		drop.global_position = start_p
+		# 初速：略向上+左右散开，再受重力下落
+		var vx: float = randf_range(-160.0, 160.0) * (0.85 + 0.35 * t)
+		var vy: float = randf_range(-320.0, -90.0) * (0.9 + 0.35 * t)
+		var land_y: float = ground_y - drop.size.y
+		var dur: float = _blood_flight_duration(start_p.y, vy, land_y)
 		var bctx := {
-			"segs": segs,
-			"origin": origin,
-			"dir": dir,
-			"speed": speed,
-			"streak_len": streak_len,
-			"seg_w": seg_w,
+			"drop": drop,
+			"start": start_p,
+			"vx": vx,
+			"vy": vy,
+			"land_y": land_y,
+			"landed": false,
+			"amount_t": t,
 		}
 		var tw := create_tween()
-		tw.set_parallel(true)
-		tw.tween_method(_blood_streak_step.bind(bctx), 0.0, dur, dur)
-		for rect2 in segs:
-			tw.tween_property(rect2, "modulate:a", 0.0, dur).set_delay(dur * 0.25)
-		tw.chain().tween_callback(_blood_streak_cleanup.bind(segs))
+		tw.tween_method(_blood_drop_step.bind(bctx), 0.0, dur, dur)
+		tw.tween_callback(_blood_drop_land.bind(bctx))
 
 
-func _blood_streak_step(elapsed: float, bctx: Dictionary) -> void:
-	var segs: Array = bctx.get("segs", [])
-	if segs.is_empty():
+func _board_ground_global_y() -> float:
+	## 棋盘地面线段顶边的全局 Y；飙血落地以此为准。
+	if board_row != null and board_row.get_child_count() > 0:
+		var slot: Control = board_row.get_child(0) as Control
+		if slot != null:
+			var gseg: Control = slot.get_node_or_null("GroundSeg") as Control
+			if gseg != null:
+				return gseg.global_position.y
+	return global_position.y + size.y * 0.62
+
+
+func _blood_flight_duration(y0: float, vy: float, land_y: float) -> float:
+	## 解 0.5*g*t^2 + vy*t + (y0-land_y)=0，取正根；落点过近则兜底短时。
+	var a: float = 0.5 * BLOOD_GRAVITY
+	var b: float = vy
+	var c: float = y0 - land_y
+	var disc: float = b * b - 4.0 * a * c
+	if disc < 0.0:
+		return randf_range(0.35, 0.55)
+	var sqrt_d: float = sqrt(disc)
+	var t1: float = (-b + sqrt_d) / (2.0 * a)
+	var t2: float = (-b - sqrt_d) / (2.0 * a)
+	var best: float = -1.0
+	for cand in [t1, t2]:
+		if cand > 0.05 and (best < 0.0 or cand < best):
+			best = cand
+	if best < 0.0:
+		return randf_range(0.35, 0.55)
+	return clampf(best, 0.18, 1.05)
+
+
+func _blood_drop_step(elapsed: float, bctx: Dictionary) -> void:
+	var drop: ColorRect = bctx.get("drop") as ColorRect
+	if drop == null or not is_instance_valid(drop):
 		return
-	var origin: Vector2 = bctx.get("origin", Vector2.ZERO)
-	var dir: Vector2 = bctx.get("dir", Vector2.RIGHT)
-	var speed: float = float(bctx.get("speed", 300.0))
-	var streak_len: float = float(bctx.get("streak_len", 40.0))
-	var seg_w: float = float(bctx.get("seg_w", 4.0))
-	var head: Vector2 = origin + dir * (speed * elapsed)
-	# 头在前，尾在后；按段贴在头→尾方向上
-	for si in segs.size():
-		var rect: ColorRect = segs[si] as ColorRect
-		if rect == null or not is_instance_valid(rect):
-			continue
-		var u: float = float(si) / float(maxi(segs.size() - 1, 1))
-		var along: float = -streak_len + float(si) * seg_w
-		var p: Vector2 = head + dir * along
-		rect.global_position = p - Vector2(0.0, rect.size.y * 0.5)
+	if bool(bctx.get("landed", false)):
+		return
+	var start_p: Vector2 = bctx.get("start", Vector2.ZERO)
+	var vx: float = float(bctx.get("vx", 0.0))
+	var vy: float = float(bctx.get("vy", 0.0))
+	var land_y: float = float(bctx.get("land_y", start_p.y + 80.0))
+	# x = x0 + vx*t ; y = y0 + vy*t + 0.5*g*t^2
+	var x: float = start_p.x + vx * elapsed
+	var y: float = start_p.y + vy * elapsed + 0.5 * BLOOD_GRAVITY * elapsed * elapsed
+	if y >= land_y:
+		y = land_y
+		drop.global_position = Vector2(x, y)
+		_blood_drop_land(bctx)
+		return
+	drop.global_position = Vector2(x, y)
 
 
-func _blood_streak_cleanup(segs: Array) -> void:
-	for rect in segs:
-		if rect != null and is_instance_valid(rect):
-			rect.queue_free()
+func _blood_drop_land(bctx: Dictionary) -> void:
+	## 血滴落地：留下扁平血迹并移除飞溅滴。
+	if bool(bctx.get("landed", false)):
+		return
+	bctx["landed"] = true
+	var drop: ColorRect = bctx.get("drop") as ColorRect
+	var pos := Vector2.ZERO
+	var base_col := Color(0.72, 0.08, 0.1, 0.85)
+	if drop != null and is_instance_valid(drop):
+		pos = drop.global_position
+		base_col = drop.color
+		drop.queue_free()
+	else:
+		var start_p: Vector2 = bctx.get("start", Vector2.ZERO)
+		pos = Vector2(start_p.x, float(bctx.get("land_y", start_p.y)))
+	_spawn_blood_stain(pos, base_col, float(bctx.get("amount_t", 0.5)))
+
+
+func _spawn_blood_stain(at_g: Vector2, src_col: Color, amount_t: float) -> void:
+	## 地面血迹：扁平椭圆状色块，多发叠加；缓慢淡出。
+	var stain := ColorRect.new()
+	stain.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	stain.z_index = 12
+	var w: float = randf_range(10.0, 22.0) * (0.85 + 0.4 * amount_t)
+	var h: float = randf_range(3.5, 7.5) * (0.85 + 0.25 * amount_t)
+	stain.size = Vector2(w, h)
+	stain.color = Color(
+		clampf(src_col.r * randf_range(0.55, 0.85), 0.25, 0.85),
+		clampf(src_col.g * randf_range(0.15, 0.45), 0.02, 0.18),
+		clampf(src_col.b * randf_range(0.15, 0.45), 0.02, 0.16),
+		randf_range(0.55, 0.82)
+	)
+	add_child(stain)
+	stain.global_position = Vector2(
+		at_g.x + randf_range(-3.0, 3.0) - w * 0.5,
+		_board_ground_global_y() - h * 0.55 + randf_range(-1.0, 1.5)
+	)
+	var fade: float = BLOOD_STAIN_FADE_SEC * randf_range(0.85, 1.25)
+	var tw := create_tween()
+	tw.tween_property(stain, "modulate:a", 0.0, fade).set_delay(fade * 0.15)
+	tw.tween_callback(stain.queue_free)
+
 
 
 ## 在正上击发点（红圈下）打出发黄闪；chamber 在盘上此时应对准正上。
@@ -2746,7 +2802,7 @@ func _rebuild_dev_tool_body() -> void:
 	_dev_add_btn(col_general["box"], "玩家 HP +5", func(): state.dev_set_player_hp(state.player_hp + 5))
 	_dev_add_btn(col_general["box"], "玩家 HP -5", func(): state.dev_set_player_hp(state.player_hp - 5))
 	_dev_add_btn(col_general["box"], "前敌 HP→1", func(): state.dev_set_front_enemy_hp(1))
-	_dev_add_btn(col_general["box"], "强制装 6 白", func():
+	_dev_add_btn(col_general["box"], "强制装 6 平庸", func():
 		var ids: Array[int] = [
 			CombatConstants.WHITE_AMMO_ID, CombatConstants.WHITE_AMMO_ID,
 			CombatConstants.WHITE_AMMO_ID, CombatConstants.WHITE_AMMO_ID,
@@ -2755,9 +2811,13 @@ func _rebuild_dev_tool_body() -> void:
 		state.dev_force_load(ids)
 	)
 	_dev_add_btn(col_general["box"], "跳过怪回合", func(): state.dev_skip_enemy_turn())
-	# —— 弹药 ——
+	# —— 弹药（仅 enabled_in_combat：平庸+罪孽族；老子弹不暴露）——
 	_dev_add_btn(col_ammo["box"], "清空弹药袋", func(): state.dev_clear_bag())
-	for item in DataRegistry.all_ammo():
+	var ammo_items: Array = DataRegistry.all_ammo().duplicate()
+	ammo_items.sort_custom(func(a, b): return int(a.get("id", 0)) < int(b.get("id", 0)))
+	for item in ammo_items:
+		if not bool(item.get("enabled_in_combat", false)):
+			continue
 		var aid: int = int(item.get("id", 0))
 		var aname: String = str(item.get("name", aid))
 		var row := HBoxContainer.new()
@@ -2778,11 +2838,15 @@ func _rebuild_dev_tool_body() -> void:
 		b_sub.custom_minimum_size = Vector2(36, 28)
 		b_sub.pressed.connect(func(id := aid): state.dev_remove_ammo(id, 1))
 		row.add_child(b_sub)
-	# —— 敌人 ——
+	# —— 敌人（仅 enabled_in_combat：平民/强盗/熊/僵尸/超级僵尸）——
 	_dev_add_btn(col_enemy["box"], "一键杀敌", func(): state.dev_kill_all_enemies())
 	_dev_add_btn(col_enemy["box"], "瞬移邻近", func(): state.dev_teleport_front_enemy(1))
 	_dev_add_btn(col_enemy["box"], "瞬移远端", func(): state.dev_teleport_front_enemy(CombatConstants.BOARD_SIZE - 1))
-	for item in DataRegistry.all_enemies():
+	var enemy_items: Array = DataRegistry.all_enemies().duplicate()
+	enemy_items.sort_custom(func(a, b): return int(a.get("id", 0)) < int(b.get("id", 0)))
+	for item in enemy_items:
+		if not bool(item.get("enabled_in_combat", false)):
+			continue
 		var eid: int = int(item.get("id", 0))
 		var ename: String = str(item.get("name", eid))
 		_dev_add_btn(col_enemy["box"], "添加%s" % ename, func(id := eid): state.dev_spawn_enemy(id))
