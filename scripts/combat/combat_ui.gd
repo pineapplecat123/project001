@@ -40,15 +40,14 @@ const DMG_FLOAT_FONT_MAX := 40
 const SHAKE_MIN_PX := 8.0
 const SHAKE_MAX_PX := 42.0
 const SHAKE_DURATION := 0.28
-## 射击弹点占位：细长弹体快速飞掠 + 较长拖尾 + 软辉光（非整段激光）；芯色=弹药，描边=枪口罪孽
-const SHOT_HEAD_LEN := 22.0
-const SHOT_HEAD_THICK := 7.0
-const SHOT_OUTLINE_PAD := 2.5
-const SHOT_TRAIL_LEN := 64.0
-const SHOT_TRAIL_THICK := 3.5
-const SHOT_GLOW_PAD := 5.0
-const SHOT_TRAVEL_SEC := 0.17
-const SHOT_TRAVEL_SEC_PER_CELL := 0.045
+## 射击轨迹占位：无弹头，仅彗星渐隐拖尾线快速飞掠；芯色=弹药，描边=枪口罪孽
+const SHOT_TRAIL_LEN := 96.0
+const SHOT_TRAIL_THICK := 3.0
+const SHOT_OUTLINE_PAD := 2.0
+const SHOT_GLOW_PAD := 4.0
+const SHOT_COMET_SEGS := 8
+const SHOT_TRAVEL_SEC := 0.1
+const SHOT_TRAVEL_SEC_PER_CELL := 0.028
 const BLOOD_BURST_MIN := 10
 const BLOOD_BURST_MAX := 22
 
@@ -1146,7 +1145,7 @@ func _animate_fire_shots() -> void:
 			_flash_fire_at_top(fired_slot)
 			_refresh_mag_contents()
 			_refresh_hud_only()
-			# 实弹：细弹点+短拖尾飞向目标（穿透飞穿沿途），命中再飚血/飘字抖动
+			# 实弹：彗星拖尾线飞向目标（穿透飞穿沿途），命中再飚血/飘字抖动
 			await _play_shot_beam_and_impact()
 			for hit in _pending_hit_vfx:
 				_spawn_damage_float(int(hit.get("cell", -1)), int(hit.get("amount", 0)), str(hit.get("kind", "")))
@@ -1191,7 +1190,7 @@ func _cell_unit_global_center(cell: int) -> Vector2:
 
 
 func _play_shot_beam_and_impact() -> void:
-	## 细弹点+短拖尾从玩家飞向命中怪；穿透则飞到沿途最后一命中格，途经各怪飚血。
+	## 彗星渐隐拖尾线从玩家飞向命中怪（无弹头）；穿透则飞到沿途最后一命中格，途经各怪飚血。
 	if state == null:
 		return
 	var hit_cells: Array = state.last_shot_hit_cells.duplicate()
@@ -1226,7 +1225,7 @@ func _animate_shot_projectile(
 	from_g: Vector2, to_g: Vector2, core_col: Color, outline_cols: Array[Color],
 	waypoints: Array, travel_sec: float
 ) -> void:
-	## 细长弹体飞掠；身后较长拖尾 + 外层软辉光（看得出路径，不是整段激光）。
+	## 无独立弹头：只有彗星状渐隐拖尾线快速飞掠（头亮尾淡），可带枪口色描边。
 	var delta: Vector2 = to_g - from_g
 	var host := Control.new()
 	host.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -1235,53 +1234,37 @@ func _animate_shot_projectile(
 	host.global_position = from_g
 	host.rotation = delta.angle()
 	var n_out: int = outline_cols.size()
-	# 最外软辉光（拖尾）
-	var glow_trail := ColorRect.new()
-	glow_trail.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	glow_trail.color = Color(core_col.r, core_col.g, core_col.b, 0.22)
-	glow_trail.position = Vector2(-SHOT_TRAIL_LEN - 4.0, -(SHOT_TRAIL_THICK * 0.5 + SHOT_GLOW_PAD))
-	glow_trail.size = Vector2(SHOT_TRAIL_LEN + SHOT_HEAD_LEN * 0.5, SHOT_TRAIL_THICK + SHOT_GLOW_PAD * 2.0)
-	host.add_child(glow_trail)
-	# 拖尾描边（枪口色）
-	for i in n_out:
-		var pad: float = float(n_out - i) * (SHOT_OUTLINE_PAD * 0.7)
-		var trail_o := ColorRect.new()
-		trail_o.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		var oc: Color = outline_cols[i]
-		trail_o.color = Color(oc.r, oc.g, oc.b, 0.5)
-		trail_o.position = Vector2(-SHOT_TRAIL_LEN, -(SHOT_TRAIL_THICK * 0.5 + pad))
-		trail_o.size = Vector2(SHOT_TRAIL_LEN, SHOT_TRAIL_THICK + pad * 2.0)
-		host.add_child(trail_o)
-	# 拖尾芯
-	var trail := ColorRect.new()
-	trail.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	trail.color = Color(core_col.r, core_col.g, core_col.b, 0.65)
-	trail.position = Vector2(-SHOT_TRAIL_LEN, -SHOT_TRAIL_THICK * 0.5)
-	trail.size = Vector2(SHOT_TRAIL_LEN, SHOT_TRAIL_THICK)
-	host.add_child(trail)
-	# 弹体辉光
-	var glow_head := ColorRect.new()
-	glow_head.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	glow_head.color = Color(mini(core_col.r + 0.25, 1.0), mini(core_col.g + 0.25, 1.0), mini(core_col.b + 0.25, 1.0), 0.35)
-	glow_head.size = Vector2(SHOT_HEAD_LEN + SHOT_GLOW_PAD * 2.0, SHOT_HEAD_THICK + SHOT_GLOW_PAD * 2.0)
-	glow_head.position = Vector2(-SHOT_GLOW_PAD, -(SHOT_HEAD_THICK * 0.5 + SHOT_GLOW_PAD))
-	host.add_child(glow_head)
-	# 弹体描边（枪口色，多层）
-	for i in n_out:
-		var pad2: float = float(n_out - i) * SHOT_OUTLINE_PAD
-		var ring := ColorRect.new()
-		ring.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		ring.color = outline_cols[i]
-		ring.size = Vector2(SHOT_HEAD_LEN + pad2 * 2.0, SHOT_HEAD_THICK + pad2 * 2.0)
-		ring.position = Vector2(-pad2, -(SHOT_HEAD_THICK * 0.5 + pad2))
-		host.add_child(ring)
-	# 细长弹体芯（沿飞行方向更长）
-	var head := ColorRect.new()
-	head.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	head.color = core_col
-	head.size = Vector2(SHOT_HEAD_LEN, SHOT_HEAD_THICK)
-	head.position = Vector2(0.0, -SHOT_HEAD_THICK * 0.5)
-	host.add_child(head)
+	var seg_w: float = SHOT_TRAIL_LEN / float(SHOT_COMET_SEGS)
+	# 由尾到头建段：越靠后（更负 x）越淡、略细 → 彗星渐隐
+	for si in SHOT_COMET_SEGS:
+		var u: float = float(si) / float(maxi(SHOT_COMET_SEGS - 1, 1))  # 0=最尾，1=最头
+		var alpha: float = lerpf(0.08, 0.95, u * u)  # 尾更淡
+		var thick: float = lerpf(SHOT_TRAIL_THICK * 0.45, SHOT_TRAIL_THICK, u)
+		var x0: float = -SHOT_TRAIL_LEN + float(si) * seg_w
+		# 软辉光段
+		var glow := ColorRect.new()
+		glow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		glow.color = Color(core_col.r, core_col.g, core_col.b, alpha * 0.28)
+		glow.position = Vector2(x0, -(thick * 0.5 + SHOT_GLOW_PAD * lerpf(0.4, 1.0, u)))
+		glow.size = Vector2(seg_w + 1.0, thick + SHOT_GLOW_PAD * lerpf(0.8, 2.0, u))
+		host.add_child(glow)
+		# 枪口描边段（外→内）
+		for oi in n_out:
+			var pad: float = float(n_out - oi) * SHOT_OUTLINE_PAD * lerpf(0.5, 1.0, u)
+			var oc: Color = outline_cols[oi]
+			var edge := ColorRect.new()
+			edge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			edge.color = Color(oc.r, oc.g, oc.b, alpha * 0.55)
+			edge.position = Vector2(x0, -(thick * 0.5 + pad))
+			edge.size = Vector2(seg_w + 1.0, thick + pad * 2.0)
+			host.add_child(edge)
+		# 弹药色芯段
+		var core := ColorRect.new()
+		core.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		core.color = Color(core_col.r, core_col.g, core_col.b, alpha)
+		core.position = Vector2(x0, -thick * 0.5)
+		core.size = Vector2(seg_w + 1.0, thick)
+		host.add_child(core)
 	# 飞行：按进度触发途经飚血
 	var ctx := {
 		"host": host,
@@ -1291,7 +1274,7 @@ func _animate_shot_projectile(
 		"fired": {},
 	}
 	var tw := create_tween()
-	tw.tween_method(_shot_projectile_step.bind(ctx), 0.0, 1.0, maxf(travel_sec, 0.08)).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+	tw.tween_method(_shot_projectile_step.bind(ctx), 0.0, 1.0, maxf(travel_sec, 0.05)).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 	await tw.finished
 	# 补漏：末点未触发的飚血
 	var fired: Dictionary = ctx.get("fired", {})
