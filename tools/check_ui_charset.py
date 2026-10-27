@@ -118,6 +118,20 @@ def main() -> int:
         print(f"ERROR: missing {FONT_PATH}", file=sys.stderr)
         return 1
 
+    try:
+        from fontTools.ttLib import TTFont as _TT
+        _f = _TT(str(FONT_PATH))
+        if "glyf" not in _f or "CFF " in _f:
+            print(
+                "ERROR: NotoSansSC-UI.ttf must be TrueType (glyf), not CFF/OTTO.",
+                file=sys.stderr,
+            )
+            print("  Fix: bash tools/rebuild_ui_font.sh", file=sys.stderr)
+            errors += 1
+    except Exception as e:
+        print(f"ERROR: cannot inspect UI font: {e}", file=sys.stderr)
+        errors += 1
+
     covered = font_cmap_codepoints(FONT_PATH)
     # Control/whitespace often absent or irrelevant in subset cmap.
     skip = set("\n\r\t")

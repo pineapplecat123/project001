@@ -158,7 +158,7 @@ Bot 每次遇到需决策事项时，先自评重要度，再按对应时机行�
 - 提交前可跑 `tools/check_version.sh`；GUT `test_game_version.gd` 也会卡住重复定义。
 
 **UI 中文与字体子集**（工作流硬性要求）：
-- **根因备忘**：新文案若未进 `NotoSansSC-UI` 子集（或导入缓存过期），页面就会出方块字（tofu）。
+- **根因备忘**：新文案若未进 `NotoSansSC-UI` 子集（或导入缓存过期），页面就会出方块字（tofu）。另：UI 字体必须是 **TrueType/glyf**（不要 CFF/OTTO 子集），Web/Pages 上 CFF 子集会大面积方块；禁止用 `ThemeDB.fallback_font` 当中文底字体。
 - **每次文本改动后都要测试文本库是否覆盖**（老大原话）：改玩家可见中文后，验收/截图/发版前必须跑文本库覆盖检查，不得跳过。
 - **每次 push 之前**必须再跑一遍覆盖检测：`bash tools/pre_push_check.sh`（不通过不得推）。
 - 玩家可见中文（`data/*.json`、场景 `text=`、脚本字符串、`tools/` 内可能进 Pages 的中文）必须被 `tools/ui_charset.txt` 与 `assets/fonts/NotoSansSC-UI.ttf` 覆盖。

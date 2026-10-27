@@ -12,3 +12,6 @@ build/
 .DS_Store
 Thumbs.db
 *.tmp
+
+# Local Noto SC VF source for rebuild_ui_font.sh (large)
+tools/font_sources/

@@ -273,15 +273,9 @@ func _style_corner_buttons() -> void:
 
 
 func _ensure_top_labels_uncropped() -> void:
-	# Noto SC 字形常高出 Label 度量；优先加高控件，再补字形间距，避免半截字
-	var font_var := FontVariation.new()
-	var base := theme.get_default_font() if theme != null else null
-	if base == null:
-		base = ThemeDB.fallback_font
-	if base != null:
-		font_var.base_font = base
-		font_var.spacing_top = 10
-		font_var.spacing_bottom = 4
+	# Noto SC 字形常高出 Label 度量：只加高/加行距，绝不覆盖 font。
+	# 旧逻辑用 FontVariation + ThemeDB.fallback_font（无中文）→ 顶栏/弹夹/弹药盒标题全面 hex tofu；
+	# 同屏「共15·袋15」未覆盖字体所以正常。保留项目 Theme 的 NotoSansSC-UI。
 	# 祖先链关闭裁切；溢出只向下长，避免 grow BOTH 把顶栏顶出视口（y 变负）
 	for n: Node in [
 		self,
@@ -316,8 +310,7 @@ func _ensure_top_labels_uncropped() -> void:
 	for lab in labels:
 		if lab == null:
 			continue
-		if base != null:
-			lab.add_theme_font_override("font", font_var)
+		# 不要 add_theme_font_override：必须继续用 ui_theme 的 NotoSansSC-UI
 		lab.add_theme_constant_override("line_spacing", 8)
 		lab.clip_text = false
 		lab.vertical_alignment = VERTICAL_ALIGNMENT_CENTER

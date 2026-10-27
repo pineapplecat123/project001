@@ -1,3 +1,10 @@
+## 2026-10-27 — 练习战斗 HUD 方块字（v0.2.47）
+
+- 根因（对照 Pages 截图）：`_ensure_top_labels_uncropped` 给顶栏/弹夹/弹药盒标题套了 `FontVariation`，底字体落到 `ThemeDB.fallback_font`（无中文）→ hex tofu；同区域未覆盖的「共15·袋15」仍用项目 Theme 所以正常。主菜单不受该函数影响。
+- 次因：旧 UI 子集为 CFF/OTTO，Web 也不稳；已改为 TrueType(glyf) + 多字号 preload。
+- 改动：去掉这些 Label 的 font override（只保留行距/高度）；TTF 重建；check 强制 glyf。
+- 自测：pre_push_check；GUT；对照 garbled-ui 文案。
+
 ## 2026-10-27 — 修方块字 + push 前 charset 门禁（v0.2.46）
 
 - 根因：新中文文案未进 NotoSansSC-UI 子集（或导入缓存旧）→ 方块字。
