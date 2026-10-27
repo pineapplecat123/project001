@@ -60,6 +60,8 @@ const BLOOD_BURST_MIN := 8
 const BLOOD_BURST_MAX := 40
 const BLOOD_GRAVITY := 980.0
 const BLOOD_STAIN_FADE_SEC := 2.4
+const BLOOD_TRAIL_HISTORY := 8
+const BLOOD_TRAIL_SEG_W := 3.2
 
 const COL_PHASE := Color(1.0, 0.92, 0.45)
 const COL_HP_OK := Color(0.45, 0.95, 0.55)
@@ -1406,8 +1408,7 @@ func _animate_shot_projectile(
 			amt2 = state.resolve_paced_hit(hi2)
 		else:
 			amt2 = int(wp2.get("amount", 0))
-		if amt2 > 0:
-			_spawn_blood_burst(wp2.get("g", to_g), amt2)
+		# 飙血改由 enemy_damaged 统一触发（含非子弹掉血）
 	if is_instance_valid(host):
 		host.queue_free()
 
@@ -1459,12 +1460,11 @@ func _shot_projectile_step(t: float, ctx: Dictionary) -> void:
 				amt = state.resolve_paced_hit(hi)
 			else:
 				amt = int(wp.get("amount", 0))
-			if amt > 0:
-				_spawn_blood_burst(wg, amt)
+			# 飙血改由 enemy_damaged 统一触发
 
 
 func _spawn_blood_burst(at_g: Vector2, amount: int) -> void:
-	## 命中飙血：抛物线血滴下落；落地后留下血迹（可淡出叠加）。伤害越高血滴越多。
+	## 掉血飙血：抛物线血滴（带实心轨迹拖尾）下落；落地留下血迹。伤害越高血滴越多。
 	if amount <= 0:
 		return
 	var t: float = clampf(float(amount) / 12.0, 0.0, 1.0)
@@ -1476,7 +1476,8 @@ func _spawn_blood_burst(at_g: Vector2, amount: int) -> void:
 		drop.z_index = 49
 		var sz: float = randf_range(4.5, 11.5) * (0.85 + 0.4 * t)
 		drop.size = Vector2(sz, sz * randf_range(0.85, 1.25))
-		drop.color = Color(randf_range(0.75, 1.0), randf_range(0.05, 0.22), randf_range(0.05, 0.18), 0.95)
+		var col := Color(randf_range(0.75, 1.0), randf_range(0.05, 0.22), randf_range(0.05, 0.18), 1.0)
+		drop.color = col
 		add_child(drop)
 		var start_p: Vector2 = at_g - drop.size * 0.5 + Vector2(randf_range(-6.0, 6.0), randf_range(-4.0, 2.0))
 		drop.global_position = start_p
@@ -1485,6 +1486,15 @@ func _spawn_blood_burst(at_g: Vector2, amount: int) -> void:
 		var vy: float = randf_range(-320.0, -90.0) * (0.9 + 0.35 * t)
 		var land_y: float = ground_y - drop.size.y
 		var dur: float = _blood_flight_duration(start_p.y, vy, land_y)
+		var trail_nodes: Array = []
+		for _ti in BLOOD_TRAIL_HISTORY:
+			var seg := ColorRect.new()
+			seg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			seg.z_index = 48
+			seg.visible = false
+			seg.color = Color(col.r, col.g, col.b, 1.0)
+			add_child(seg)
+			trail_nodes.append(seg)
 		var bctx := {
 			"drop": drop,
 			"start": start_p,
@@ -1493,6 +1503,9 @@ func _spawn_blood_burst(at_g: Vector2, amount: int) -> void:
 			"land_y": land_y,
 			"landed": false,
 			"amount_t": t,
+			"history": [],
+			"trail_nodes": trail_nodes,
+			"color": col,
 		}
 		var tw := create_tween()
 		tw.tween_method(_blood_drop_step.bind(bctx), 0.0, dur, dur)
@@ -1549,16 +1562,17 @@ func _blood_drop_step(elapsed: float, bctx: Dictionary) -> void:
 		_blood_drop_land(bctx)
 		return
 	drop.global_position = Vector2(x, y)
+	_blood_trail_push(bctx, drop.global_position + drop.size * 0.5)
 
 
 func _blood_drop_land(bctx: Dictionary) -> void:
-	## 血滴落地：留下扁平血迹并移除飞溅滴。
+	## 血滴落地：留下扁平血迹并移除飞溅滴与飞行拖尾。
 	if bool(bctx.get("landed", false)):
 		return
 	bctx["landed"] = true
 	var drop: ColorRect = bctx.get("drop") as ColorRect
 	var pos := Vector2.ZERO
-	var base_col := Color(0.72, 0.08, 0.1, 0.85)
+	var base_col := Color(0.72, 0.08, 0.1, 1.0)
 	if drop != null and is_instance_valid(drop):
 		pos = drop.global_position
 		base_col = drop.color
@@ -1566,7 +1580,49 @@ func _blood_drop_land(bctx: Dictionary) -> void:
 	else:
 		var start_p: Vector2 = bctx.get("start", Vector2.ZERO)
 		pos = Vector2(start_p.x, float(bctx.get("land_y", start_p.y)))
+	for node in bctx.get("trail_nodes", []):
+		var seg: ColorRect = node as ColorRect
+		if seg != null and is_instance_valid(seg):
+			seg.queue_free()
+	bctx["trail_nodes"] = []
+	bctx["history"] = []
 	_spawn_blood_stain(pos, base_col, float(bctx.get("amount_t", 0.5)))
+
+
+func _blood_trail_push(bctx: Dictionary, center_g: Vector2) -> void:
+	## 记录飞行轨迹点，用实心（alpha=1）线段连成拖尾。
+	var hist: Array = bctx.get("history", [])
+	hist.append(center_g)
+	while hist.size() > BLOOD_TRAIL_HISTORY:
+		hist.pop_front()
+	bctx["history"] = hist
+	var nodes: Array = bctx.get("trail_nodes", [])
+	var col: Color = bctx.get("color", Color(0.85, 0.1, 0.12, 1.0))
+	col.a = 1.0
+	for i in range(maxi(hist.size() - 1, 0)):
+		if i >= nodes.size():
+			break
+		var seg: ColorRect = nodes[i] as ColorRect
+		if seg == null or not is_instance_valid(seg):
+			continue
+		var a: Vector2 = hist[i]
+		var b: Vector2 = hist[i + 1]
+		var delta: Vector2 = b - a
+		var dist: float = delta.length()
+		if dist < 0.5:
+			seg.visible = false
+			continue
+		seg.visible = true
+		seg.color = col
+		seg.size = Vector2(dist + 1.0, BLOOD_TRAIL_SEG_W)
+		seg.pivot_offset = Vector2(0.0, BLOOD_TRAIL_SEG_W * 0.5)
+		seg.rotation = delta.angle()
+		seg.global_position = a - Vector2(0.0, BLOOD_TRAIL_SEG_W * 0.5)
+	# 未用到的段隐藏
+	for j in range(maxi(hist.size() - 1, 0), nodes.size()):
+		var idle: ColorRect = nodes[j] as ColorRect
+		if idle != null and is_instance_valid(idle):
+			idle.visible = false
 
 
 func _spawn_blood_stain(at_g: Vector2, src_col: Color, amount_t: float) -> void:
@@ -1813,11 +1869,23 @@ func _on_enemy_damaged(cell: int, amount: int, kind: String = "") -> void:
 		_pending_hit_vfx.append({"cell": cell, "amount": amount, "kind": kind})
 		return
 	_spawn_damage_float(cell, amount, kind)
+	_spawn_blood_at_cell(cell, amount)
 
 
 func _on_player_damaged(amount: int, kind: String = "") -> void:
-	## 只抖玩家单位块（格 0），与怪物受击同套振幅；飘字挂玩家格。
+	## 抖玩家单位块（格 0）+ 飘字；凡实际掉血都飙血（含愤怒自伤等）。
 	_spawn_damage_float(CombatConstants.PLAYER_CELL, amount, kind)
+	_spawn_blood_at_cell(CombatConstants.PLAYER_CELL, amount)
+
+
+func _spawn_blood_at_cell(cell: int, amount: int) -> void:
+	## 统一飙血入口：任意实际扣血（子弹/DoT/惩罚）都走这里。
+	if amount <= 0:
+		return
+	var at_g: Vector2 = _cell_unit_global_center(cell)
+	if at_g == Vector2.ZERO:
+		return
+	_spawn_blood_burst(at_g, amount)
 
 
 func _on_gold_gained(cell: int, amount: int) -> void:
