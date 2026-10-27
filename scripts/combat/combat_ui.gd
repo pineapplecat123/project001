@@ -100,6 +100,8 @@ var _wheel_animating: bool = false
 ## 盘面视觉步数（整数格的浮点，供 Tween；每步 = 60°）
 var _wheel_visual_steps: float = 0.0
 var _fire_flash_tween: Tween
+## 击发白蒙版所在仓；仅闪白期间有效，转盘前必须清掉（勿随盘转动）。
+var _fire_overlay_slot: int = -1
 var _disk_tween: Tween
 var _fire_ring: Panel = null
 var _load_marker: Label = null
@@ -1204,6 +1206,7 @@ func _run_fire_sequence() -> void:
 		state.resolve_post_fire_enemy_turn()
 	if state.has_corpse_enemies():
 		state.flush_dead_enemies()
+	_clear_fire_overlay()
 	_apply_disk_rotation(float(state.magazine.start_index))
 	_firing = false
 	_refresh()
@@ -1237,9 +1240,9 @@ func _animate_fire_shots() -> void:
 		var blank: bool = state.last_shot_was_blank
 		skip_n = int(state.last_blank_skip_steps)
 		if not blank:
-			# 先刷仓内容，再闪正上仓；避免 paint 冲掉闪白 modulate
+			# 先刷仓内容，再闪本发仓；蒙版只在本发闪白期，转盘前必须清掉
 			_refresh_mag_contents()
-			_flash_fire_at_top(fired_slot)
+			_begin_fire_overlay(fired_slot)
 			# 只刷转轮/顶栏；怪 HP 仍是开火前，等拖尾命中再变
 			_refresh_hud_only()
 			# 实弹：彗星拖尾飞掠；途经命中帧结算伤害+飚血+飘字
@@ -1253,10 +1256,13 @@ func _animate_fire_shots() -> void:
 			else:
 				_refresh_board()
 			await get_tree().create_timer(_paced(FIRE_FLASH_HOLD)).timeout
+			# 白蒙版不得随大圈转动；转下一仓 / 末发对齐前先消掉
+			_clear_fire_overlay()
 		else:
 			if state.has_paced_shot_pending():
 				state.finalize_paced_shot()
 			_pending_hit_vfx.clear()
+			_clear_fire_overlay()
 			_refresh_mag_contents()
 			_refresh_hud_only()
 		if more:
@@ -1272,6 +1278,7 @@ func _animate_fire_shots() -> void:
 		else:
 			_wheel_animating = false
 			break
+	_clear_fire_overlay()
 	_apply_disk_rotation(float(state.magazine.start_index))
 
 
@@ -1658,25 +1665,53 @@ func _spawn_blood_stain(at_g: Vector2, src_col: Color, amount_t: float) -> void:
 
 
 
-## 在正上击发点（红圈下）打出发黄闪；chamber 在盘上此时应对准正上。
-func _flash_fire_at_top(slot_i: int) -> void:
+## 本发仓白蒙版 + 正上红圈黄闪。蒙版画在盘上仓格，转盘前必须 _clear_fire_overlay。
+func _begin_fire_overlay(slot_i: int) -> void:
+	_clear_fire_overlay(false)
+	_fire_overlay_slot = slot_i
 	if _fire_flash_tween != null and _fire_flash_tween.is_valid():
 		_fire_flash_tween.kill()
 	_fire_flash_tween = create_tween()
 	_fire_flash_tween.set_parallel(true)
-	# 固定红圈脉冲：保证黄闪出现在正上击发点
+	# 固定红圈脉冲：正上击发点
 	if _fire_ring != null and is_instance_valid(_fire_ring):
 		_fire_ring.modulate = Color(1.8, 1.55, 0.35)
 		_fire_flash_tween.tween_property(_fire_ring, "modulate", Color.WHITE, 0.32)
-	# 当前对准正上的小圆一并发黄
 	if slot_i >= 0 and slot_i < _chamber_panels.size():
 		var panel: Panel = _chamber_panels[slot_i]
 		panel.modulate = Color(1.7, 1.45, 0.55)
 		_fire_flash_tween.tween_property(panel, "modulate", Color.WHITE, 0.32)
+	_paint_mag_chambers()
+
+
+func _clear_fire_overlay(repaint: bool = true) -> void:
+	## 转盘 / 末发对齐前清白蒙版，避免随大圈转到别的仓。
+	if _fire_flash_tween != null and _fire_flash_tween.is_valid():
+		_fire_flash_tween.kill()
+	_fire_flash_tween = null
+	if _fire_ring != null and is_instance_valid(_fire_ring):
+		_fire_ring.modulate = Color.WHITE
+	var had: int = _fire_overlay_slot
+	_fire_overlay_slot = -1
+	if had >= 0 and had < _chamber_panels.size():
+		var panel: Panel = _chamber_panels[had]
+		var temp := (
+			state != null
+			and state.magazine != null
+			and state.magazine.slots[had] != Magazine.EMPTY
+			and state.magazine.is_slot_temporary(had)
+		)
+		panel.modulate = Color(1, 1, 1, 0.48) if temp else Color(1, 1, 1, 1)
+	if repaint:
+		_paint_mag_chambers()
+
+
+func _flash_fire_at_top(slot_i: int) -> void:
+	_begin_fire_overlay(slot_i)
 
 
 func _flash_fire_chamber_at(slot_i: int) -> void:
-	_flash_fire_at_top(slot_i)
+	_begin_fire_overlay(slot_i)
 
 
 func _on_roll() -> void:
@@ -3160,12 +3195,12 @@ func _refresh_mag() -> void:
 
 func _paint_mag_chambers() -> void:
 	var start_i: int = state.magazine.start_index
-	var flash_busy: bool = (
+	var overlay_slot: int = _fire_overlay_slot
+	var flash_busy: bool = overlay_slot >= 0 and (
 		_fire_flash_tween != null
 		and _fire_flash_tween.is_valid()
 		and _fire_flash_tween.is_running()
 	)
-	var fired_slot: int = int(state.last_fired_slot) if state != null else -1
 	for slot_i in CombatConstants.MAGAZINE_SIZE:
 		var panel: Panel = _chamber_panels[slot_i]
 		var info: Label = panel.get_node("Info")
@@ -3204,12 +3239,12 @@ func _paint_mag_chambers() -> void:
 		elif at_fire:
 			style.border_color = Color(1.0, 0.15, 0.12)
 			style.set_border_width_all(4)
-		# 击发白蒙版锁在本发 last_fired_slot，不跟转盘跳到别的仓
-		if _firing and fired_slot == slot_i and fired_slot >= 0:
+		# 白蒙版仅 overlay 活跃仓；转盘前已 clear，不会随盘跑到别仓
+		if overlay_slot == slot_i and overlay_slot >= 0:
 			style.bg_color = style.bg_color.lightened(0.25)
 		panel.add_theme_stylebox_override("panel", style)
 		# 闪白进行中勿重置本发仓 modulate；其余仓照常（临时罪孽半透明）
-		if flash_busy and fired_slot == slot_i:
+		if flash_busy and overlay_slot == slot_i:
 			continue
 		if ammo_id != Magazine.EMPTY and state.magazine.is_slot_temporary(slot_i):
 			panel.modulate = Color(1, 1, 1, 0.48)
