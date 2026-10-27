@@ -1,5 +1,5 @@
 extends Control
-## 主菜单：开始冒险（地图）/ 无限模式 / 练习战斗 / 更新日志 / 退出；底部版本号。
+## 主菜单：开始冒险（地图）/ 无限模式 / 练习战斗 / 更新日志 / 清理缓存 / 退出；底部版本号。
 
 const CHANGELOG_PATH := "res://data/changelog.json"
 
@@ -19,6 +19,7 @@ func _style_menu() -> void:
 	%BtnEndless.custom_minimum_size = Vector2(220, 44)
 	%BtnPractice.custom_minimum_size = Vector2(220, 44)
 	%BtnChangelog.custom_minimum_size = Vector2(220, 44)
+	%BtnClearCache.custom_minimum_size = Vector2(220, 40)
 	%BtnQuit.custom_minimum_size = Vector2(220, 40)
 	%TitleLabel.add_theme_font_size_override("font_size", 52)
 	%Subtitle.add_theme_color_override("font_color", Color(0.75, 0.8, 0.9))
@@ -95,6 +96,7 @@ func _set_changelog_open(open: bool) -> void:
 	%BtnEndless.disabled = open
 	%BtnPractice.disabled = open
 	%BtnChangelog.disabled = open
+	%BtnClearCache.disabled = open
 	%BtnQuit.disabled = open
 
 
@@ -128,6 +130,72 @@ func _on_changelog_dimmer_gui_input(event: InputEvent) -> void:
 
 func _on_quit_pressed() -> void:
 	get_tree().quit()
+
+
+func _on_clear_cache_pressed() -> void:
+	## Web/Pages：清本站 cookie / storage / Cache Storage / SW / IndexedDB，再带 nocache 强制刷新。
+	if OS.has_feature("web"):
+		JavaScriptBridge.eval(
+			"if (window.project001ClearSiteData) { window.project001ClearSiteData(); } else { " + _web_clear_cache_js() + " }",
+			true
+		)
+		return
+	# 桌面端没有 Pages 强缓存问题；给个轻提示
+	%HintLabel.text = "清理缓存仅在网页版（GitHub Pages）生效。桌面版已是本地最新。"
+
+
+func _web_clear_cache_js() -> String:
+	## 整段在浏览器执行；不依赖额外 HTML（Pages 壳也会挂同名函数）。
+	return """
+(async function () {
+  var log = function (m) { try { console.log('[project001 clear]', m); } catch (e) {} };
+  try {
+    (document.cookie || '').split(';').forEach(function (c) {
+      var n = c.trim().split('=')[0];
+      if (!n) return;
+      document.cookie = n + '=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/';
+      document.cookie = n + '=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/;domain=' + location.hostname;
+    });
+    log('cookies');
+  } catch (e) { log(e); }
+  try { localStorage.clear(); log('localStorage'); } catch (e) {}
+  try { sessionStorage.clear(); log('sessionStorage'); } catch (e) {}
+  try {
+    if (window.caches && caches.keys) {
+      var keys = await caches.keys();
+      await Promise.all(keys.map(function (k) { return caches.delete(k); }));
+      log('caches ' + keys.length);
+    }
+  } catch (e) {}
+  try {
+    if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
+      var regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(function (r) { return r.unregister(); }));
+      log('sw ' + regs.length);
+    }
+  } catch (e) {}
+  try {
+    if (window.indexedDB && indexedDB.databases) {
+      var dbs = await indexedDB.databases();
+      await Promise.all((dbs || []).map(function (db) {
+        return new Promise(function (resolve) {
+          if (!db || !db.name) { resolve(); return; }
+          var req = indexedDB.deleteDatabase(db.name);
+          req.onsuccess = req.onerror = req.onblocked = function () { resolve(); };
+        });
+      }));
+      log('idb');
+    }
+  } catch (e) {}
+  try {
+    var u = new URL(location.href);
+    u.searchParams.set('nocache', String(Date.now()));
+    location.replace(u.toString());
+  } catch (e) {
+    location.reload();
+  }
+})();
+"""
 
 
 func get_title() -> String:

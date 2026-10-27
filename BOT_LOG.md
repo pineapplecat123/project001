@@ -1,3 +1,9 @@
+## 2026-10-27 — 清理缓存入口 + 修速度标签（v0.2.45）
+
+- 任务：首页清 Pages cookies/缓存以便进最新版；速度标签乱码。
+- 改动：主菜单「清理缓存并刷新」经 JavaScriptBridge 清 cookie/storage/caches/SW/IndexedDB 并 nocache 刷新；Pages 导出后注入 HTML 角按钮；速度标签改 String.num。
+- 自测：charset；GUT。
+
 ## 2026-10-27 — 彗星头从玩家出发 + 更长更实（v0.2.44）
 
 - 任务：枪线像从屏幕左侧穿过玩家；要再长、头圆大亮、整体更不透明。

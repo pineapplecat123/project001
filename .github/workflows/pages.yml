@@ -77,6 +77,8 @@ jobs:
           mv index.pck "index.${HASH}.pck"
           sed -i "s/index\.wasm/index.${HASH}.wasm/g; s/index\.pck/index.${HASH}.pck/g" "index.${HASH}.js"
           sed -i "s/index\.js/index.${HASH}.js/g; s/\"executable\":\"index\"/\"executable\":\"index.${HASH}\"/g; s/index\.pck/index.${HASH}.pck/g; s/index\.wasm/index.${HASH}.wasm/g" index.html
+          # HTML 角清缓存按钮（旧 pck 卡住时仍可点）；与主菜单按钮同一套清理逻辑
+          python3 "$GITHUB_WORKSPACE/tools/inject_web_clear_cache.py" index.html
           # Short no-cache note page tip
           printf '%s\n' "build=${HASH}" > version.txt
           ls -la

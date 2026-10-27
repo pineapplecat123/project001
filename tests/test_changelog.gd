@@ -45,6 +45,19 @@ func test_main_menu_has_changelog_button() -> void:
 	assert_gt(list.get_child_count(), 0, "changelog list should be populated")
 
 
+func test_main_menu_has_clear_cache_button() -> void:
+	var main = add_child_autofree(MainScene.instantiate())
+	await get_tree().process_frame
+	var btn: Button = main.get_node("%BtnClearCache")
+	assert_not_null(btn)
+	assert_eq(btn.text, "清理缓存并刷新")
+	# 非 Web：点按应改提示，不崩
+	btn.emit_signal("pressed")
+	await get_tree().process_frame
+	var hint := str(main.get_node("%HintLabel").text)
+	assert_true(hint.contains("网页版") or hint.contains("Pages"), "hint=%s" % hint)
+
+
 func _version_ge(a: String, b: String) -> bool:
 	var pa := a.split(".")
 	var pb := b.split(".")

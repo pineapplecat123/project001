@@ -714,7 +714,7 @@ func _ensure_speed_hud() -> void:
 func _on_combat_speed_changed(v: float) -> void:
 	_combat_speed = clampf(v, COMBAT_SPEED_MIN, COMBAT_SPEED_MAX)
 	if _speed_value_label != null:
-		_speed_value_label.text = "%.2g×" % _combat_speed
+		_speed_value_label.text = "%s×" % String.num(_combat_speed, 2)
 
 
 func _ensure_long_press_timer() -> void:

@@ -29,9 +29,9 @@ anchor_top = 0.5
 anchor_right = 0.5
 anchor_bottom = 0.5
 offset_left = -220.0
-offset_top = -220.0
+offset_top = -250.0
 offset_right = 220.0
-offset_bottom = 220.0
+offset_bottom = 250.0
 grow_horizontal = 2
 grow_vertical = 2
 theme_override_constants/separation = 14
@@ -93,6 +93,14 @@ layout_mode = 2
 size_flags_horizontal = 4
 theme_override_font_sizes/font_size = 18
 text = "更新日志"
+
+[node name="BtnClearCache" type="Button" parent="Center"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(220, 40)
+layout_mode = 2
+size_flags_horizontal = 4
+theme_override_font_sizes/font_size = 17
+text = "清理缓存并刷新"
 
 [node name="BtnQuit" type="Button" parent="Center"]
 unique_name_in_owner = true
@@ -191,6 +199,7 @@ theme_override_constants/separation = 6
 [connection signal="pressed" from="Center/BtnEndless" to="." method="_on_endless_pressed"]
 [connection signal="pressed" from="Center/BtnPractice" to="." method="_on_practice_pressed"]
 [connection signal="pressed" from="Center/BtnChangelog" to="." method="_on_changelog_pressed"]
+[connection signal="pressed" from="Center/BtnClearCache" to="." method="_on_clear_cache_pressed"]
 [connection signal="pressed" from="Center/BtnQuit" to="." method="_on_quit_pressed"]
 [connection signal="gui_input" from="ChangelogDimmer" to="." method="_on_changelog_dimmer_gui_input"]
 [connection signal="pressed" from="ChangelogPanel/ChangelogMargin/ChangelogVBox/ChangelogHeader/BtnChangelogClose" to="." method="_on_changelog_close_pressed"]
