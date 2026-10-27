@@ -355,7 +355,7 @@ text = "开发工具"
 [node name="Dimmer" type="ColorRect" parent="."]
 unique_name_in_owner = true
 visible = false
-z_index = 8
+z_index = 80
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -369,7 +369,7 @@ color = Color(0.02, 0.02, 0.05, 0.62)
 [node name="DevPanel" type="PanelContainer" parent="."]
 unique_name_in_owner = true
 visible = false
-z_index = 10
+z_index = 90
 layout_mode = 1
 anchors_preset = 8
 anchor_left = 0.5
@@ -652,7 +652,7 @@ text = "跳过怪物回合"
 [node name="RewardPanel" type="PanelContainer" parent="."]
 unique_name_in_owner = true
 visible = false
-z_index = 12
+z_index = 90
 layout_mode = 1
 anchors_preset = 8
 anchor_left = 0.5

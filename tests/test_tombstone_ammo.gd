@@ -234,3 +234,32 @@ func test_mid_combat_bag_reset_keeps_tombstone_and_ghost() -> void:
 	assert_eq(ghosts, 2, "ghosts must survive mid-combat bag reset")
 	assert_eq(cs.discard.size(), 0)
 
+
+
+func test_tombstone_fill_keeps_last_fired_slot() -> void:
+	## 幽灵填仓会改槽内容（含刚打空的仓），但 last_fired_slot 仍是本发锤位，不跳到别仓。
+	var cs := CombatState.new(1960)
+	cs.start_graybox(1960, false, FireResolver.ID_WRATH)
+	cs.enemies.clear()
+	cs.dev_spawn_enemy(1, 5)
+	cs.enemies[0].hp = 999
+	cs.enemies[0].max_hp = 999
+	cs.bag.clear()
+	cs.bag_temp.clear()
+	cs.dev_force_load([
+		FireResolver.ID_TOMBSTONE,
+		CombatConstants.WHITE_AMMO_ID,
+		Magazine.EMPTY,
+		Magazine.EMPTY,
+		Magazine.EMPTY,
+		Magazine.EMPTY,
+	] as Array[int])
+	for _i in 4:
+		cs.bag.append(FireResolver.ID_GHOST)
+		cs.bag_temp.append(false)
+	cs.magazine.set_start(0)
+	var hammer: int = cs.magazine.chamber_at_fire_port()
+	assert_true(cs.begin_fire())
+	assert_true(cs.fire_next_shot())
+	assert_eq(cs.last_fired_slot, hammer, "ghost fill must not retarget last_fired_slot")
+	assert_eq(cs.magazine.slots[hammer], FireResolver.ID_GHOST, "emptied hammer may be refilled with ghost")

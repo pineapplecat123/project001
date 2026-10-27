@@ -62,6 +62,14 @@ const BLOOD_GRAVITY := 980.0
 const BLOOD_STAIN_FADE_SEC := 2.4
 const BLOOD_TRAIL_HISTORY := 8
 const BLOOD_TRAIL_SEG_W := 3.2
+## 战斗 VFX（飙血/枪线）低于遮罩与奖励/商店等模态，避免盖住选奖
+const Z_BLOOD_STAIN := 12
+const Z_BLOOD_TRAIL := 40
+const Z_BLOOD_DROP := 41
+const Z_SHOT_VFX := 42
+const Z_DMG_FLOAT := 43
+const Z_MODAL_DIMMER := 80
+const Z_MODAL_PANEL := 90
 
 const COL_PHASE := Color(1.0, 0.92, 0.45)
 const COL_HP_OK := Color(0.45, 0.95, 0.55)
@@ -100,8 +108,8 @@ var _wheel_animating: bool = false
 ## 盘面视觉步数（整数格的浮点，供 Tween；每步 = 60°）
 var _wheel_visual_steps: float = 0.0
 var _fire_flash_tween: Tween
-## 击发白蒙版所在仓；仅闪白期间有效，转盘前必须清掉（勿随盘转动）。
-var _fire_overlay_slot: int = -1
+## 击发黄闪所在仓；仅闪光期间有效，转盘前必须清掉（勿随盘转动）。
+var _fire_flash_slot: int = -1
 var _disk_tween: Tween
 var _fire_ring: Panel = null
 var _load_marker: Label = null
@@ -211,6 +219,12 @@ func _ready() -> void:
 	dev_panel.visible = false
 	reward_panel.visible = false
 	dimmer.visible = false
+	dimmer.z_index = Z_MODAL_DIMMER
+	if reward_panel != null:
+		reward_panel.z_index = Z_MODAL_PANEL
+	var _dev_ci := get_node_or_null("%DevPanel") as CanvasItem
+	if _dev_ci != null:
+		_dev_ci.z_index = Z_MODAL_PANEL
 	_ensure_top_labels_uncropped()
 	_ensure_combat_layout()
 	_ensure_muzzle_hud()
@@ -1206,7 +1220,7 @@ func _run_fire_sequence() -> void:
 		state.resolve_post_fire_enemy_turn()
 	if state.has_corpse_enemies():
 		state.flush_dead_enemies()
-	_clear_fire_overlay()
+	_clear_fire_flash()
 	_apply_disk_rotation(float(state.magazine.start_index))
 	_firing = false
 	_refresh()
@@ -1240,9 +1254,9 @@ func _animate_fire_shots() -> void:
 		var blank: bool = state.last_shot_was_blank
 		skip_n = int(state.last_blank_skip_steps)
 		if not blank:
-			# 先刷仓内容，再闪本发仓；蒙版只在本发闪白期，转盘前必须清掉
+			# 先刷仓内容（含墓碑填幽灵），再黄闪本发仓；转盘前必须清掉闪光
 			_refresh_mag_contents()
-			_begin_fire_overlay(fired_slot)
+			_begin_fire_flash(fired_slot)
 			# 只刷转轮/顶栏；怪 HP 仍是开火前，等拖尾命中再变
 			_refresh_hud_only()
 			# 实弹：彗星拖尾飞掠；途经命中帧结算伤害+飚血+飘字
@@ -1256,13 +1270,13 @@ func _animate_fire_shots() -> void:
 			else:
 				_refresh_board()
 			await get_tree().create_timer(_paced(FIRE_FLASH_HOLD)).timeout
-			# 白蒙版不得随大圈转动；转下一仓 / 末发对齐前先消掉
-			_clear_fire_overlay()
+			# 黄闪不得随大圈转动；转下一仓 / 末发对齐前先消掉
+			_clear_fire_flash()
 		else:
 			if state.has_paced_shot_pending():
 				state.finalize_paced_shot()
 			_pending_hit_vfx.clear()
-			_clear_fire_overlay()
+			_clear_fire_flash()
 			_refresh_mag_contents()
 			_refresh_hud_only()
 		if more:
@@ -1278,7 +1292,7 @@ func _animate_fire_shots() -> void:
 		else:
 			_wheel_animating = false
 			break
-	_clear_fire_overlay()
+	_clear_fire_flash()
 	_apply_disk_rotation(float(state.magazine.start_index))
 
 
@@ -1337,7 +1351,7 @@ func _animate_shot_projectile(
 		delta = Vector2.RIGHT
 	var host := Control.new()
 	host.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	host.z_index = 48
+	host.z_index = Z_SHOT_VFX
 	add_child(host)
 	host.global_position = from_g
 	host.rotation = delta.angle()
@@ -1487,7 +1501,7 @@ func _spawn_blood_burst(at_g: Vector2, amount: int) -> void:
 	for _i in n:
 		var drop := ColorRect.new()
 		drop.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		drop.z_index = 49
+		drop.z_index = Z_BLOOD_DROP
 		var sz: float = randf_range(4.5, 11.5) * (0.85 + 0.4 * t)
 		drop.size = Vector2(sz, sz * randf_range(0.85, 1.25))
 		var col := Color(randf_range(0.75, 1.0), randf_range(0.05, 0.22), randf_range(0.05, 0.18), 1.0)
@@ -1504,7 +1518,7 @@ func _spawn_blood_burst(at_g: Vector2, amount: int) -> void:
 		for _ti in BLOOD_TRAIL_HISTORY:
 			var seg := ColorRect.new()
 			seg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			seg.z_index = 48
+			seg.z_index = Z_BLOOD_TRAIL
 			seg.visible = false
 			seg.color = Color(col.r, col.g, col.b, 1.0)
 			add_child(seg)
@@ -1643,7 +1657,7 @@ func _spawn_blood_stain(at_g: Vector2, src_col: Color, amount_t: float) -> void:
 	## 地面血迹：扁平椭圆状色块，多发叠加；缓慢淡出。
 	var stain := ColorRect.new()
 	stain.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	stain.z_index = 12
+	stain.z_index = Z_BLOOD_STAIN
 	var w: float = randf_range(10.0, 22.0) * (0.85 + 0.4 * amount_t)
 	var h: float = randf_range(3.5, 7.5) * (0.85 + 0.25 * amount_t)
 	stain.size = Vector2(w, h)
@@ -1665,34 +1679,35 @@ func _spawn_blood_stain(at_g: Vector2, src_col: Color, amount_t: float) -> void:
 
 
 
-## 本发仓白蒙版 + 正上红圈黄闪。蒙版画在盘上仓格，转盘前必须 _clear_fire_overlay。
-func _begin_fire_overlay(slot_i: int) -> void:
-	_clear_fire_overlay(false)
-	_fire_overlay_slot = slot_i
+## 本发仓黄色闪光 + 正上红圈脉冲（无白色蒙版）。闪光在盘上仓格，转盘前必须清掉。
+func _begin_fire_flash(slot_i: int) -> void:
+	_clear_fire_flash(false)
+	_fire_flash_slot = slot_i
 	if _fire_flash_tween != null and _fire_flash_tween.is_valid():
 		_fire_flash_tween.kill()
 	_fire_flash_tween = create_tween()
 	_fire_flash_tween.set_parallel(true)
+	var flash_col := Color(1.85, 1.55, 0.35)
 	# 固定红圈脉冲：正上击发点
 	if _fire_ring != null and is_instance_valid(_fire_ring):
-		_fire_ring.modulate = Color(1.8, 1.55, 0.35)
-		_fire_flash_tween.tween_property(_fire_ring, "modulate", Color.WHITE, 0.32)
+		_fire_ring.modulate = flash_col
+		_fire_flash_tween.tween_property(_fire_ring, "modulate", Color.WHITE, 0.28)
 	if slot_i >= 0 and slot_i < _chamber_panels.size():
 		var panel: Panel = _chamber_panels[slot_i]
-		panel.modulate = Color(1.7, 1.45, 0.55)
-		_fire_flash_tween.tween_property(panel, "modulate", Color.WHITE, 0.32)
-	_paint_mag_chambers()
+		panel.modulate = flash_col
+		# Color.WHITE = modulate identity（无着色），不是白色蒙版
+		_fire_flash_tween.tween_property(panel, "modulate", Color.WHITE, 0.28)
 
 
-func _clear_fire_overlay(repaint: bool = true) -> void:
-	## 转盘 / 末发对齐前清白蒙版，避免随大圈转到别的仓。
+func _clear_fire_flash(repaint: bool = true) -> void:
+	## 转盘 / 末发对齐前清黄闪，避免随大圈转到别的仓。
 	if _fire_flash_tween != null and _fire_flash_tween.is_valid():
 		_fire_flash_tween.kill()
 	_fire_flash_tween = null
 	if _fire_ring != null and is_instance_valid(_fire_ring):
 		_fire_ring.modulate = Color.WHITE
-	var had: int = _fire_overlay_slot
-	_fire_overlay_slot = -1
+	var had: int = _fire_flash_slot
+	_fire_flash_slot = -1
 	if had >= 0 and had < _chamber_panels.size():
 		var panel: Panel = _chamber_panels[had]
 		var temp := (
@@ -1707,11 +1722,11 @@ func _clear_fire_overlay(repaint: bool = true) -> void:
 
 
 func _flash_fire_at_top(slot_i: int) -> void:
-	_begin_fire_overlay(slot_i)
+	_begin_fire_flash(slot_i)
 
 
 func _flash_fire_chamber_at(slot_i: int) -> void:
-	_begin_fire_overlay(slot_i)
+	_begin_fire_flash(slot_i)
 
 
 func _on_roll() -> void:
@@ -1952,7 +1967,7 @@ func _spawn_damage_float(cell: int, amount: int, kind: String = "") -> void:
 	start_g.y += randf_range(-18.0, 10.0)
 	var lab := Label.new()
 	lab.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	lab.z_index = 42
+	lab.z_index = Z_DMG_FLOAT
 	if kind == "金币":
 		lab.text = "+%d" % amount
 	elif kind == "":
@@ -2083,7 +2098,7 @@ func _build_endless_shop_panel() -> void:
 	_shop_panel = PanelContainer.new()
 	_shop_panel.name = "EndlessShopPanel"
 	_shop_panel.visible = false
-	_shop_panel.z_index = 12
+	_shop_panel.z_index = Z_MODAL_PANEL
 	_shop_panel.set_anchors_preset(Control.PRESET_CENTER)
 	_shop_panel.offset_left = -380.0
 	_shop_panel.offset_top = -300.0
@@ -2799,7 +2814,7 @@ func _build_sin_pick_panel() -> void:
 	_sin_panel = PanelContainer.new()
 	_sin_panel.name = "SinPickPanel"
 	_sin_panel.visible = false
-	_sin_panel.z_index = 14
+	_sin_panel.z_index = Z_MODAL_PANEL + 2
 	_sin_panel.set_anchors_preset(Control.PRESET_CENTER)
 	_sin_panel.offset_left = -320.0
 	_sin_panel.offset_top = -220.0
@@ -3195,8 +3210,8 @@ func _refresh_mag() -> void:
 
 func _paint_mag_chambers() -> void:
 	var start_i: int = state.magazine.start_index
-	var overlay_slot: int = _fire_overlay_slot
-	var flash_busy: bool = overlay_slot >= 0 and (
+	var flash_slot: int = _fire_flash_slot
+	var flash_busy: bool = flash_slot >= 0 and (
 		_fire_flash_tween != null
 		and _fire_flash_tween.is_valid()
 		and _fire_flash_tween.is_running()
@@ -3239,12 +3254,10 @@ func _paint_mag_chambers() -> void:
 		elif at_fire:
 			style.border_color = Color(1.0, 0.15, 0.12)
 			style.set_border_width_all(4)
-		# 白蒙版仅 overlay 活跃仓；转盘前已 clear，不会随盘跑到别仓
-		if overlay_slot == slot_i and overlay_slot >= 0:
-			style.bg_color = style.bg_color.lightened(0.25)
+		# 无击发白色蒙版；黄闪只用 panel.modulate，转盘前已 clear
 		panel.add_theme_stylebox_override("panel", style)
-		# 闪白进行中勿重置本发仓 modulate；其余仓照常（临时罪孽半透明）
-		if flash_busy and overlay_slot == slot_i:
+		# 黄闪进行中勿重置本发仓 modulate；其余仓照常（临时罪孽半透明）
+		if flash_busy and flash_slot == slot_i:
 			continue
 		if ammo_id != Magazine.EMPTY and state.magazine.is_slot_temporary(slot_i):
 			panel.modulate = Color(1, 1, 1, 0.48)
