@@ -98,13 +98,14 @@ var _fire_flash_tween: Tween
 var _disk_tween: Tween
 var _fire_ring: Panel = null
 var _load_marker: Label = null
-var _muzzle_label: Label = null
-var _muzzle_slot: Control = null  ## 固定占位，防枪口状态文字撑开 MagCol
+var _muzzle_label: Label = null  ## 「枪口：」框外标签
+var _muzzle_slot: Control = null  ## 固定占位，防枪口状态撑开 MagCol
 var _combat_speed: float = COMBAT_SPEED_DEFAULT
 var _speed_row: HBoxContainer = null
 var _speed_slider: HSlider = null
 var _speed_value_label: Label = null
-var _muzzle_panel: PanelContainer = null
+var _muzzle_panel: PanelContainer = null  ## 透明命中层（悬停/长按）
+var _muzzle_chips: HBoxContainer = null
 var _muzzle_tip_panel: PanelContainer = null
 var _muzzle_tip_body: RichTextLabel = null
 var _muzzle_tip_open: bool = false
@@ -563,44 +564,44 @@ func _ensure_log_panel_on_right(bottom: HBoxContainer) -> void:
 func _ensure_muzzle_hud() -> void:
 	if _muzzle_slot != null:
 		return
-	# 固定槽：与 MagWheel 同宽，高度锁死；状态文字再长也不撑开 MagCol / 周围 UI
+	# 固定槽：框外「枪口：」+ 每状态一颗小芯片；高度锁死不撑 MagCol
 	_muzzle_slot = Control.new()
 	_muzzle_slot.name = "MuzzleStatusSlot"
-	_muzzle_slot.custom_minimum_size = Vector2(220, 44)
+	_muzzle_slot.custom_minimum_size = Vector2(220, 26)
 	_muzzle_slot.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	_muzzle_slot.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	_muzzle_slot.clip_contents = true
 	_muzzle_slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var row := HBoxContainer.new()
+	row.name = "MuzzleStatusRow"
+	row.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	row.add_theme_constant_override("separation", 4)
+	row.alignment = BoxContainer.ALIGNMENT_BEGIN
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_muzzle_label = Label.new()
+	_muzzle_label.name = "MuzzleStatusTitle"
+	_muzzle_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_muzzle_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_muzzle_label.add_theme_font_size_override("font_size", 12)
+	_muzzle_label.add_theme_color_override("font_color", Color(0.78, 0.76, 0.72))
+	_muzzle_label.text = "枪口："
+	row.add_child(_muzzle_label)
+	_muzzle_chips = HBoxContainer.new()
+	_muzzle_chips.name = "MuzzleStatusChips"
+	_muzzle_chips.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_muzzle_chips.add_theme_constant_override("separation", 3)
+	_muzzle_chips.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(_muzzle_chips)
+	_muzzle_slot.add_child(row)
+	# 透明命中层盖在整行上，供悬停/长按提示（不画大框）
 	_muzzle_panel = PanelContainer.new()
-	_muzzle_panel.name = "MuzzleStatusPanel"
+	_muzzle_panel.name = "MuzzleStatusHit"
 	_muzzle_panel.z_index = 5
-	_muzzle_panel.visible = true
 	_muzzle_panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	_muzzle_panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	_muzzle_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	_muzzle_panel.grow_vertical = Control.GROW_DIRECTION_BOTH
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.18, 0.08, 0.06, 0.92)
-	style.set_border_width_all(2)
-	style.border_color = Color(1.0, 0.45, 0.2, 1.0)
-	style.set_corner_radius_all(8)
-	style.content_margin_left = 10
-	style.content_margin_right = 10
-	style.content_margin_top = 6
-	style.content_margin_bottom = 6
-	_muzzle_panel.add_theme_stylebox_override("panel", style)
-	_muzzle_label = Label.new()
-	_muzzle_label.name = "MuzzleStatusLabel"
-	_muzzle_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_muzzle_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_muzzle_label.clip_text = true
-	_muzzle_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	_muzzle_label.add_theme_font_size_override("font_size", 16)
-	_muzzle_label.add_theme_color_override("font_color", Color(1.0, 0.85, 0.35))
-	_muzzle_label.text = "枪口：—"
-	_muzzle_panel.add_child(_muzzle_label)
+	var hit_style := StyleBoxEmpty.new()
+	_muzzle_panel.add_theme_stylebox_override("panel", hit_style)
 	_muzzle_slot.add_child(_muzzle_panel)
-	# 挂在弹夹列标题下，醒目
 	var mag_col: Node = mag_title.get_parent() if mag_title != null else self
 	if mag_col != null:
 		mag_col.add_child(_muzzle_slot)
@@ -615,34 +616,49 @@ func _ensure_muzzle_hud() -> void:
 
 
 func _refresh_muzzle_hud() -> void:
-	if _muzzle_label == null or state == null:
+	if _muzzle_chips == null or state == null:
 		return
-	var text := state.muzzle_status_text()
-	# 边框/边距恒定：只改颜色，不因有状态而加粗边框撑布局
-	var style := StyleBoxFlat.new()
-	style.set_border_width_all(2)
-	style.set_corner_radius_all(8)
-	style.content_margin_left = 10
-	style.content_margin_right = 10
-	style.content_margin_top = 6
-	style.content_margin_bottom = 6
-	if text.is_empty():
-		_muzzle_label.text = "枪口：无"
-		_muzzle_label.add_theme_color_override("font_color", Color(0.65, 0.62, 0.58))
-		style.bg_color = Color(0.14, 0.14, 0.16, 0.85)
-		style.border_color = Color(0.45, 0.45, 0.5, 0.8)
+	for c in _muzzle_chips.get_children():
+		_muzzle_chips.remove_child(c)
+		c.queue_free()
+	var parts := state.muzzle_status_parts()
+	if parts.is_empty():
+		var empty := Label.new()
+		empty.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		empty.add_theme_font_size_override("font_size", 11)
+		empty.add_theme_color_override("font_color", Color(0.55, 0.53, 0.5))
+		empty.text = "—"
+		_muzzle_chips.add_child(empty)
 	else:
-		_muzzle_label.text = text + "（本回合后续弹附带）"
-		_muzzle_label.add_theme_color_override("font_color", Color(1.0, 0.88, 0.35))
-		style.bg_color = Color(0.28, 0.1, 0.05, 0.95)
-		style.border_color = Color(1.0, 0.55, 0.15, 1.0)
-	if _muzzle_panel != null:
-		_muzzle_panel.add_theme_stylebox_override("panel", style)
-		_muzzle_panel.visible = true
+		for name in parts:
+			_muzzle_chips.add_child(_make_muzzle_chip(str(name)))
 	if _muzzle_slot != null:
 		_muzzle_slot.visible = true
 	if _muzzle_tip_open:
 		_refresh_muzzle_tip_body()
+
+
+func _make_muzzle_chip(name: String) -> PanelContainer:
+	## 单个枪口状态小框：只显示名字，字小边距紧。
+	var chip := PanelContainer.new()
+	chip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.26, 0.1, 0.06, 0.95)
+	style.set_border_width_all(1)
+	style.border_color = Color(1.0, 0.55, 0.22, 0.95)
+	style.set_corner_radius_all(4)
+	style.content_margin_left = 4
+	style.content_margin_right = 4
+	style.content_margin_top = 1
+	style.content_margin_bottom = 1
+	chip.add_theme_stylebox_override("panel", style)
+	var lab := Label.new()
+	lab.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	lab.text = name
+	lab.add_theme_font_size_override("font_size", 11)
+	lab.add_theme_color_override("font_color", Color(1.0, 0.88, 0.4))
+	chip.add_child(lab)
+	return chip
 
 
 func _paced(sec: float) -> float:

@@ -288,11 +288,11 @@ func muzzle_status_parts() -> PackedStringArray:
 	if _muzzle_thunder:
 		parts.append("雷")
 	if _muzzle_wrath > 0:
-		parts.append("愤怒×%d" % _muzzle_wrath)
+		parts.append("愤怒")
 	if _muzzle_pride > 0:
-		parts.append("傲慢×%d" % _muzzle_pride)
+		parts.append("傲慢")
 	if _muzzle_greed > 0:
-		parts.append("贪婪×%d" % _muzzle_greed)
+		parts.append("贪婪")
 	return parts
 
 
