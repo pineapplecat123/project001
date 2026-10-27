@@ -260,6 +260,7 @@ func _consolidate_ammo_into_bag() -> void:
 
 func _reset_fire_session() -> void:
 	## 仅清射击队列；枪口效果跨金色额外轮保留，回合结束由 _reset_muzzle 清。
+	## 注意：保留 last_shot_* 命中/VFX 字段，供 UI 播完末发弹点后再用；下一发开火时会重写。
 	_fire_queue.clear()
 	_fire_damages.clear()
 	_fire_index = 0
@@ -267,13 +268,6 @@ func _reset_fire_session() -> void:
 	last_shot_was_blank = false
 	last_blank_skip_steps = 0
 	last_fired_slot = -1
-	last_shot_ammo_id = -1
-	last_shot_hit_cell = -1
-	last_shot_dealt = 0
-	last_shot_muzzle_outline_ids.clear()
-	last_shot_hit_cells.clear()
-	last_shot_hit_amounts.clear()
-	last_shot_was_pierce = false
 
 
 

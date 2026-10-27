@@ -1121,3 +1121,20 @@ func test_pace_killing_shot_keeps_corpse_until_flush() -> void:
 	cs.flush_dead_enemies()
 	assert_false(cs.has_corpse_enemies())
 	assert_eq(cs.enemies.size(), 0)
+
+
+func test_last_shot_keeps_hit_data_after_finish() -> void:
+	## 匣内最后一发打完后仍保留 last_shot_hit_*，供 UI 播弹点/轨迹（修末发无枪线）。
+	var cs := CombatState.new(931)
+	cs.start_graybox(931)
+	cs.pace_after_fire = true
+	cs.enemies[0].hp = 999
+	cs.enemies[0].max_hp = 999
+	cs.dev_force_load([CombatConstants.WHITE_AMMO_ID] as Array[int])
+	assert_eq(cs.magazine.loaded_count(), 1)
+	assert_true(cs.begin_fire())
+	assert_false(cs.fire_next_shot())
+	assert_false(cs.last_shot_was_blank)
+	assert_eq(cs.last_shot_ammo_id, CombatConstants.WHITE_AMMO_ID)
+	assert_gte(cs.last_shot_hit_cells.size(), 1)
+	assert_gt(cs.last_shot_dealt, 0)

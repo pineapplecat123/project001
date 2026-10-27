@@ -40,12 +40,14 @@ const DMG_FLOAT_FONT_MAX := 40
 const SHAKE_MIN_PX := 8.0
 const SHAKE_MAX_PX := 42.0
 const SHAKE_DURATION := 0.28
-## 射击弹点占位：细弹头快速飞掠 + 短拖尾（非整段激光）；芯色=弹药，描边=枪口罪孽
-const SHOT_HEAD_SIZE := 9.0
-const SHOT_OUTLINE_PAD := 3.0
-const SHOT_TRAIL_LEN := 28.0
-const SHOT_TRAIL_THICK := 4.0
-const SHOT_TRAVEL_SEC := 0.16
+## 射击弹点占位：细长弹体快速飞掠 + 较长拖尾 + 软辉光（非整段激光）；芯色=弹药，描边=枪口罪孽
+const SHOT_HEAD_LEN := 22.0
+const SHOT_HEAD_THICK := 7.0
+const SHOT_OUTLINE_PAD := 2.5
+const SHOT_TRAIL_LEN := 64.0
+const SHOT_TRAIL_THICK := 3.5
+const SHOT_GLOW_PAD := 5.0
+const SHOT_TRAVEL_SEC := 0.17
 const SHOT_TRAVEL_SEC_PER_CELL := 0.045
 const BLOOD_BURST_MIN := 10
 const BLOOD_BURST_MAX := 22
@@ -1224,7 +1226,7 @@ func _animate_shot_projectile(
 	from_g: Vector2, to_g: Vector2, core_col: Color, outline_cols: Array[Color],
 	waypoints: Array, travel_sec: float
 ) -> void:
-	## 弹头小点飞掠；身后固定短拖尾跟着走（看得出路径，不是整段同时亮的激光）。
+	## 细长弹体飞掠；身后较长拖尾 + 外层软辉光（看得出路径，不是整段激光）。
 	var delta: Vector2 = to_g - from_g
 	var host := Control.new()
 	host.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -1232,38 +1234,53 @@ func _animate_shot_projectile(
 	add_child(host)
 	host.global_position = from_g
 	host.rotation = delta.angle()
-	# 拖尾在弹头后方（局部 -x）
 	var n_out: int = outline_cols.size()
+	# 最外软辉光（拖尾）
+	var glow_trail := ColorRect.new()
+	glow_trail.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	glow_trail.color = Color(core_col.r, core_col.g, core_col.b, 0.22)
+	glow_trail.position = Vector2(-SHOT_TRAIL_LEN - 4.0, -(SHOT_TRAIL_THICK * 0.5 + SHOT_GLOW_PAD))
+	glow_trail.size = Vector2(SHOT_TRAIL_LEN + SHOT_HEAD_LEN * 0.5, SHOT_TRAIL_THICK + SHOT_GLOW_PAD * 2.0)
+	host.add_child(glow_trail)
+	# 拖尾描边（枪口色）
 	for i in n_out:
-		var pad: float = float(n_out - i) * (SHOT_OUTLINE_PAD * 0.65)
+		var pad: float = float(n_out - i) * (SHOT_OUTLINE_PAD * 0.7)
 		var trail_o := ColorRect.new()
 		trail_o.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		var oc: Color = outline_cols[i]
-		trail_o.color = Color(oc.r, oc.g, oc.b, 0.55)
+		trail_o.color = Color(oc.r, oc.g, oc.b, 0.5)
 		trail_o.position = Vector2(-SHOT_TRAIL_LEN, -(SHOT_TRAIL_THICK * 0.5 + pad))
 		trail_o.size = Vector2(SHOT_TRAIL_LEN, SHOT_TRAIL_THICK + pad * 2.0)
 		host.add_child(trail_o)
+	# 拖尾芯
 	var trail := ColorRect.new()
 	trail.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	trail.color = Color(core_col.r, core_col.g, core_col.b, 0.7)
+	trail.color = Color(core_col.r, core_col.g, core_col.b, 0.65)
 	trail.position = Vector2(-SHOT_TRAIL_LEN, -SHOT_TRAIL_THICK * 0.5)
 	trail.size = Vector2(SHOT_TRAIL_LEN, SHOT_TRAIL_THICK)
 	host.add_child(trail)
-	# 弹头（描边 + 芯）
+	# 弹体辉光
+	var glow_head := ColorRect.new()
+	glow_head.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	glow_head.color = Color(mini(core_col.r + 0.25, 1.0), mini(core_col.g + 0.25, 1.0), mini(core_col.b + 0.25, 1.0), 0.35)
+	glow_head.size = Vector2(SHOT_HEAD_LEN + SHOT_GLOW_PAD * 2.0, SHOT_HEAD_THICK + SHOT_GLOW_PAD * 2.0)
+	glow_head.position = Vector2(-SHOT_GLOW_PAD, -(SHOT_HEAD_THICK * 0.5 + SHOT_GLOW_PAD))
+	host.add_child(glow_head)
+	# 弹体描边（枪口色，多层）
 	for i in n_out:
 		var pad2: float = float(n_out - i) * SHOT_OUTLINE_PAD
 		var ring := ColorRect.new()
 		ring.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		ring.color = outline_cols[i]
-		var s: float = SHOT_HEAD_SIZE + pad2 * 2.0
-		ring.size = Vector2(s, s)
-		ring.position = Vector2(-s * 0.5, -s * 0.5)
+		ring.size = Vector2(SHOT_HEAD_LEN + pad2 * 2.0, SHOT_HEAD_THICK + pad2 * 2.0)
+		ring.position = Vector2(-pad2, -(SHOT_HEAD_THICK * 0.5 + pad2))
 		host.add_child(ring)
+	# 细长弹体芯（沿飞行方向更长）
 	var head := ColorRect.new()
 	head.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	head.color = core_col
-	head.size = Vector2(SHOT_HEAD_SIZE, SHOT_HEAD_SIZE)
-	head.position = Vector2(-SHOT_HEAD_SIZE * 0.5, -SHOT_HEAD_SIZE * 0.5)
+	head.size = Vector2(SHOT_HEAD_LEN, SHOT_HEAD_THICK)
+	head.position = Vector2(0.0, -SHOT_HEAD_THICK * 0.5)
 	host.add_child(head)
 	# 飞行：按进度触发途经飚血
 	var ctx := {
