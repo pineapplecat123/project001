@@ -1005,9 +1005,8 @@ func _complete_load_session() -> Dictionary:
 	_log("装填完成：共 %d 发%s。" % [
 		n, "（将随机旋转转轮）" if needs_spin else ""
 	])
-	# 金色额外轮逐步装：不触发罪孽≥3 装填惩罚（与旧 load_sequence 瞬装一致）
-	if not _in_gold_extra_round:
-		_resolve_sin_pack_on_load(_load_resolved_ids)
+	# 含超级回合/金色额外轮：装填≥3 罪孽仍触发三罪孽惩罚（与普通装弹一致）
+	_resolve_sin_pack_on_load(_load_resolved_ids)
 	var rotate_to: int = magazine.start_index
 	_reset_load_session()
 	if magazine.is_empty():
@@ -1838,6 +1837,8 @@ func _auto_load_and_fire_once() -> bool:
 	last_load_ids = drawn.duplicate()
 	var resolved := _resolve_black_white_with_prev(drawn, prev)
 	magazine.load_sequence(resolved, drawn_temps)
+	# 额外轮同步装匣：同样结算装≥3 罪孽惩罚
+	_resolve_sin_pack_on_load(resolved)
 	if bag.is_empty():
 		needs_reshuffle_next_load = true
 	_fire_queue = magazine.fire_order()

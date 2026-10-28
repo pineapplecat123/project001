@@ -1,3 +1,9 @@
+## 2026-10-28 — 额外轮三罪孽 + 枪线匀速（v0.2.69）
+
+- 任务：超级回合额外装填里的罪孽也要触发三罪孽惩罚；枪线应为初速很高的匀速，不要加速。
+- 改动：`_complete_load_session` 额外轮不再跳过 `_resolve_sin_pack_on_load`；`_auto_load_and_fire_once` 装匣后同样结算。枪线 tween：`TRANS_QUAD+EASE_IN` → `TRANS_LINEAR`（travel_sec 不变）。
+- 自测：pre_push_check；GUT。
+
 ## 2026-10-28 — 枪线拖尾改轨迹点（v0.2.68）
 
 - 任务：枪线拖尾改成与飙血相同的「历史点 + ColorRect 线段」画法，试手感。

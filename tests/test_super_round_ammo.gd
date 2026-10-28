@@ -188,3 +188,82 @@ func test_tombstone_then_super_round_still_grants_extra() -> void:
 		guard += 1
 	assert_true(_log_has(cs, "额外装填回合") or _log_has(cs, "超级回合子弹"))
 	assert_eq(cs.pending_gold_autofires(), 0)
+
+
+func test_extra_round_sync_load_triggers_wrath_pack() -> void:
+	## 同步额外轮装匣：袋内愤怒≥3 须自伤 6（此前 _auto_load 跳过惩罚）。
+	var cs := CombatState.new(2127)
+	cs.start_graybox(2127, false, FireResolver.ID_WRATH)
+	cs.enemies[0].hp = 999
+	cs.enemies[0].max_hp = 999
+	cs.bag.clear()
+	cs.bag_temp.clear()
+	for id in [
+		FireResolver.ID_WRATH, FireResolver.ID_WRATH, FireResolver.ID_WRATH,
+		CombatConstants.WHITE_AMMO_ID, CombatConstants.WHITE_AMMO_ID, CombatConstants.WHITE_AMMO_ID,
+	]:
+		cs.bag.append(id)
+		cs.bag_temp.append(false)
+	cs.magazine.clear()
+	cs._in_gold_extra_round = true
+	var hp0: int = cs.player_hp
+	assert_true(cs._auto_load_and_fire_once())
+	assert_eq(cs.player_hp, hp0 - 6, "wrath≥3 in gold/extra sync load must self-damage 6")
+	assert_true(_log_has(cs, "罪孽[愤怒]"))
+
+
+func test_extra_round_stepwise_load_triggers_wrath_pack() -> void:
+	## UI 逐步额外装：装完匣后同样触发愤怒≥3 自伤。
+	var cs := CombatState.new(2128)
+	cs.start_graybox(2128, false, FireResolver.ID_WRATH)
+	cs.enemies[0].hp = 999
+	cs.enemies[0].max_hp = 999
+	cs.bag.clear()
+	cs.bag_temp.clear()
+	for id in [
+		FireResolver.ID_WRATH, FireResolver.ID_WRATH, FireResolver.ID_WRATH,
+		CombatConstants.WHITE_AMMO_ID, CombatConstants.WHITE_AMMO_ID, CombatConstants.WHITE_AMMO_ID,
+	]:
+		cs.bag.append(id)
+		cs.bag_temp.append(false)
+	cs._pending_gold_autofires = 1
+	var hp0: int = cs.player_hp
+	assert_true(cs.begin_gold_extra_load())
+	var steps := 0
+	while cs.is_busy_loading():
+		var r: Dictionary = cs.load_next_chamber()
+		assert_true(bool(r.get("ok", false)))
+		steps += 1
+		if not bool(r.get("done", false)):
+			cs.apply_load_rotate()
+		assert_lte(steps, CombatConstants.MAGAZINE_SIZE + 1)
+	assert_eq(cs.player_hp, hp0 - 6)
+	assert_true(_log_has(cs, "罪孽[愤怒]"))
+	assert_eq(cs.magazine.loaded_count(), CombatConstants.MAGAZINE_SIZE)
+
+
+func test_super_round_chain_extra_loads_sin_pack() -> void:
+	## 实打：主匣超级回合 → 额外轮从袋装入≥3 愤怒 → 自伤生效。
+	var cs := CombatState.new(2129)
+	cs.start_graybox(2129, false, FireResolver.ID_WRATH)
+	cs.enemies[0].hp = 999
+	cs.enemies[0].max_hp = 999
+	cs.bag.clear()
+	cs.bag_temp.clear()
+	cs.discard.clear()
+	cs.discard_temp.clear()
+	for id in [
+		FireResolver.ID_WRATH, FireResolver.ID_WRATH, FireResolver.ID_WRATH,
+		CombatConstants.WHITE_AMMO_ID, CombatConstants.WHITE_AMMO_ID, CombatConstants.WHITE_AMMO_ID,
+	]:
+		cs.bag.append(id)
+		cs.bag_temp.append(false)
+	cs.dev_force_load([
+		FireResolver.ID_SUPER_ROUND,
+		Magazine.EMPTY, Magazine.EMPTY, Magazine.EMPTY, Magazine.EMPTY, Magazine.EMPTY,
+	] as Array[int])
+	var hp0: int = cs.player_hp
+	assert_true(cs.do_fire())
+	assert_eq(cs.player_hp, hp0 - 6, "sin pack in super-round extra must punish")
+	assert_true(_log_has(cs, "罪孽[愤怒]"))
+	assert_true(_log_has(cs, "额外装填回合"))

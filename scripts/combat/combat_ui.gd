@@ -1470,7 +1470,7 @@ func _animate_shot_projectile(
 	}
 	_shot_projectile_step(0.0, ctx)
 	var tw := create_tween()
-	tw.tween_method(_shot_projectile_step.bind(ctx), 0.0, 1.0, maxf(travel_sec, 0.05)).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+	tw.tween_method(_shot_projectile_step.bind(ctx), 0.0, 1.0, maxf(travel_sec, 0.05)).set_trans(Tween.TRANS_LINEAR)
 	await tw.finished
 	var fired: Dictionary = ctx.get("fired", {})
 	for wi in waypoints.size():
