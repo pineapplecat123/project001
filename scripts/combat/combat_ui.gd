@@ -1063,6 +1063,9 @@ func _ammo_colors(ammo_id: int) -> Dictionary:
 		FireResolver.ID_SUPER_ROUND:
 			# 金黄色光（设计：发出金黄色的光）；比旧金色略亮略暖
 			return {"bg": Color(1.0, 0.86, 0.22), "fg": Color(0.18, 0.1, 0.02)}
+		FireResolver.ID_ARMOR_PIERCE:
+			# 钢青银光：与旧穿透浅蓝区分，强调穿甲枪线
+			return {"bg": Color(0.55, 0.78, 0.92), "fg": Color(0.04, 0.12, 0.2)}
 		CombatConstants.INVALID_AMMO_ID:
 			return {"bg": Color(0.28, 0.28, 0.3), "fg": Color(0.95, 0.55, 0.55)}
 		_:
@@ -3511,6 +3514,13 @@ func _paint_mag_chambers() -> void:
 				style.border_color = Color(1.0, 0.88, 0.32)
 				style.set_border_width_all(3)
 				style.shadow_color = Color(1.0, 0.82, 0.2, 0.72)
+				style.shadow_size = 10
+				style.shadow_offset = Vector2.ZERO
+			elif ammo_id == FireResolver.ID_ARMOR_PIERCE:
+				# 钢青辉光：冷边 + 外发光（袋内/弹仓一致可读）
+				style.border_color = Color(0.62, 0.88, 1.0)
+				style.set_border_width_all(3)
+				style.shadow_color = Color(0.45, 0.78, 0.98, 0.7)
 				style.shadow_size = 10
 				style.shadow_offset = Vector2.ZERO
 			info.text = short

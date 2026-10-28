@@ -286,7 +286,7 @@ func muzzle_status_parts() -> PackedStringArray:
 	## UI 用：当前枪口已挂效果（中文短名）。
 	var parts: PackedStringArray = PackedStringArray()
 	if _muzzle_pierce:
-		parts.append("穿透")
+		parts.append("穿甲")
 	if _muzzle_gas:
 		parts.append("汽油")
 	if _muzzle_fire:
@@ -313,7 +313,7 @@ func muzzle_status_text() -> String:
 
 
 func _muzzle_outline_ammo_ids_for_shot() -> Array[int]:
-	## 对本发有贡献的罪孽枪口色（与伤害提示顺序一致：愤怒→傲慢→贪婪）；供射线描边。
+	## 对本发有贡献的枪口色（罪孽 + 穿甲）；供射线描边。
 	var out: Array[int] = []
 	if _muzzle_wrath > 0:
 		out.append(FireResolver.ID_WRATH)
@@ -321,6 +321,8 @@ func _muzzle_outline_ammo_ids_for_shot() -> Array[int]:
 		out.append(FireResolver.ID_PRIDE)
 	if _muzzle_greed > 0:
 		out.append(FireResolver.ID_GREED)
+	if _muzzle_pierce:
+		out.append(FireResolver.ID_ARMOR_PIERCE)
 	return out
 
 
@@ -369,7 +371,7 @@ func muzzle_damage_tip_text() -> String:
 		lines.append("贪婪×%d：造成伤害时每层 30%% 掉等额金（不改倍率）" % greed)
 	var elems: PackedStringArray = PackedStringArray()
 	if _muzzle_pierce:
-		elems.append("穿透")
+		elems.append("穿甲")
 	if _muzzle_gas:
 		elems.append("汽油")
 	if _muzzle_fire:
@@ -380,6 +382,8 @@ func muzzle_damage_tip_text() -> String:
 		elems.append("雷")
 	if not elems.is_empty():
 		lines.append("元素附带：%s（不改倍率）" % " · ".join(elems))
+	if _muzzle_pierce:
+		lines.append("穿甲：击穿怪物；首个全伤，之后每穿一个 -1，减到 0 为止")
 	return "\n".join(lines)
 
 
@@ -624,6 +628,8 @@ func _scale_outgoing_damage(raw: int) -> int:
 func _mount_muzzle_from(flags: Dictionary) -> void:
 	## 元素枪口：射击后挂上，本回合后续击发附带。
 	if bool(flags.get("pierce", false)):
+		if not _muzzle_pierce:
+			_log("  → 枪口【穿甲】（最多 1 层）")
 		_muzzle_pierce = true
 	if bool(flags.get("gas", false)):
 		_muzzle_gas = true

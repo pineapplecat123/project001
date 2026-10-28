@@ -26,6 +26,7 @@ const ID_GREED := 18  ## 贪婪
 const ID_TOMBSTONE := 19  ## 墓碑（设计表编号9）
 const ID_GHOST := 20  ## 幽灵（设计表编号10，墓碑衍生物）
 const ID_SUPER_ROUND := 21  ## 超级回合（设计表编号11）
+const ID_ARMOR_PIERCE := 22  ## 穿甲（设计表编号12）
 
 
 static func count_by_id(order: Array[int]) -> Dictionary:
@@ -128,6 +129,8 @@ static func base_damage_for(ammo_id: int, order: Array[int], index: int, pink_bo
 			return 2
 		ID_SUPER_ROUND:
 			return 1
+		ID_ARMOR_PIERCE:
+			return 3
 		_:
 			return 0
 
@@ -166,7 +169,7 @@ static func compute_shot_damages(order: Array[int], pink_bonus: int) -> Array[in
 static func inherits_from(ammo_id: int) -> Dictionary:
 	## 该发自带的状态效果旗标（击发后挂上枪口，本回合后续击发都附带）。
 	return {
-		"pierce": ammo_id == ID_PIERCE,
+		"pierce": ammo_id == ID_PIERCE or ammo_id == ID_ARMOR_PIERCE,
 		"gas": ammo_id == ID_GAS,
 		"fire": ammo_id == ID_FIRE,
 		"water": ammo_id == ID_WATER,

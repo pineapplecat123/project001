@@ -46,3 +46,20 @@ func test_super_round_glow_draw_smoke() -> void:
 	box.queue_redraw()
 	await get_tree().process_frame
 	assert_eq(box.ball_count(), 1)
+
+
+func test_armor_pierce_glow_draw_smoke() -> void:
+	## 穿甲在袋内应可绘制钢青辉光路径（不报错、球仍在）。
+	var box: BagPhysicsBox = BagPhysicsBox.new()
+	box.custom_minimum_size = Vector2(200, 200)
+	box.size = Vector2(200, 200)
+	box.color_lookup = func(aid: int) -> Dictionary:
+		return {"bg": Color(0.55, 0.78, 0.92), "fg": Color(0.04, 0.12, 0.2)}
+	box.name_lookup = func(_aid: int) -> String:
+		return "甲"
+	add_child_autoqfree(box)
+	box.sync_ammo_ids([FireResolver.ID_ARMOR_PIERCE])
+	assert_eq(box.ball_count(), 1)
+	box.queue_redraw()
+	await get_tree().process_frame
+	assert_eq(box.ball_count(), 1)

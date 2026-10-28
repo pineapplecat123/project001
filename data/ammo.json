@@ -249,6 +249,22 @@
       "ephemeral": false,
       "in_reward_pool": true,
       "blurb": "获得额外回合"
+    },
+    {
+      "id": 22,
+      "name": "穿甲弹药",
+      "rarity": null,
+      "base_damage": 3,
+      "base_damage_mode": "fixed",
+      "special": "基础伤害3。每发射1发，枪口挂上1层【穿甲】（最多1层，回合结束清除）。穿甲：可击穿怪物，对第一个造成全值伤害，之后每穿一个伤害-1，减到0为止。本发即生效；枪线贯穿怪物。",
+      "tags": [
+        "枪口",
+        "贯穿"
+      ],
+      "enabled_in_combat": true,
+      "ephemeral": false,
+      "in_reward_pool": true,
+      "blurb": "枪口穿甲，递减穿怪"
     }
   ]
 }
