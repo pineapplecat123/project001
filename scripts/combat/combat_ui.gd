@@ -1398,7 +1398,7 @@ func _animate_shot_projectile(
 	from_g: Vector2, to_g: Vector2, core_col: Color, outline_cols: Array[Color],
 	waypoints: Array, travel_sec: float
 ) -> void:
-	## 弹头形尖头 + Line2D 连续光带拖尾（头尾衔接），从玩家飞向目标。
+	## 弹头形钝圆头 + Line2D 连续光带拖尾（头尾衔接），从玩家飞向目标。
 	## 按已飞距离连续拉长，不再用 ColorRect 分段显隐（避免一节一节方块感）。
 	var delta: Vector2 = to_g - from_g
 	if delta.length_squared() < 0.01:
@@ -1438,7 +1438,7 @@ func _animate_shot_projectile(
 	for line in trail_lines:
 		host.add_child(line)
 		line.visible = false
-	# 弹头形尖头（朝 +X=飞行方向）；尾部伸入拖尾与 Line2D 重叠，头尾成整体
+	# 弹头形钝圆头（朝 +X=飞行方向）；尾部伸入拖尾与 Line2D 重叠，头尾成整体
 	# 提亮用 Color.lightened：暗弹药（愤怒）够亮可读红，傲慢等仍保色相
 	var head_glow := _make_shot_bullet_tip(
 		SHOT_HEAD_GLOW * 1.2,
@@ -1489,12 +1489,9 @@ func _animate_shot_projectile(
 		if fired.has(wi):
 			continue
 		var wp2: Dictionary = waypoints[wi]
-		var amt2: int = 0
 		var hi2: int = int(wp2.get("hit_index", -1))
 		if hi2 >= 0 and state != null and state.has_paced_shot_pending():
-			amt2 = state.resolve_paced_hit(hi2)
-		else:
-			amt2 = int(wp2.get("amount", 0))
+			state.resolve_paced_hit(hi2)
 		# 飙血改由 enemy_damaged 统一触发（含非子弹掉血）
 	if is_instance_valid(host):
 		host.queue_free()
@@ -1533,24 +1530,29 @@ func _shot_head_display_color(core: Color, lighten_amount: float, alpha: float) 
 
 
 func _make_shot_bullet_tip(length: float, max_w: float, base_w: float, col: Color) -> Polygon2D:
-	## 弹头形尖头：尖朝 +X（宿主已按飞行方向旋转），尾部伸入 -X 与 Line2D 拖尾重叠衔接。
+	## 弹头形钝圆头：朝 +X（宿主已按飞行方向旋转）；鼻端折线近似圆弧（非针尖），尾部伸入 -X 与拖尾衔接。
 	var poly := Polygon2D.new()
 	poly.color = col
-	var tip_x: float = length * 0.58
-	var shoulder_x: float = length * 0.14
-	var belly_x: float = length * -0.04
-	var join_x: float = -length * 0.32
 	var hw: float = max_w * 0.5
 	var bw: float = maxf(base_w * 0.5, 1.0)
-	poly.polygon = PackedVector2Array([
-		Vector2(tip_x, 0.0),
-		Vector2(shoulder_x, hw * 0.62),
-		Vector2(belly_x, hw),
-		Vector2(join_x, bw),
-		Vector2(join_x, -bw),
-		Vector2(belly_x, -hw),
-		Vector2(shoulder_x, -hw * 0.62),
-	])
+	# 鼻圆：半径≈半宽，圆心略靠后 → 最前端圆钝，肩部尽快满宽
+	var nose_r: float = hw * 0.95
+	var nose_cx: float = length * 0.18
+	var belly_x: float = length * -0.02
+	var join_x: float = -length * 0.32
+	var pts := PackedVector2Array()
+	var arc_n := 5  # 半弧采样数；越多鼻端越圆
+	for i in range(arc_n + 1):
+		var ang: float = float(i) / float(arc_n) * (PI * 0.55)
+		pts.append(Vector2(nose_cx + cos(ang) * nose_r, sin(ang) * nose_r))
+	pts.append(Vector2(belly_x, hw))
+	pts.append(Vector2(join_x, bw))
+	pts.append(Vector2(join_x, -bw))
+	pts.append(Vector2(belly_x, -hw))
+	for i in range(arc_n, 0, -1):
+		var ang2: float = float(i) / float(arc_n) * (PI * 0.55)
+		pts.append(Vector2(nose_cx + cos(ang2) * nose_r, -sin(ang2) * nose_r))
+	poly.polygon = pts
 	return poly
 
 
@@ -1585,13 +1587,10 @@ func _shot_projectile_step(t: float, ctx: Dictionary) -> void:
 		var wt: float = from_g.distance_to(wg) / path_len
 		if t + 0.02 >= wt:
 			fired[wi] = true
-			var amt: int = 0
 			var hi: int = int(wp.get("hit_index", -1))
 			if hi >= 0 and state != null and state.has_paced_shot_pending():
 				# 视觉命中瞬间结算伤害（飘字由 enemy_damaged 触发）
-				amt = state.resolve_paced_hit(hi)
-			else:
-				amt = int(wp.get("amount", 0))
+				state.resolve_paced_hit(hi)
 			# 飙血改由 enemy_damaged 统一触发
 
 
@@ -3525,7 +3524,6 @@ func _refresh_mag() -> void:
 
 
 func _paint_mag_chambers() -> void:
-	var start_i: int = state.magazine.start_index
 	var flash_slot: int = _fire_flash_slot
 	var flash_busy: bool = flash_slot >= 0 and (
 		_fire_flash_tween != null

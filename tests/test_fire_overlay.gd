@@ -88,12 +88,16 @@ func test_shot_head_keeps_ammo_hue_not_black_or_whitewash() -> void:
 
 
 func test_shot_bullet_tip_and_outer_glow_follows_outline() -> void:
-	## 弹头形尖头（非圆 orb）；有描边时最外辉光用 outline_cols[0]；无描边仍芯色；芯带仍弹药色。
+	## 弹头形钝圆头（非圆 orb、非针尖）；有描边时最外辉光用 outline_cols[0]；无描边仍芯色；芯带仍弹药色。
 	var f := FileAccess.open("res://scripts/combat/combat_ui.gd", FileAccess.READ)
 	assert_not_null(f)
 	var text := f.get_as_text()
 	assert_true(text.contains("func _make_shot_bullet_tip"), "must build bullet-tip polygon")
 	assert_false(text.contains("func _make_shot_orb"), "circular orb head must be removed")
+	assert_true(text.contains("nose_r"), "rounded tip uses nose radius")
+	assert_true(text.contains("arc_n"), "rounded tip samples nose arc")
+	assert_true(text.contains("cos(ang)"), "nose arc uses cos sampling")
+	assert_false(text.contains("tip_x: float = length * 0.58"), "must not keep sharp single-point tip")
 	var anim_i := text.find("func _animate_shot_projectile")
 	assert_gt(anim_i, 0)
 	var anim_end := text.find("\nfunc ", anim_i + 10)
