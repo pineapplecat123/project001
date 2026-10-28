@@ -40,8 +40,8 @@ const DETAIL_PANEL_W := 360.0
 const DETAIL_PANEL_H := 320.0
 const DMG_FLOAT_DURATION := 0.85
 const DMG_FLOAT_RISE := 78.0
-const DMG_FLOAT_FONT_MIN := 16
-const DMG_FLOAT_FONT_MAX := 40
+const DMG_FLOAT_FONT_MIN := 26
+const DMG_FLOAT_FONT_MAX := 72
 const SHAKE_MIN_PX := 8.0
 const SHAKE_MAX_PX := 42.0
 const SHAKE_DURATION := 0.28
@@ -61,7 +61,7 @@ const BLOOD_BURST_MAX := 40
 const BLOOD_GRAVITY := 1350.0
 const BLOOD_STAIN_FADE_SEC := 2.4
 const BLOOD_TRAIL_HISTORY := 8
-## 拖尾粗细下限；实际按血滴尺寸匹配（见 bctx trail_w）
+## 拖尾头部粗细下限；实际按血滴尺寸匹配，尾部渐细（见 _blood_trail_push）
 const BLOOD_TRAIL_SEG_W_MIN := 4.0
 ## 战斗 VFX（飙血/枪线）低于遮罩与奖励/商店等模态，避免盖住选奖
 const Z_BLOOD_STAIN := 12
@@ -141,6 +141,8 @@ var _cell_shake_tweens: Dictionary = {}
 ## 开火结算时暂存飘字/抖动，等射线飞到再播
 var _defer_hit_vfx: bool = false
 var _pending_hit_vfx: Array = []
+## 最近一次枪线飞行方向（单位向量）；飙血沿此轴喷溅并带不规则偏角
+var _blood_spray_dir: Vector2 = Vector2.RIGHT
 var _reward_open: bool = false
 ## 胜利后延迟弹出奖励：token 用于取消过期 await
 var _reward_delaying: bool = false
@@ -1347,6 +1349,11 @@ func _play_shot_beam_and_impact() -> void:
 	var to_g: Vector2 = _cell_unit_global_center(end_cell)
 	if from_g == Vector2.ZERO or to_g == Vector2.ZERO:
 		return
+	var shot_delta: Vector2 = to_g - from_g
+	if shot_delta.length_squared() > 0.01:
+		_blood_spray_dir = shot_delta.normalized()
+	else:
+		_blood_spray_dir = Vector2.RIGHT
 	var ammo_id: int = int(state.last_shot_ammo_id)
 	var core_col: Color = _ammo_colors(ammo_id).get("bg", Color(0.95, 0.95, 0.9))
 	var outline_cols: Array[Color] = []
@@ -1513,13 +1520,20 @@ func _shot_projectile_step(t: float, ctx: Dictionary) -> void:
 			# 飙血改由 enemy_damaged 统一触发
 
 
-func _spawn_blood_burst(at_g: Vector2, amount: int) -> void:
-	## 掉血飙血：抛物线血滴（带实心轨迹拖尾）下落；落地留下血迹。伤害越高血滴越多。
+func _spawn_blood_burst(at_g: Vector2, amount: int, spray_dir: Vector2 = Vector2.ZERO) -> void:
+	## 掉血飙血：抛物线血滴（头粗尾细实心拖尾）下落；落地留血迹。
+	## 喷射沿子弹射入方向偏轴散开，角度不规则、速度有差别；伤害越高喷得越远。
 	if amount <= 0:
 		return
 	var t: float = clampf(float(amount) / 12.0, 0.0, 1.0)
 	var n: int = int(round(lerpf(float(BLOOD_BURST_MIN), float(BLOOD_BURST_MAX), t)))
 	var ground_y: float = _board_ground_global_y()
+	var base_dir: Vector2 = spray_dir
+	if base_dir.length_squared() < 0.01:
+		base_dir = _blood_spray_dir
+	if base_dir.length_squared() < 0.01:
+		base_dir = Vector2(1.0, -0.2)
+	base_dir = base_dir.normalized()
 	for _i in n:
 		var drop := ColorRect.new()
 		drop.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -1531,12 +1545,26 @@ func _spawn_blood_burst(at_g: Vector2, amount: int) -> void:
 		add_child(drop)
 		var start_p: Vector2 = at_g - drop.size * 0.5 + Vector2(randf_range(-6.0, 6.0), randf_range(-4.0, 2.0))
 		drop.global_position = start_p
-		# 初速：略向上+左右散开，再受重力下落
-		var vx: float = randf_range(-160.0, 160.0) * (0.85 + 0.35 * t)
-		var vy: float = randf_range(-320.0, -90.0) * (0.9 + 0.35 * t)
+		# 伤害越高基准速度越大（喷得更远）；单滴速度再拉开差别
+		var speed_base: float = lerpf(170.0, 560.0, t)
+		var speed: float = speed_base * randf_range(0.42, 1.38)
+		# 不规则偏角：多数落在射入轴附近，少数大幅散开（非均匀锥）
+		var spread_deg: float
+		var roll: float = randf()
+		if roll < 0.62:
+			spread_deg = randf_range(-38.0, 38.0) * randf_range(0.35, 1.0)
+		elif roll < 0.88:
+			spread_deg = randf_range(-78.0, 78.0)
+		else:
+			spread_deg = randf_range(-125.0, 125.0)
+		var dir: Vector2 = base_dir.rotated(deg_to_rad(spread_deg))
+		var vx: float = dir.x * speed
+		var vy: float = dir.y * speed
+		# 略抬升，保证抛物线观感（屏幕 Y 向下为正）
+		vy -= randf_range(55.0, 200.0) * (0.75 + 0.55 * t)
 		var land_y: float = ground_y - drop.size.y
 		var dur: float = _blood_flight_duration(start_p.y, vy, land_y)
-		# 拖尾粗细与血滴尺寸匹配，读成一整条血丝而非「点+细线」
+		# 拖尾头部粗细与血滴匹配；尾部在推轨迹时渐细
 		var trail_w: float = maxf((drop.size.x + drop.size.y) * 0.5, BLOOD_TRAIL_SEG_W_MIN)
 		var trail_nodes: Array = []
 		for _ti in BLOOD_TRAIL_HISTORY:
@@ -1643,7 +1671,7 @@ func _blood_drop_land(bctx: Dictionary) -> void:
 
 
 func _blood_trail_push(bctx: Dictionary, center_g: Vector2) -> void:
-	## 记录飞行轨迹点，用实心（alpha=1）线段连成拖尾；粗细与血滴尺寸一致。
+	## 记录飞行轨迹点，用实心（alpha=1）线段连成拖尾；近血滴端同粗，尾端逐渐变细。
 	var hist: Array = bctx.get("history", [])
 	hist.append(center_g)
 	while hist.size() > BLOOD_TRAIL_HISTORY:
@@ -1653,7 +1681,8 @@ func _blood_trail_push(bctx: Dictionary, center_g: Vector2) -> void:
 	var col: Color = bctx.get("color", Color(0.85, 0.1, 0.12, 1.0))
 	col.a = 1.0
 	var trail_w: float = maxf(float(bctx.get("trail_w", BLOOD_TRAIL_SEG_W_MIN)), BLOOD_TRAIL_SEG_W_MIN)
-	for i in range(maxi(hist.size() - 1, 0)):
+	var n_seg: int = maxi(hist.size() - 1, 0)
+	for i in range(n_seg):
 		if i >= nodes.size():
 			break
 		var seg: ColorRect = nodes[i] as ColorRect
@@ -1666,14 +1695,18 @@ func _blood_trail_push(bctx: Dictionary, center_g: Vector2) -> void:
 		if dist < 0.5:
 			seg.visible = false
 			continue
+		# i 小=更靠尾（细），靠近血滴的末段 i→n_seg-1 用满粗
+		var u_head: float = 1.0 if n_seg <= 1 else float(i + 1) / float(n_seg)
+		var seg_w: float = lerpf(trail_w * 0.12, trail_w, pow(u_head, 0.8))
+		seg_w = maxf(seg_w, 1.15)
 		seg.visible = true
 		seg.color = col
-		seg.size = Vector2(dist + 1.0, trail_w)
-		seg.pivot_offset = Vector2(0.0, trail_w * 0.5)
+		seg.size = Vector2(dist + 1.0, seg_w)
+		seg.pivot_offset = Vector2(0.0, seg_w * 0.5)
 		seg.rotation = delta.angle()
-		seg.global_position = a - Vector2(0.0, trail_w * 0.5).rotated(delta.angle())
+		seg.global_position = a - Vector2(0.0, seg_w * 0.5).rotated(delta.angle())
 	# 未用到的段隐藏
-	for j in range(maxi(hist.size() - 1, 0), nodes.size()):
+	for j in range(n_seg, nodes.size()):
 		var idle: ColorRect = nodes[j] as ColorRect
 		if idle != null and is_instance_valid(idle):
 			idle.visible = false
@@ -1975,7 +2008,14 @@ func _spawn_blood_at_cell(cell: int, amount: int) -> void:
 	var at_g: Vector2 = _cell_unit_global_center(cell)
 	if at_g == Vector2.ZERO:
 		return
-	_spawn_blood_burst(at_g, amount)
+	var dir: Vector2 = _blood_spray_dir
+	if dir.length_squared() < 0.01:
+		# 无近期枪线时：敌人格默认沿棋盘向右（子弹射入侧），玩家偏上
+		if cell == CombatConstants.PLAYER_CELL:
+			dir = Vector2(-0.2, -1.0)
+		else:
+			dir = Vector2(1.0, -0.2)
+	_spawn_blood_burst(at_g, amount, dir)
 
 
 func _on_gold_gained(cell: int, amount: int) -> void:
@@ -2026,7 +2066,7 @@ func _spawn_damage_float(cell: int, amount: int, kind: String = "") -> void:
 	if kind != "金币":
 		_shake_cell_for_damage(cell, amount)
 	lab.add_theme_color_override("font_outline_color", Color(0.12, 0.04, 0.02, 0.95))
-	lab.add_theme_constant_override("outline_size", 5)
+	lab.add_theme_constant_override("outline_size", maxi(6, int(round(float(font_sz) * 0.14))))
 	lab.modulate = Color(1, 1, 1, 1)
 	add_child(lab)
 	lab.reset_size()
@@ -2047,12 +2087,13 @@ func _spawn_damage_float(cell: int, amount: int, kind: String = "") -> void:
 
 
 func _float_font_size_for(amount: int, has_kind_label: bool) -> int:
-	## 飘字字号随数值放大；带状态名时略小一档以免换行撑爆。
+	## 飘字整体加大；数值越高整体尺寸越大（曲线更明显）；带状态名略收一档。
 	var a: float = float(maxi(amount, 1))
-	var t: float = clampf((a - 1.0) / 24.0, 0.0, 1.0)
+	# 用较陡曲线：小伤也明显变大，高伤更快顶到 MAX
+	var t: float = clampf(pow((a - 1.0) / 16.0, 0.72), 0.0, 1.0)
 	var base: int = int(round(lerpf(float(DMG_FLOAT_FONT_MIN), float(DMG_FLOAT_FONT_MAX), t)))
 	if has_kind_label:
-		base = maxi(DMG_FLOAT_FONT_MIN, base - 4)
+		base = maxi(DMG_FLOAT_FONT_MIN - 2, base - 6)
 	return base
 
 
