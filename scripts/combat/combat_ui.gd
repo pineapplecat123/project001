@@ -45,16 +45,13 @@ const DMG_FLOAT_FONT_MAX := 72
 const SHAKE_MIN_PX := 8.0
 const SHAKE_MAX_PX := 42.0
 const SHAKE_DURATION := 0.28
-## 射击轨迹：圆亮彗星头 + 轨迹点拖尾（同飙血：历史点连 ColorRect，头粗尾细）
-## 飞行仍直线玩家→目标；尾长按历史点/最大尾长裁切；飞行时长 ×2（速度约减半）
+## 射击轨迹：圆亮彗星头 + 宿主本地渐隐长尾（连续条，非历史点分段）
+## 尾长相对 v0.2.55（960）再 ×2；飞行时长 ×2（速度约减半）；开炮瞬间按已飞距离裁切
 const SHOT_TRAIL_LEN := 1920.0
 const SHOT_TRAIL_THICK := 5.8
 const SHOT_OUTLINE_PAD := 2.6
 const SHOT_GLOW_PAD := 7.0
-## 轨迹历史点数（段数=点数-1）；对齐旧彗星分段量级，保证长拖尾可读
-const SHOT_TRAIL_HISTORY := 32
-## 相邻采样点过远时插点，避免帧少时拖尾断成几段
-const SHOT_TRAIL_MAX_STEP := 48.0
+const SHOT_COMET_SEGS := 28
 const SHOT_HEAD_SIZE := 18.0
 const SHOT_HEAD_GLOW := 28.0
 const SHOT_TRAVEL_SEC := 0.14
@@ -1402,7 +1399,7 @@ func _animate_shot_projectile(
 	from_g: Vector2, to_g: Vector2, core_col: Color, outline_cols: Array[Color],
 	waypoints: Array, travel_sec: float
 ) -> void:
-	## 圆亮彗星头直线飞向目标；拖尾按飞行历史点连线段（头粗尾细），不再绑宿主本地固定彗星条。
+	## 圆亮彗星头 + 渐隐长尾，从玩家单位飞向目标；开炮瞬间裁切尾巴，不从屏幕左侧伸进来。
 	var delta: Vector2 = to_g - from_g
 	if delta.length_squared() < 0.01:
 		delta = Vector2.RIGHT
@@ -1413,28 +1410,45 @@ func _animate_shot_projectile(
 	host.global_position = from_g
 	host.rotation = delta.angle()
 	var n_out: int = outline_cols.size()
-	# 预分配拖尾段（glow + 描边 + 芯），复用血滴池，避免开火瞬时狂分配
-	var max_segs: int = maxi(SHOT_TRAIL_HISTORY - 1, 1)
-	var trail_glow: Array = []
-	var trail_core: Array = []
-	var trail_outlines: Array = []  # Array[Array] 每描边一层一段
-	for _oi in n_out:
-		trail_outlines.append([])
-	for _si in max_segs:
-		var glow := _blood_acquire_rect()
-		glow.z_index = Z_SHOT_VFX
-		glow.visible = false
-		trail_glow.append(glow)
+	var trail_parts: Array = []
+	var seg_w: float = SHOT_TRAIL_LEN / float(SHOT_COMET_SEGS)
+	# 尾→头：更实的渐隐尾（整体不透明度抬高）；段重叠 1px，读成连续光带
+	for si in SHOT_COMET_SEGS:
+		var u: float = float(si) / float(maxi(SHOT_COMET_SEGS - 1, 1))  # 0=最尾，1=近头
+		var alpha: float = lerpf(0.38, 0.95, pow(u, 1.15))
+		var thick: float = lerpf(SHOT_TRAIL_THICK * 0.35, SHOT_TRAIL_THICK, pow(u, 0.85))
+		var x0: float = -SHOT_TRAIL_LEN + float(si) * seg_w
+		var back_mid: float = -(x0 + seg_w * 0.5)  # 该段距彗星头的距离
+		# 隔段辉光：减半枪线节点，缓解击发瞬时卡顿（尾长不变）
+		if si % 2 == 0 or si >= SHOT_COMET_SEGS - 2:
+			var glow := ColorRect.new()
+			glow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			glow.visible = false
+			glow.color = Color(core_col.r, core_col.g, core_col.b, alpha * 0.55)
+			glow.position = Vector2(x0, -(thick * 0.5 + SHOT_GLOW_PAD * lerpf(0.35, 1.0, u)))
+			glow.size = Vector2(seg_w + 1.0, thick + SHOT_GLOW_PAD * lerpf(0.7, 1.8, u))
+			host.add_child(glow)
+			trail_parts.append({"node": glow, "back": back_mid})
 		for oi in n_out:
-			var edge := _blood_acquire_rect()
-			edge.z_index = Z_SHOT_VFX
+			var pad: float = float(n_out - oi) * SHOT_OUTLINE_PAD * lerpf(0.45, 1.0, u)
+			var oc: Color = outline_cols[oi]
+			var edge := ColorRect.new()
+			edge.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			edge.visible = false
-			trail_outlines[oi].append(edge)
-		var core := _blood_acquire_rect()
-		core.z_index = Z_SHOT_VFX
+			edge.color = Color(oc.r, oc.g, oc.b, alpha * 0.85)
+			edge.position = Vector2(x0, -(thick * 0.5 + pad))
+			edge.size = Vector2(seg_w + 1.0, thick + pad * 2.0)
+			host.add_child(edge)
+			trail_parts.append({"node": edge, "back": back_mid})
+		var core := ColorRect.new()
+		core.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		core.visible = false
-		trail_core.append(core)
-	# 圆亮彗星头（始终在飞行尖端）
+		core.color = Color(core_col.r, core_col.g, core_col.b, alpha)
+		core.position = Vector2(x0, -thick * 0.5)
+		core.size = Vector2(seg_w + 1.0, thick)
+		host.add_child(core)
+		trail_parts.append({"node": core, "back": back_mid})
+	# 圆亮彗星头（始终在玩家/飞行尖端）
 	var head_glow := _make_shot_orb(
 		SHOT_HEAD_GLOW,
 		Color(mini(core_col.r + 0.35, 1.0), mini(core_col.g + 0.35, 1.0), mini(core_col.b + 0.35, 1.0), 0.55)
@@ -1461,15 +1475,11 @@ func _animate_shot_projectile(
 		"to": to_g,
 		"waypoints": waypoints,
 		"fired": {},
-		"history": [],
-		"trail_glow": trail_glow,
-		"trail_core": trail_core,
-		"trail_outlines": trail_outlines,
-		"core_col": core_col,
-		"outline_cols": outline_cols,
+		"trail_parts": trail_parts,
 	}
 	_shot_projectile_step(0.0, ctx)
 	var tw := create_tween()
+	# 匀速：初速即满速（v0.2.69），拖尾仍绑宿主本地连续彗星条
 	tw.tween_method(_shot_projectile_step.bind(ctx), 0.0, 1.0, maxf(travel_sec, 0.05)).set_trans(Tween.TRANS_LINEAR)
 	await tw.finished
 	var fired: Dictionary = ctx.get("fired", {})
@@ -1484,135 +1494,23 @@ func _animate_shot_projectile(
 		else:
 			amt2 = int(wp2.get("amount", 0))
 		# 飙血改由 enemy_damaged 统一触发（含非子弹掉血）
-	_shot_trail_release(ctx)
 	if is_instance_valid(host):
 		host.queue_free()
 
 
-func _shot_trail_release(ctx: Dictionary) -> void:
-	## 回收枪线拖尾 ColorRect 进血滴池。
-	for node in ctx.get("trail_glow", []):
-		_blood_release_rect(node as ColorRect)
-	for node in ctx.get("trail_core", []):
-		_blood_release_rect(node as ColorRect)
-	for layer in ctx.get("trail_outlines", []):
-		for node in layer:
-			_blood_release_rect(node as ColorRect)
-	ctx["trail_glow"] = []
-	ctx["trail_core"] = []
-	ctx["trail_outlines"] = []
-	ctx["history"] = []
+func _make_shot_orb(diameter: float, col: Color) -> Panel:
+	## 圆形彗星头/辉光（StyleBox 圆角=半径）。
+	var p := Panel.new()
+	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	p.size = Vector2(diameter, diameter)
+	p.position = Vector2(-diameter * 0.5, -diameter * 0.5)
+	var st := StyleBoxFlat.new()
+	st.bg_color = col
+	st.set_corner_radius_all(int(ceilf(diameter * 0.5)))
+	st.set_border_width_all(0)
+	p.add_theme_stylebox_override("panel", st)
+	return p
 
-
-func _shot_trail_push(ctx: Dictionary, tip_g: Vector2) -> void:
-	## 记录飞行轨迹点并用 ColorRect 连段；近头粗、远头细；芯色=弹药、描边=枪口罪孽。
-	var hist: Array = ctx.get("history", [])
-	if hist.is_empty():
-		hist.append(tip_g)
-		ctx["history"] = hist
-		_shot_trail_redraw(ctx)
-		return
-	var prev: Vector2 = hist[hist.size() - 1]
-	var gap: Vector2 = tip_g - prev
-	var dist: float = gap.length()
-	if dist < 1.2:
-		return
-	var steps: int = maxi(1, int(ceil(dist / SHOT_TRAIL_MAX_STEP)))
-	for s in range(1, steps + 1):
-		var p: Vector2 = prev.lerp(tip_g, float(s) / float(steps))
-		hist.append(p)
-		while hist.size() > SHOT_TRAIL_HISTORY:
-			hist.pop_front()
-		while hist.size() > 2 and hist[0].distance_to(hist[hist.size() - 1]) > SHOT_TRAIL_LEN:
-			hist.pop_front()
-	ctx["history"] = hist
-	_shot_trail_redraw(ctx)
-
-
-func _shot_trail_redraw(ctx: Dictionary) -> void:
-	## 把 history 画成头粗尾细线段（世界坐标），逻辑对齐 _blood_trail_push。
-	var hist: Array = ctx.get("history", [])
-	var glow_nodes: Array = ctx.get("trail_glow", [])
-	var core_nodes: Array = ctx.get("trail_core", [])
-	var outline_layers: Array = ctx.get("trail_outlines", [])
-	var core_col: Color = ctx.get("core_col", Color(0.95, 0.95, 0.9))
-	var outline_cols: Array = ctx.get("outline_cols", [])
-	var n_seg: int = maxi(hist.size() - 1, 0)
-	var n_out: int = outline_cols.size()
-	for i in range(n_seg):
-		if i >= core_nodes.size():
-			break
-		var a: Vector2 = hist[i]
-		var b: Vector2 = hist[i + 1]
-		var delta: Vector2 = b - a
-		var dist: float = delta.length()
-		if dist < 0.5:
-			_shot_trail_hide_seg(glow_nodes, core_nodes, outline_layers, i)
-			continue
-		var u_head: float = 1.0 if n_seg <= 1 else float(i + 1) / float(n_seg)
-		var alpha: float = lerpf(0.38, 0.95, pow(u_head, 1.15))
-		var thick: float = lerpf(SHOT_TRAIL_THICK * 0.35, SHOT_TRAIL_THICK, pow(u_head, 0.85))
-		thick = maxf(thick, 1.15)
-		var ang: float = delta.angle()
-		# 隔段辉光：减半节点负载
-		var glow: ColorRect = null
-		if i < glow_nodes.size():
-			glow = glow_nodes[i] as ColorRect
-		if glow != null and is_instance_valid(glow):
-			if i % 2 == 0 or i >= n_seg - 2:
-				var gw: float = thick + SHOT_GLOW_PAD * lerpf(0.7, 1.8, u_head)
-				glow.visible = true
-				glow.color = Color(core_col.r, core_col.g, core_col.b, alpha * 0.55)
-				glow.size = Vector2(dist + 1.0, gw)
-				glow.pivot_offset = Vector2(0.0, gw * 0.5)
-				glow.rotation = ang
-				glow.global_position = a - Vector2(0.0, gw * 0.5).rotated(ang)
-			else:
-				glow.visible = false
-		for oi in n_out:
-			if oi >= outline_layers.size():
-				break
-			var layer: Array = outline_layers[oi]
-			if i >= layer.size():
-				continue
-			var edge: ColorRect = layer[i] as ColorRect
-			if edge == null or not is_instance_valid(edge):
-				continue
-			var oc: Color = outline_cols[oi]
-			var pad: float = float(n_out - oi) * SHOT_OUTLINE_PAD * lerpf(0.45, 1.0, u_head)
-			var ew: float = thick + pad * 2.0
-			edge.visible = true
-			edge.color = Color(oc.r, oc.g, oc.b, alpha * 0.85)
-			edge.size = Vector2(dist + 1.0, ew)
-			edge.pivot_offset = Vector2(0.0, ew * 0.5)
-			edge.rotation = ang
-			edge.global_position = a - Vector2(0.0, ew * 0.5).rotated(ang)
-		var core: ColorRect = core_nodes[i] as ColorRect
-		if core != null and is_instance_valid(core):
-			core.visible = true
-			core.color = Color(core_col.r, core_col.g, core_col.b, alpha)
-			core.size = Vector2(dist + 1.0, thick)
-			core.pivot_offset = Vector2(0.0, thick * 0.5)
-			core.rotation = ang
-			core.global_position = a - Vector2(0.0, thick * 0.5).rotated(ang)
-	for j in range(n_seg, core_nodes.size()):
-		_shot_trail_hide_seg(glow_nodes, core_nodes, outline_layers, j)
-
-
-func _shot_trail_hide_seg(glow_nodes: Array, core_nodes: Array, outline_layers: Array, i: int) -> void:
-	if i < glow_nodes.size():
-		var g: ColorRect = glow_nodes[i] as ColorRect
-		if g != null and is_instance_valid(g):
-			g.visible = false
-	if i < core_nodes.size():
-		var c: ColorRect = core_nodes[i] as ColorRect
-		if c != null and is_instance_valid(c):
-			c.visible = false
-	for layer in outline_layers:
-		if i < layer.size():
-			var e: ColorRect = layer[i] as ColorRect
-			if e != null and is_instance_valid(e):
-				e.visible = false
 
 
 func _shot_projectile_step(t: float, ctx: Dictionary) -> void:
@@ -1622,7 +1520,14 @@ func _shot_projectile_step(t: float, ctx: Dictionary) -> void:
 	var from_g: Vector2 = ctx.get("from", Vector2.ZERO)
 	var to_g: Vector2 = ctx.get("to", Vector2.ZERO)
 	host.global_position = from_g.lerp(to_g, t)
-	_shot_trail_push(ctx, host.global_position)
+	# 只显示「已经飞过」的拖尾：未飞出的尾巴不画，避免从屏幕左侧穿过玩家
+	var traveled: float = from_g.distance_to(host.global_position)
+	for item in ctx.get("trail_parts", []):
+		var node: CanvasItem = item.get("node") as CanvasItem
+		if node == null or not is_instance_valid(node):
+			continue
+		var back: float = float(item.get("back", 0.0))
+		node.visible = back <= traveled + 6.0
 	var waypoints: Array = ctx.get("waypoints", [])
 	var fired: Dictionary = ctx.get("fired", {})
 	var path_len: float = maxf(from_g.distance_to(to_g), 1.0)
@@ -1643,19 +1548,6 @@ func _shot_projectile_step(t: float, ctx: Dictionary) -> void:
 				amt = int(wp.get("amount", 0))
 			# 飙血改由 enemy_damaged 统一触发
 
-
-func _make_shot_orb(diameter: float, col: Color) -> Panel:
-	## 圆形彗星头/辉光（StyleBox 圆角=半径）。
-	var p := Panel.new()
-	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	p.size = Vector2(diameter, diameter)
-	p.position = Vector2(-diameter * 0.5, -diameter * 0.5)
-	var st := StyleBoxFlat.new()
-	st.bg_color = col
-	st.set_corner_radius_all(int(ceilf(diameter * 0.5)))
-	st.set_border_width_all(0)
-	p.add_theme_stylebox_override("panel", st)
-	return p
 
 
 func _blood_acquire_rect() -> ColorRect:
