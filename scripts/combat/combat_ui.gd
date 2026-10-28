@@ -58,10 +58,11 @@ const SHOT_TRAVEL_SEC := 0.14
 const SHOT_TRAVEL_SEC_PER_CELL := 0.032
 const BLOOD_BURST_MIN := 8
 const BLOOD_BURST_MAX := 40
-const BLOOD_GRAVITY := 980.0
+const BLOOD_GRAVITY := 1350.0
 const BLOOD_STAIN_FADE_SEC := 2.4
 const BLOOD_TRAIL_HISTORY := 8
-const BLOOD_TRAIL_SEG_W := 3.2
+## 拖尾粗细下限；实际按血滴尺寸匹配（见 bctx trail_w）
+const BLOOD_TRAIL_SEG_W_MIN := 4.0
 ## 战斗 VFX（飙血/枪线）低于遮罩与奖励/商店等模态，避免盖住选奖
 const Z_BLOOD_STAIN := 12
 const Z_BLOOD_TRAIL := 40
@@ -76,6 +77,8 @@ const REWARD_SHOW_DELAY_SEC := 1.0
 const WAVE_BANNER_FADE_IN := 0.28
 const WAVE_BANNER_HOLD := 0.70
 const WAVE_BANNER_FADE_OUT := 0.40
+const WAVE_BANNER_FONT_SIZE := 128
+const Z_WAVE_BANNER_DIMMER := 99
 
 const COL_PHASE := Color(1.0, 0.92, 0.45)
 const COL_HP_OK := Color(0.45, 0.95, 0.55)
@@ -143,6 +146,7 @@ var _reward_open: bool = false
 var _reward_delaying: bool = false
 var _reward_delay_token: int = 0
 var _wave_banner_label: Label = null
+var _wave_banner_dimmer: ColorRect = null
 var _wave_bannering: bool = false
 var _ammo_detail_panel: PanelContainer = null
 var _ammo_detail_body: RichTextLabel = null
@@ -1532,6 +1536,8 @@ func _spawn_blood_burst(at_g: Vector2, amount: int) -> void:
 		var vy: float = randf_range(-320.0, -90.0) * (0.9 + 0.35 * t)
 		var land_y: float = ground_y - drop.size.y
 		var dur: float = _blood_flight_duration(start_p.y, vy, land_y)
+		# 拖尾粗细与血滴尺寸匹配，读成一整条血丝而非「点+细线」
+		var trail_w: float = maxf((drop.size.x + drop.size.y) * 0.5, BLOOD_TRAIL_SEG_W_MIN)
 		var trail_nodes: Array = []
 		for _ti in BLOOD_TRAIL_HISTORY:
 			var seg := ColorRect.new()
@@ -1551,6 +1557,7 @@ func _spawn_blood_burst(at_g: Vector2, amount: int) -> void:
 			"amount_t": t,
 			"history": [],
 			"trail_nodes": trail_nodes,
+			"trail_w": trail_w,
 			"color": col,
 		}
 		var tw := create_tween()
@@ -1636,7 +1643,7 @@ func _blood_drop_land(bctx: Dictionary) -> void:
 
 
 func _blood_trail_push(bctx: Dictionary, center_g: Vector2) -> void:
-	## 记录飞行轨迹点，用实心（alpha=1）线段连成拖尾。
+	## 记录飞行轨迹点，用实心（alpha=1）线段连成拖尾；粗细与血滴尺寸一致。
 	var hist: Array = bctx.get("history", [])
 	hist.append(center_g)
 	while hist.size() > BLOOD_TRAIL_HISTORY:
@@ -1645,6 +1652,7 @@ func _blood_trail_push(bctx: Dictionary, center_g: Vector2) -> void:
 	var nodes: Array = bctx.get("trail_nodes", [])
 	var col: Color = bctx.get("color", Color(0.85, 0.1, 0.12, 1.0))
 	col.a = 1.0
+	var trail_w: float = maxf(float(bctx.get("trail_w", BLOOD_TRAIL_SEG_W_MIN)), BLOOD_TRAIL_SEG_W_MIN)
 	for i in range(maxi(hist.size() - 1, 0)):
 		if i >= nodes.size():
 			break
@@ -1660,10 +1668,10 @@ func _blood_trail_push(bctx: Dictionary, center_g: Vector2) -> void:
 			continue
 		seg.visible = true
 		seg.color = col
-		seg.size = Vector2(dist + 1.0, BLOOD_TRAIL_SEG_W)
-		seg.pivot_offset = Vector2(0.0, BLOOD_TRAIL_SEG_W * 0.5)
+		seg.size = Vector2(dist + 1.0, trail_w)
+		seg.pivot_offset = Vector2(0.0, trail_w * 0.5)
 		seg.rotation = delta.angle()
-		seg.global_position = a - Vector2(0.0, BLOOD_TRAIL_SEG_W * 0.5)
+		seg.global_position = a - Vector2(0.0, trail_w * 0.5).rotated(delta.angle())
 	# 未用到的段隐藏
 	for j in range(maxi(hist.size() - 1, 0), nodes.size()):
 		var idle: ColorRect = nodes[j] as ColorRect
@@ -3068,40 +3076,73 @@ func _start_reward_show_delay() -> void:
 
 
 func _ensure_wave_banner() -> void:
-	if _wave_banner_label != null and is_instance_valid(_wave_banner_label):
+	if (
+		_wave_banner_label != null and is_instance_valid(_wave_banner_label)
+		and _wave_banner_dimmer != null and is_instance_valid(_wave_banner_dimmer)
+	):
 		return
-	var lab := Label.new()
-	lab.name = "WaveBanner"
-	lab.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	lab.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	lab.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	lab.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	lab.add_theme_font_size_override("font_size", 84)
-	lab.add_theme_color_override("font_color", Color(1.0, 0.94, 0.62, 1.0))
-	lab.add_theme_color_override("font_outline_color", Color(0.05, 0.05, 0.08, 0.92))
-	lab.add_theme_constant_override("outline_size", 10)
-	lab.z_index = Z_WAVE_BANNER
-	lab.visible = false
-	lab.modulate = Color(1, 1, 1, 0)
-	add_child(lab)
-	_wave_banner_label = lab
+	if _wave_banner_dimmer == null or not is_instance_valid(_wave_banner_dimmer):
+		var dim := ColorRect.new()
+		dim.name = "WaveBannerDimmer"
+		dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		dim.color = Color(0.02, 0.02, 0.05, 0.62)
+		dim.z_index = Z_WAVE_BANNER_DIMMER
+		dim.visible = false
+		dim.modulate = Color(1, 1, 1, 0)
+		add_child(dim)
+		_wave_banner_dimmer = dim
+	if _wave_banner_label == null or not is_instance_valid(_wave_banner_label):
+		var lab := Label.new()
+		lab.name = "WaveBanner"
+		lab.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		lab.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		lab.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		lab.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		lab.add_theme_font_size_override("font_size", WAVE_BANNER_FONT_SIZE)
+		lab.add_theme_color_override("font_color", Color(1.0, 0.94, 0.62, 1.0))
+		lab.add_theme_color_override("font_outline_color", Color(0.05, 0.05, 0.08, 0.92))
+		lab.add_theme_constant_override("outline_size", 14)
+		lab.z_index = Z_WAVE_BANNER
+		lab.visible = false
+		lab.modulate = Color(1, 1, 1, 0)
+		add_child(lab)
+		_wave_banner_label = lab
+	else:
+		_wave_banner_label.add_theme_font_size_override("font_size", WAVE_BANNER_FONT_SIZE)
+		_wave_banner_label.add_theme_constant_override("outline_size", 14)
 
 
 func _play_wave_banner(wave_n: int) -> void:
-	## 无限模式：每波开战前大字居中「第N波」渐显→停→渐隐。
+	## 无限模式：每波开战前大字居中「第N波」+ 背景遮罩，渐显→停→渐隐。
 	_ensure_wave_banner()
 	_wave_bannering = true
 	_wave_banner_label.text = "第%d波" % wave_n
 	_wave_banner_label.visible = true
 	_wave_banner_label.modulate = Color(1, 1, 1, 0)
+	if _wave_banner_dimmer != null and is_instance_valid(_wave_banner_dimmer):
+		_wave_banner_dimmer.visible = true
+		_wave_banner_dimmer.modulate = Color(1, 1, 1, 0)
 	_refresh_hud_only()
-	var tw := create_tween()
-	tw.tween_property(_wave_banner_label, "modulate:a", 1.0, WAVE_BANNER_FADE_IN).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
-	tw.tween_interval(WAVE_BANNER_HOLD)
-	tw.tween_property(_wave_banner_label, "modulate:a", 0.0, WAVE_BANNER_FADE_OUT).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
-	await tw.finished
+	var tw_in := create_tween()
+	tw_in.set_parallel(true)
+	tw_in.tween_property(_wave_banner_label, "modulate:a", 1.0, WAVE_BANNER_FADE_IN).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	if _wave_banner_dimmer != null and is_instance_valid(_wave_banner_dimmer):
+		tw_in.tween_property(_wave_banner_dimmer, "modulate:a", 1.0, WAVE_BANNER_FADE_IN).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	await tw_in.finished
+	var tw_hold := create_tween()
+	tw_hold.tween_interval(WAVE_BANNER_HOLD)
+	await tw_hold.finished
+	var tw_out := create_tween()
+	tw_out.set_parallel(true)
+	tw_out.tween_property(_wave_banner_label, "modulate:a", 0.0, WAVE_BANNER_FADE_OUT).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
+	if _wave_banner_dimmer != null and is_instance_valid(_wave_banner_dimmer):
+		tw_out.tween_property(_wave_banner_dimmer, "modulate:a", 0.0, WAVE_BANNER_FADE_OUT).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
+	await tw_out.finished
 	if is_instance_valid(_wave_banner_label):
 		_wave_banner_label.visible = false
+	if _wave_banner_dimmer != null and is_instance_valid(_wave_banner_dimmer):
+		_wave_banner_dimmer.visible = false
 	_wave_bannering = false
 	_refresh()
 
