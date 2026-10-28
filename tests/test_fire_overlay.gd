@@ -69,3 +69,19 @@ func test_blood_shot_dir_and_caps() -> void:
 	assert_true(text.contains("const BLOOD_ACTIVE_MAX := 96"), "active cap raised carefully")
 	# 默认不应再把无来源扣血硬编成向右喷
 	assert_false(text.contains("dir = Vector2(1.0, -0.2)"), "no false rightward default spray")
+
+
+func test_shot_head_keeps_ammo_hue_not_black_or_whitewash() -> void:
+	## 空枪口打愤怒：芯须可读红（lightened，非暗芯）；避免纯白高光洗傲慢；描边仍吃开火前枪口。
+	var f := FileAccess.open("res://scripts/combat/combat_ui.gd", FileAccess.READ)
+	assert_not_null(f)
+	var text := f.get_as_text()
+	assert_true(text.contains("func _shot_head_display_color"), "must have hue-preserving head color helper")
+	assert_true(text.contains("core.lightened(lighten_amount)"), "head uses Color.lightened")
+	assert_true(text.contains("_shot_head_display_color(core_col, 0.38, 1.0)"), "core lightened enough to read dark ammo")
+	assert_false(text.contains("core_col.r * 1.08 + 0.06"), "must not keep v0.2.72 weak boost that blacks wrath")
+	assert_false(
+		text.contains("Color(1.0, 1.0, 1.0, 0.95)"),
+		"must not restore pure-white head_hot wash"
+	)
+	assert_true(text.contains("last_shot_muzzle_outline_ids"), "outline still from prefire muzzle ids")

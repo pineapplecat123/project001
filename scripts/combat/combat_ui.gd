@@ -1434,9 +1434,10 @@ func _animate_shot_projectile(
 		host.add_child(line)
 		line.visible = false
 	# 圆亮彗星头（始终在飞行尖端）
+	# 提亮用 Color.lightened：暗弹药（愤怒）够亮可读红，傲慢等仍保色相，不用纯白盖芯
 	var head_glow := _make_shot_orb(
 		SHOT_HEAD_GLOW,
-		Color(mini(core_col.r + 0.35, 1.0), mini(core_col.g + 0.35, 1.0), mini(core_col.b + 0.35, 1.0), 0.55)
+		_shot_head_display_color(core_col, 0.42, 0.55)
 	)
 	host.add_child(head_glow)
 	for oi in n_out:
@@ -1444,26 +1445,14 @@ func _animate_shot_projectile(
 		var ring_sz: float = SHOT_HEAD_SIZE + float(n_out - oi) * SHOT_OUTLINE_PAD * 2.2
 		var ring := _make_shot_orb(ring_sz, Color(oc2.r, oc2.g, oc2.b, 0.95))
 		host.add_child(ring)
-	# 芯色主体保留弹药色；仅少量提亮，避免傲慢紫等被洗成死白
 	var head_core := _make_shot_orb(
 		SHOT_HEAD_SIZE,
-		Color(
-			mini(core_col.r * 1.08 + 0.06, 1.0),
-			mini(core_col.g * 1.08 + 0.06, 1.0),
-			mini(core_col.b * 1.08 + 0.06, 1.0),
-			1.0
-		)
+		_shot_head_display_color(core_col, 0.38, 1.0)
 	)
 	host.add_child(head_core)
-	# 中心高光：小、半透明、带芯色，不再用纯白盖死弹药色
 	var head_hot := _make_shot_orb(
-		SHOT_HEAD_SIZE * 0.28,
-		Color(
-			mini(core_col.r + 0.22, 1.0),
-			mini(core_col.g + 0.22, 1.0),
-			mini(core_col.b + 0.22, 1.0),
-			0.50
-		)
+		SHOT_HEAD_SIZE * 0.36,
+		_shot_head_display_color(core_col, 0.55, 0.72)
 	)
 	host.add_child(head_hot)
 	var ctx := {
@@ -1518,6 +1507,13 @@ func _make_shot_trail_line(
 	line.gradient = grad
 	line.points = PackedVector2Array([Vector2.ZERO, Vector2(-1.0, 0.0)])
 	return line
+
+
+func _shot_head_display_color(core: Color, lighten_amount: float, alpha: float) -> Color:
+	## 彗星头显示色：向白 lightened，保留弹药色相（愤怒可读红、傲慢可读紫；避免纯白盖芯）。
+	var c: Color = core.lightened(lighten_amount)
+	c.a = alpha
+	return c
 
 
 func _make_shot_orb(diameter: float, col: Color) -> Panel:
