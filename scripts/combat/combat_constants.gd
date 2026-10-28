@@ -57,3 +57,6 @@ const LOAD_SESSION_INITIAL_START := 1
 
 ## 无限模式刷怪
 const ENDLESS_MAX_ZOMBIES_PER_WAVE := 8
+
+## 金色/超级回合额外装填射击：单次玩家开火链最多追加轮数（防全匣超级回合软锁）
+const MAX_EXTRA_AUTOFIREs_PER_CHAIN := 10

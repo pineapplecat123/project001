@@ -1,5 +1,5 @@
 extends GutTest
-## 超级回合子弹：射击后额外装填+自动射击；奖励池；额外轮不叠软锁。
+## 超级回合子弹：射击后额外装填+自动射击；奖励池；额外轮可嵌套（有硬上限防软锁）。
 
 
 func before_each() -> void:
@@ -81,20 +81,20 @@ func test_two_super_rounds_grant_two_extra_cycles() -> void:
 		Magazine.EMPTY,
 	] as Array[int])
 	assert_true(cs.do_fire())
-	assert_true(_log_has(cs, "追加 2 轮"))
+	assert_true(_log_has(cs, "待追加 2 轮") or _log_has(cs, "追加 2 轮"))
 	assert_eq(cs.pending_gold_autofires(), 0)
 
 
-func test_extra_round_super_round_does_not_stack() -> void:
-	## 额外轮内再打出超级回合不得继续叠加（与金色一致，防软锁）。
+func test_extra_round_super_round_nests_with_cap() -> void:
+	## 额外轮内再打出超级回合应继续入队；全匣超级时靠硬上限收束，pending 最终为 0。
 	var cs := CombatState.new(2123)
 	cs.start_graybox(2123)
-	cs.enemies[0].hp = 999
-	cs.enemies[0].max_hp = 999
+	cs.enemies[0].hp = 9999
+	cs.enemies[0].max_hp = 9999
 	cs.bag.clear()
 	cs.bag_temp.clear()
-	# 袋里全是超级回合：额外轮会装满超级回合，但不应再叠 pending
-	for _i in 12:
+	# 袋里足够多超级回合：额外轮会再打出超级并嵌套
+	for _i in 30:
 		cs.bag.append(FireResolver.ID_SUPER_ROUND)
 		cs.bag_temp.append(false)
 	cs.dev_force_load([
@@ -102,13 +102,32 @@ func test_extra_round_super_round_does_not_stack() -> void:
 		Magazine.EMPTY, Magazine.EMPTY, Magazine.EMPTY, Magazine.EMPTY, Magazine.EMPTY,
 	] as Array[int])
 	assert_true(cs.do_fire())
-	# 主匣 1 发 → pending 1 → 额外轮打完后 pending 必须清零，且日志只有一轮追加
 	assert_eq(cs.pending_gold_autofires(), 0)
-	var append_logs := 0
+	var finished := 0
 	for line in cs.last_log:
-		if "追加" in str(line) and "轮" in str(line):
-			append_logs += 1
-	assert_eq(append_logs, 1, "only one extra-cycle batch from the main magazine")
+		if "额外装填回合射击完毕" in str(line):
+			finished += 1
+	assert_gt(finished, 1, "nested extras from id=21 in bonus round should run, got %d" % finished)
+	assert_lte(finished, CombatConstants.MAX_EXTRA_AUTOFIREs_PER_CHAIN)
+	# 硬上限：授予达顶时应有日志（袋极多超级时几乎必触发）
+	var hit_cap := _log_has(cs, "已达上限")
+	assert_true(hit_cap or finished >= 2, "cap log or at least nested extras")
+
+
+func test_super_round_extra_chain_hard_cap() -> void:
+	## 直接压测入队：同链授予不超过 MAX_EXTRA_AUTOFIREs_PER_CHAIN。
+	var cs := CombatState.new(2126)
+	cs.start_graybox(2126)
+	cs.enemies[0].hp = 999
+	cs.enemies[0].max_hp = 999
+	cs._extra_autofires_granted_this_chain = 0
+	cs._in_gold_extra_round = true  # 模拟已在额外轮
+	var cap: int = CombatConstants.MAX_EXTRA_AUTOFIREs_PER_CHAIN
+	for _i in cap + 5:
+		cs._queue_extra_autofire_from_shot(FireResolver.ID_SUPER_ROUND)
+	assert_eq(cs.pending_gold_autofires(), cap)
+	assert_eq(cs._extra_autofires_granted_this_chain, cap)
+	assert_true(_log_has(cs, "已达上限"))
 
 
 func test_super_round_in_reward_choices_pool() -> void:

@@ -94,6 +94,8 @@ var bag_reset_count: int = 0
 ## 本波构筑基线（非 ephemeral、非临时额外罪孽）；战斗内袋重置按此恢复，保留墓碑等永久弹。
 var _combat_bag_baseline: Array[int] = []
 var _pending_gold_autofires: int = 0
+## 本玩家开火链已累计授予的额外轮数（含主匣与嵌套）；达上限后不再叠加。
+var _extra_autofires_granted_this_chain: int = 0
 ## UI 逐步表现：为 true 时整匣结束后不立刻跑金色额外轮/怪回合，由 UI 消费。
 var pace_after_fire: bool = false
 var _post_fire_enemy_pending: bool = false
@@ -158,6 +160,7 @@ func start_graybox(seed_value: int = 0, endless: bool = false, sin_ammo_id: int 
 	_reset_fire_session()
 	_reset_muzzle()
 	_pending_gold_autofires = 0
+	_extra_autofires_granted_this_chain = 0
 	_post_fire_enemy_pending = false
 	_in_gold_extra_round = false
 	_reset_load_session()
@@ -223,6 +226,7 @@ func start_from_run(payload: Dictionary, seed_value: int = 0) -> void:
 	_reset_muzzle()
 	_clear_all_sin_muzzle(true)
 	_pending_gold_autofires = 0
+	_extra_autofires_granted_this_chain = 0
 	_reset_load_session()
 	_clear_reward_state()
 	wave_took_damage = false
@@ -1191,6 +1195,9 @@ func begin_fire() -> bool:
 	if not can_fire():
 		return false
 	commit_load_session_if_active()
+	# 玩家主动开火开启新链；额外轮内的 begin_fire 保留累计授予数
+	if not _in_gold_extra_round:
+		_extra_autofires_granted_this_chain = 0
 	_reset_fire_session()
 	_fire_queue = magazine.fire_order()
 	_fire_damages = FireResolver.compute_shot_damages(_fire_queue, pink_bonus)
@@ -1334,7 +1341,7 @@ func fire_next_shot() -> bool:
 	_fire_total_damage += dealt_total
 	_remove_dead()
 
-	# 金色/超级回合：本匣击发计入待追加轮；整匣后再额外自动装填射击。额外轮内不再叠加。
+	# 金色/超级回合：本匣击发计入待追加轮；整匣后再额外自动装填射击。超级回合额外轮内可再叠（有上限）。
 	_queue_extra_autofire_from_shot(ammo_id)
 
 	_emit()
@@ -1706,14 +1713,24 @@ func _abort_fire_cleared() -> void:
 
 
 func _queue_extra_autofire_from_shot(ammo_id: int) -> void:
-	## 金色（旧）/超级回合子弹：本匣击发计入待追加额外装填射击轮；额外轮内不再叠加，避免软锁。
-	if _in_gold_extra_round:
-		return
+	## 金色（旧）/超级回合子弹：击发计入待追加额外装填射击轮。
+	## 超级回合在额外轮内仍可叠加；金色额外轮内不叠。全链有硬上限防软锁。
+	var cap: int = CombatConstants.MAX_EXTRA_AUTOFIREs_PER_CHAIN
 	if ammo_id == FireResolver.ID_GOLD:
+		if _in_gold_extra_round:
+			return
+		if _extra_autofires_granted_this_chain >= cap:
+			_log("金色弹药：额外轮已达上限（%d），本发不再追加。" % cap)
+			return
 		_pending_gold_autofires += 1
+		_extra_autofires_granted_this_chain += 1
 		_log("金色弹药：本匣已击发金 ×%d（整匣后再额外轮）。" % _pending_gold_autofires)
 	elif ammo_id == FireResolver.ID_SUPER_ROUND:
+		if _extra_autofires_granted_this_chain >= cap:
+			_log("超级回合子弹：额外轮已达上限（%d），本发不再追加。" % cap)
+			return
 		_pending_gold_autofires += 1
+		_extra_autofires_granted_this_chain += 1
 		_log("超级回合子弹：射击后获得额外装填回合（待追加 ×%d）。" % _pending_gold_autofires)
 
 
@@ -1770,23 +1787,34 @@ func resolve_post_fire_enemy_turn() -> void:
 
 
 func _run_pending_gold_autofires(reason: String) -> void:
-	## 按本匣已击发金数追加额外自动装填射击轮；额外轮内金不叠轮。
+	## 消耗待追加队列：每轮自动装填射击；超级回合在额外轮内可再入队，直到队列空或达安全上限。
 	if _pending_gold_autofires <= 0:
 		return
-	var n: int = _pending_gold_autofires
-	_log("额外装填回合：%s，追加 %d 轮额外自动装填射击。" % [reason, n])
-	for i in n:
+	var initial: int = _pending_gold_autofires
+	_log("额外装填回合：%s，开始处理待追加 %d 轮（可嵌套，上限 %d）。" % [
+		reason, initial, CombatConstants.MAX_EXTRA_AUTOFIREs_PER_CHAIN
+	])
+	var ran := 0
+	var safety: int = CombatConstants.MAX_EXTRA_AUTOFIREs_PER_CHAIN
+	while _pending_gold_autofires > 0 and ran < safety:
 		if alive_enemies().is_empty():
-			_log("额外装填回合：战场已清空，剩余 %d 轮跳过。" % (n - i))
+			_log("额外装填回合：战场已清空，剩余 %d 轮跳过。" % _pending_gold_autofires)
+			_pending_gold_autofires = 0
 			break
+		_pending_gold_autofires -= 1
+		_in_gold_extra_round = true
 		_auto_load_and_fire_once()
+		_in_gold_extra_round = false
 		_remove_dead()
-	_pending_gold_autofires = 0
+		ran += 1
+	if _pending_gold_autofires > 0:
+		_log("额外装填回合：达安全上限，剩余 %d 轮跳过。" % _pending_gold_autofires)
+		_pending_gold_autofires = 0
 
 
 func _auto_load_and_fire_once() -> bool:
-	## 金色额外轮：从袋抽满匣并立刻同步打完（无 UI 延迟）。枪口跨轮保留。
-	## 额外轮内的金色不再叠加新轮。中途清场则停并归还未击发。
+	## 金色/超级回合额外轮：从袋抽满匣并立刻同步打完（无 UI 延迟）。枪口跨轮保留。
+	## 超级回合可再入队；金色额外轮内不叠。中途清场则停并归还未击发。
 	## 暂存调用方匣状态，避免 load_sequence 冲掉尚未恢复的主匣弹药。
 	_reshuffle_if_needed_for_load()
 	var draw_n: int = mini(CombatConstants.MAGAZINE_SIZE, bag.size())
@@ -1849,6 +1877,7 @@ func _auto_load_and_fire_once() -> bool:
 			_apply_tombstone_on_fire()
 		else:
 			_fire_index += 1
+		_queue_extra_autofire_from_shot(ammo_id)
 		_remove_dead()
 	# 额外轮未打完的弹归袋（中途清场时）
 	if not magazine.is_empty():
@@ -2144,6 +2173,7 @@ func _end_wave_keep_build_ammo() -> void:
 	last_load_ids.clear()
 	_reset_fire_session()
 	_pending_gold_autofires = 0
+	_extra_autofires_granted_this_chain = 0
 	_reset_load_session()
 	_snapshot_combat_bag_baseline()
 	_log("无限模式：本波结束，保留构筑（%d 发）；临时召唤物与额外罪孽已清。" % bag.size())
@@ -2162,6 +2192,7 @@ func _reset_practice_ammo_to_starter() -> void:
 	_reset_muzzle()
 	_clear_all_sin_muzzle(true)
 	_pending_gold_autofires = 0
+	_extra_autofires_granted_this_chain = 0
 	_reset_load_session()
 	_log("练习战：弹药已重置（平庸 ×%d + %s ×%d；额外罪孽已清）。" % [
 		CombatConstants.STARTER_WHITE_COUNT, _ammo_name(selected_sin_ammo_id), CombatConstants.STARTER_SIN_COUNT
@@ -2293,6 +2324,7 @@ func start_next_wave() -> bool:
 	_reset_muzzle()
 	_clear_all_sin_muzzle(true)
 	_pending_gold_autofires = 0
+	_extra_autofires_granted_this_chain = 0
 	_post_fire_enemy_pending = false
 	_in_gold_extra_round = false
 	_reset_load_session()

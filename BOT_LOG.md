@@ -1,3 +1,9 @@
+## 2026-10-28 — 超级回合额外轮可嵌套（v0.2.66）
+
+- 任务：额外回合内击发超级回合（id=21）此前不生效；改为可再入队，并保留软锁上限。
+- 改动：`_queue_extra_autofire_from_shot` 允许超级回合在 `_in_gold_extra_round` 内累加 pending；金色额外轮内仍不叠。`_extra_autofires_granted_this_chain` + `MAX_EXTRA_AUTOFIREs_PER_CHAIN=10`。同步 `_auto_load_and_fire_once` 也入队；`_run_pending_gold_autofires` 改为 while 队列直至空/上限。
+- 自测：pre_push_check；GUT（含嵌套与硬上限）。
+
 ## 2026-10-28 — 超级回合袋/仓金色辉光（v0.2.65）
 
 - 任务：超级回合子弹在弹药袋与弹仓装填态都要金色辉光（不仅射击飞弹 VFX）。
