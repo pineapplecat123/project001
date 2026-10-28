@@ -56,13 +56,13 @@ const SHOT_HEAD_SIZE := 18.0
 const SHOT_HEAD_GLOW := 28.0
 const SHOT_TRAVEL_SEC := 0.14
 const SHOT_TRAVEL_SEC_PER_CELL := 0.032
-const BLOOD_BURST_MIN := 5
-const BLOOD_BURST_MAX := 14
+const BLOOD_BURST_MIN := 8
+const BLOOD_BURST_MAX := 20
 ## 致死血浆爆开（仍受全局并发上限约束，避免射击卡死）
-const BLOOD_DEATH_BURST_MIN := 12
-const BLOOD_DEATH_BURST_MAX := 24
+const BLOOD_DEATH_BURST_MIN := 20
+const BLOOD_DEATH_BURST_MAX := 40
 ## 同时存活的血滴上限；超出则削减本波生成量
-const BLOOD_ACTIVE_MAX := 48
+const BLOOD_ACTIVE_MAX := 72
 const BLOOD_GRAVITY := 1350.0
 const BLOOD_STAIN_FADE_SEC := 2.4
 ## 拖尾历史段数（少段 = 少 ColorRect，缓解击发卡顿）
@@ -70,7 +70,7 @@ const BLOOD_TRAIL_HISTORY := 4
 ## 拖尾头部粗细下限；实际按血滴尺寸匹配，尾部渐细（见 _blood_trail_push）
 const BLOOD_TRAIL_SEG_W_MIN := 4.0
 ## 回收池上限，避免长期堆节点
-const BLOOD_POOL_MAX := 160
+const BLOOD_POOL_MAX := 280
 ## 战斗 VFX（飙血/枪线）低于遮罩与奖励/商店等模态，避免盖住选奖
 const Z_BLOOD_STAIN := 12
 const Z_BLOOD_TRAIL := 40
@@ -149,7 +149,7 @@ var _cell_shake_tweens: Dictionary = {}
 ## 开火结算时暂存飘字/抖动，等射线飞到再播
 var _defer_hit_vfx: bool = false
 var _pending_hit_vfx: Array = []
-## 本发枪线飞行方向（单位向量）；仅在 _blood_shot_dir_active 时用于偏轴喷溅
+## 本发朝子弹来源的单位向量（= -飞行方向）；仅在 _blood_shot_dir_active 时用于偏轴喷溅
 var _blood_spray_dir: Vector2 = Vector2.ZERO
 ## 枪线飞行/命中结算窗口：有子弹来源才偏轴喷；否则四面八方
 var _blood_shot_dir_active: bool = false
@@ -1365,9 +1365,10 @@ func _play_shot_beam_and_impact() -> void:
 		return
 	var shot_delta: Vector2 = to_g - from_g
 	if shot_delta.length_squared() > 0.01:
-		_blood_spray_dir = shot_delta.normalized()
+		# 朝子弹来源喷（与飞行方向相反）；之前用 shot_delta 会喷向弹着点前方，观感反了
+		_blood_spray_dir = -shot_delta.normalized()
 	else:
-		_blood_spray_dir = Vector2.RIGHT
+		_blood_spray_dir = Vector2.LEFT
 	_blood_shot_dir_active = true
 	var ammo_id: int = int(state.last_shot_ammo_id)
 	var core_col: Color = _ammo_colors(ammo_id).get("bg", Color(0.95, 0.95, 0.9))
@@ -1574,7 +1575,7 @@ func _spawn_blood_burst(
 	at_g: Vector2, amount: int, spray_dir: Vector2 = Vector2.ZERO, death_plasma: bool = false
 ) -> void:
 	## 掉血飙血：抛物线血滴（头粗尾细实心拖尾）下落；落地留血迹。
-	## spray_dir≈0 → 无子弹来源，四面八方喷；否则沿射入方向偏轴散开。
+	## spray_dir≈0 → 无子弹来源，四面八方喷；否则朝子弹来源方向偏轴散开。
 	## death_plasma：致死血浆爆开（更多/更大，仍受并发上限）。
 	if amount <= 0:
 		return
@@ -1595,8 +1596,8 @@ func _spawn_blood_burst(
 	for _i in n:
 		var drop := _blood_acquire_rect()
 		drop.z_index = Z_BLOOD_DROP
-		var size_mul: float = (1.15 + 0.55 * t) if death_plasma else (0.85 + 0.4 * t)
-		var sz: float = randf_range(4.5, 12.5 if death_plasma else 11.5) * size_mul
+		var size_mul: float = (1.35 + 0.7 * t) if death_plasma else (0.9 + 0.45 * t)
+		var sz: float = randf_range(5.0, 15.0 if death_plasma else 12.0) * size_mul
 		drop.size = Vector2(sz, sz * randf_range(0.85, 1.25))
 		var col := Color(randf_range(0.75, 1.0), randf_range(0.05, 0.22), randf_range(0.05, 0.18), 1.0)
 		drop.color = col
@@ -1612,7 +1613,7 @@ func _spawn_blood_burst(
 			# 无射击来源 / 死亡血浆：四面八方
 			dir = Vector2.from_angle(randf() * TAU)
 		else:
-			# 不规则偏角：多数落在射入轴附近，少数大幅散开
+			# 不规则偏角：多数落在朝来源轴附近，少数大幅散开
 			var spread_deg: float
 			var roll: float = randf()
 			if roll < 0.62:
@@ -2078,7 +2079,7 @@ func _enemy_corpse_at_cell(cell: int) -> bool:
 
 func _spawn_blood_at_cell(cell: int, amount: int, death_plasma: bool = false) -> void:
 	## 统一飙血入口：任意实际扣血（子弹/DoT/惩罚）都走这里。
-	## 有子弹射入窗口 → 偏子弹方向；否则（流血/燃烧/自伤等）四面八方。
+	## 有子弹射入窗口 → 朝子弹来源偏轴喷；否则（流血/燃烧/自伤等）四面八方。
 	## 致死血浆强制四面八方爆开。
 	if amount <= 0:
 		return
