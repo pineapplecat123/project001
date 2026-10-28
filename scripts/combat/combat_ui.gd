@@ -3506,6 +3506,13 @@ func _paint_mag_chambers() -> void:
 			style.border_color = Color(0.12, 0.12, 0.14)
 			if ammo_id == CombatConstants.INVALID_AMMO_ID:
 				style.border_color = Color(0.95, 0.4, 0.4)
+			elif ammo_id == FireResolver.ID_SUPER_ROUND:
+				# 金黄辉光：StyleBox shadow + 暖金边（击发/装填高亮仍可盖边色）
+				style.border_color = Color(1.0, 0.88, 0.32)
+				style.set_border_width_all(3)
+				style.shadow_color = Color(1.0, 0.82, 0.2, 0.72)
+				style.shadow_size = 10
+				style.shadow_offset = Vector2.ZERO
 			info.text = short
 			info.add_theme_color_override("font_color", colors["fg"])
 		# 红/装边框跟屏幕固定标走：用盘面视觉步数（向下取整，避免半步 round 跳仓）

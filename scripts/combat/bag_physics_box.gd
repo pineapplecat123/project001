@@ -263,8 +263,17 @@ func _draw() -> void:
 		if bool(b.get("temp", false)):
 			bg.a *= 0.45
 			fg.a *= 0.55
+		# 超级回合：软金色辉光（小尺寸可读；随物理帧轻脉冲）
+		if aid == FireResolver.ID_SUPER_ROUND:
+			var pulse := 0.72 + 0.28 * sin(Time.get_ticks_msec() * 0.0055)
+			draw_circle(pos, r * 1.72, Color(1.0, 0.78, 0.15, 0.14 * pulse))
+			draw_circle(pos, r * 1.38, Color(1.0, 0.88, 0.28, 0.28 * pulse))
+			draw_circle(pos, r * 1.12, Color(1.0, 0.95, 0.55, 0.38 * pulse))
 		draw_circle(pos, r, bg)
-		draw_arc(pos, r, 0.0, TAU, 24, Color(0.1, 0.1, 0.12, 0.75), 1.5, true)
+		if aid == FireResolver.ID_SUPER_ROUND:
+			draw_arc(pos, r, 0.0, TAU, 24, Color(1.0, 0.9, 0.35, 0.85), 2.0, true)
+		else:
+			draw_arc(pos, r, 0.0, TAU, 24, Color(0.1, 0.1, 0.12, 0.75), 1.5, true)
 		var glyph := "?"
 		if name_lookup.is_valid():
 			glyph = str(name_lookup.call(aid))
