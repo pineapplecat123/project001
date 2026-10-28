@@ -1023,7 +1023,7 @@ func test_board_ground_segs_and_unit_rest_on_ground() -> void:
 
 
 func test_last_shot_hit_and_muzzle_outline_ids() -> void:
-	## 实弹命中写入 last_shot_hit_cell/dealt/ammo；枪口罪孽进入描边 id 列表（怒→傲→贪）。
+	## 实弹命中写入 last_shot_hit_cell/dealt/ammo；描边=开火前枪口贡献色（不含本发刚挂罪孽）。
 	var cs := CombatState.new(920)
 	cs.start_graybox(920, false, FireResolver.ID_WRATH)
 	cs.enemies[0].hp = 999
@@ -1043,10 +1043,41 @@ func test_last_shot_hit_and_muzzle_outline_ids() -> void:
 	assert_eq(cs.last_shot_ammo_id, FireResolver.ID_WRATH)
 	assert_eq(cs.last_shot_hit_cell, cs.enemies[0].cell)
 	assert_gt(cs.last_shot_dealt, 0)
-	# 本发愤怒入枪口后 wrath≥1，且已有傲慢
-	assert_true(cs.last_shot_muzzle_outline_ids.has(FireResolver.ID_WRATH))
+	# 开火前仅有傲慢；本发愤怒后才挂上，描边不含愤怒
+	assert_false(cs.last_shot_muzzle_outline_ids.has(FireResolver.ID_WRATH))
 	assert_true(cs.last_shot_muzzle_outline_ids.has(FireResolver.ID_PRIDE))
+	assert_eq(cs.last_shot_muzzle_outline_ids[0], FireResolver.ID_PRIDE)
+	# 伤害侧仍吃本发刚挂上的愤怒（wrath 现为 1）
+	assert_eq(cs._muzzle_wrath, 1)
+
+
+func test_outline_excludes_just_mounted_pride_keeps_prefire_wrath_pierce() -> void:
+	## 枪口已有穿甲+愤怒，打傲慢：芯=傲慢；描边=愤怒+穿甲，不含本发傲慢。
+	var cs := CombatState.new(923)
+	cs.start_graybox(923, false, FireResolver.ID_PRIDE)
+	cs.enemies[0].hp = 999
+	cs.enemies[0].max_hp = 999
+	cs._muzzle_wrath = 1
+	cs._muzzle_pierce = true
+	cs.dev_force_load([
+		FireResolver.ID_PRIDE,
+		CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID,
+		CombatConstants.WHITE_AMMO_ID,
+	] as Array[int])
+	cs.magazine.set_start(0)
+	assert_true(cs.begin_fire())
+	assert_true(cs.fire_next_shot())
+	assert_eq(cs.last_shot_ammo_id, FireResolver.ID_PRIDE)
+	assert_true(cs.last_shot_muzzle_outline_ids.has(FireResolver.ID_WRATH))
+	assert_true(cs.last_shot_muzzle_outline_ids.has(FireResolver.ID_ARMOR_PIERCE))
+	assert_false(cs.last_shot_muzzle_outline_ids.has(FireResolver.ID_PRIDE))
 	assert_eq(cs.last_shot_muzzle_outline_ids[0], FireResolver.ID_WRATH)
+	assert_eq(cs.last_shot_muzzle_outline_ids[1], FireResolver.ID_ARMOR_PIERCE)
+	# 伤害仍吃本发入枪口的傲慢
+	assert_eq(cs._muzzle_pride, 1)
 
 
 func test_blank_shot_clears_last_shot_hit() -> void:

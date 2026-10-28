@@ -112,7 +112,7 @@ var last_fired_slot: int = -1
 var last_shot_was_blank: bool = false
 ## 本发开火前快跳过的空仓步数（供 UI 快转）
 var last_blank_skip_steps: int = 0
-## UI 射击特效：本发弹药 id / 主命中格 / 主命中伤害 / 枪口描边用罪孽弹药 id（怒→傲→贪）
+## UI 射击特效：本发弹药 id / 主命中格 / 主命中伤害 / 枪口描边=开火前枪口贡献色（怒→傲→贪→穿甲；不含本发刚挂罪孽）
 var last_shot_ammo_id: int = -1
 var last_shot_hit_cell: int = -1
 var last_shot_dealt: int = 0
@@ -313,7 +313,7 @@ func muzzle_status_text() -> String:
 
 
 func _muzzle_outline_ammo_ids_for_shot() -> Array[int]:
-	## 对本发有贡献的枪口色（罪孽 + 穿甲）；供射线描边。
+	## 开火前已在枪口的贡献色（罪孽 + 穿甲）；供射线描边。须在本发罪孽入枪口之前取样。
 	var out: Array[int] = []
 	if _muzzle_wrath > 0:
 		out.append(FireResolver.ID_WRATH)
@@ -1290,6 +1290,8 @@ func fire_next_shot() -> bool:
 	_consume_hammer_chamber(ammo_id)
 
 	var flags := FireResolver.inherits_from(ammo_id)
+	# 描边：开火前已在枪口的贡献色（不含本发刚挂上的罪孽）
+	last_shot_muzzle_outline_ids = _muzzle_outline_ammo_ids_for_shot()
 	# 罪孽层：本发先入枪口，本发伤害即享受新层
 	_mount_sin_muzzle_from(flags)
 	var pierce := _muzzle_pierce or bool(flags["pierce"])
@@ -1302,7 +1304,6 @@ func fire_next_shot() -> bool:
 	last_shot_ammo_id = ammo_id
 	last_shot_hit_cell = -1
 	last_shot_dealt = 0
-	last_shot_muzzle_outline_ids = _muzzle_outline_ammo_ids_for_shot()
 	last_shot_hit_cells.clear()
 	last_shot_hit_amounts.clear()
 	last_shot_was_pierce = pierce
@@ -1862,6 +1863,8 @@ func _auto_load_and_fire_once() -> bool:
 		var base_dmg: int = _fire_damages[_fire_index]
 		_consume_hammer_chamber(ammo_id)
 		var flags := FireResolver.inherits_from(ammo_id)
+		# 描边：开火前已在枪口的贡献色（不含本发刚挂上的罪孽）
+		last_shot_muzzle_outline_ids = _muzzle_outline_ammo_ids_for_shot()
 		_mount_sin_muzzle_from(flags)
 		var pierce := _muzzle_pierce or bool(flags["pierce"])
 		var gas := _muzzle_gas or bool(flags["gas"])
@@ -1872,7 +1875,6 @@ func _auto_load_and_fire_once() -> bool:
 		last_shot_ammo_id = ammo_id
 		last_shot_hit_cell = -1
 		last_shot_dealt = 0
-		last_shot_muzzle_outline_ids = _muzzle_outline_ammo_ids_for_shot()
 		last_shot_hit_cells.clear()
 		last_shot_hit_amounts.clear()
 		last_shot_was_pierce = pierce

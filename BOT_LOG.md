@@ -1,3 +1,9 @@
+## 2026-10-28 — 枪线描边/芯色修正（v0.2.72）
+
+- 根因：描边在本发罪孽入枪口之后取样，会把刚挂上的傲慢画进描边；彗星头 `head_core` +0.45 提亮再叠纯白 `head_hot`，傲慢紫被洗成发白。
+- 改动：`fire_next_shot` / 额外轮开火路径先取 `_muzzle_outline_ammo_ids_for_shot` 再 `_mount_sin_muzzle_from`（伤害仍吃本层）；彗星头芯色轻提亮 + 小半透明芯色高光。GUT：描边不含本发罪孽；穿甲+愤怒打傲慢 → WRATH+ARMOR_PIERCE。
+- 自测：pre_push_check；GUT。
+
 ## 2026-10-28 — 枪线拖尾连续光带（v0.2.71）
 
 - 任务：v0.2.70 仍一节一节不流畅；检查实现后根因是 ColorRect 彗星分段 + 隔段辉光 + 按段显隐。

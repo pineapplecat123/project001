@@ -1444,14 +1444,26 @@ func _animate_shot_projectile(
 		var ring_sz: float = SHOT_HEAD_SIZE + float(n_out - oi) * SHOT_OUTLINE_PAD * 2.2
 		var ring := _make_shot_orb(ring_sz, Color(oc2.r, oc2.g, oc2.b, 0.95))
 		host.add_child(ring)
+	# 芯色主体保留弹药色；仅少量提亮，避免傲慢紫等被洗成死白
 	var head_core := _make_shot_orb(
 		SHOT_HEAD_SIZE,
-		Color(mini(core_col.r + 0.45, 1.0), mini(core_col.g + 0.45, 1.0), mini(core_col.b + 0.45, 1.0), 1.0)
+		Color(
+			mini(core_col.r * 1.08 + 0.06, 1.0),
+			mini(core_col.g * 1.08 + 0.06, 1.0),
+			mini(core_col.b * 1.08 + 0.06, 1.0),
+			1.0
+		)
 	)
 	host.add_child(head_core)
+	# 中心高光：小、半透明、带芯色，不再用纯白盖死弹药色
 	var head_hot := _make_shot_orb(
-		SHOT_HEAD_SIZE * 0.45,
-		Color(1.0, 1.0, 1.0, 0.95)
+		SHOT_HEAD_SIZE * 0.28,
+		Color(
+			mini(core_col.r + 0.22, 1.0),
+			mini(core_col.g + 0.22, 1.0),
+			mini(core_col.b + 0.22, 1.0),
+			0.50
+		)
 	)
 	host.add_child(head_hot)
 	var ctx := {
