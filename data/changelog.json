@@ -2,6 +2,14 @@
   "version": 1,
   "entries": [
     {
+      "version": "0.2.71",
+      "date": "2026-10-28",
+      "items": [
+        "枪线拖尾改为连续 Line2D 光带（width_curve+gradient 头粗尾细），去掉 ColorRect 分段/隔段辉光的方块节感",
+        "仍按已飞距离连续拉长尾巴；保留匀速飞行、弹药芯色/枪口描边与圆亮彗星头；飙血不动"
+      ]
+    },
+    {
       "version": "0.2.70",
       "date": "2026-10-28",
       "items": [

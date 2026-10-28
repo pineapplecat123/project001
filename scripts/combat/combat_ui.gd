@@ -51,7 +51,6 @@ const SHOT_TRAIL_LEN := 1920.0
 const SHOT_TRAIL_THICK := 5.8
 const SHOT_OUTLINE_PAD := 2.6
 const SHOT_GLOW_PAD := 7.0
-const SHOT_COMET_SEGS := 28
 const SHOT_HEAD_SIZE := 18.0
 const SHOT_HEAD_GLOW := 28.0
 const SHOT_TRAVEL_SEC := 0.14
@@ -1399,7 +1398,8 @@ func _animate_shot_projectile(
 	from_g: Vector2, to_g: Vector2, core_col: Color, outline_cols: Array[Color],
 	waypoints: Array, travel_sec: float
 ) -> void:
-	## 圆亮彗星头 + 渐隐长尾，从玩家单位飞向目标；开炮瞬间裁切尾巴，不从屏幕左侧伸进来。
+	## 圆亮彗星头 + Line2D 连续光带拖尾（头粗尾细），从玩家飞向目标。
+	## 按已飞距离连续拉长，不再用 ColorRect 分段显隐（避免一节一节方块感）。
 	var delta: Vector2 = to_g - from_g
 	if delta.length_squared() < 0.01:
 		delta = Vector2.RIGHT
@@ -1410,45 +1410,30 @@ func _animate_shot_projectile(
 	host.global_position = from_g
 	host.rotation = delta.angle()
 	var n_out: int = outline_cols.size()
-	var trail_parts: Array = []
-	var seg_w: float = SHOT_TRAIL_LEN / float(SHOT_COMET_SEGS)
-	# 尾→头：更实的渐隐尾（整体不透明度抬高）；段重叠 1px，读成连续光带
-	for si in SHOT_COMET_SEGS:
-		var u: float = float(si) / float(maxi(SHOT_COMET_SEGS - 1, 1))  # 0=最尾，1=近头
-		var alpha: float = lerpf(0.38, 0.95, pow(u, 1.15))
-		var thick: float = lerpf(SHOT_TRAIL_THICK * 0.35, SHOT_TRAIL_THICK, pow(u, 0.85))
-		var x0: float = -SHOT_TRAIL_LEN + float(si) * seg_w
-		var back_mid: float = -(x0 + seg_w * 0.5)  # 该段距彗星头的距离
-		# 隔段辉光：减半枪线节点，缓解击发瞬时卡顿（尾长不变）
-		if si % 2 == 0 or si >= SHOT_COMET_SEGS - 2:
-			var glow := ColorRect.new()
-			glow.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			glow.visible = false
-			glow.color = Color(core_col.r, core_col.g, core_col.b, alpha * 0.55)
-			glow.position = Vector2(x0, -(thick * 0.5 + SHOT_GLOW_PAD * lerpf(0.35, 1.0, u)))
-			glow.size = Vector2(seg_w + 1.0, thick + SHOT_GLOW_PAD * lerpf(0.7, 1.8, u))
-			host.add_child(glow)
-			trail_parts.append({"node": glow, "back": back_mid})
-		for oi in n_out:
-			var pad: float = float(n_out - oi) * SHOT_OUTLINE_PAD * lerpf(0.45, 1.0, u)
-			var oc: Color = outline_cols[oi]
-			var edge := ColorRect.new()
-			edge.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			edge.visible = false
-			edge.color = Color(oc.r, oc.g, oc.b, alpha * 0.85)
-			edge.position = Vector2(x0, -(thick * 0.5 + pad))
-			edge.size = Vector2(seg_w + 1.0, thick + pad * 2.0)
-			host.add_child(edge)
-			trail_parts.append({"node": edge, "back": back_mid})
-		var core := ColorRect.new()
-		core.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		core.visible = false
-		core.color = Color(core_col.r, core_col.g, core_col.b, alpha)
-		core.position = Vector2(x0, -thick * 0.5)
-		core.size = Vector2(seg_w + 1.0, thick)
-		host.add_child(core)
-		trail_parts.append({"node": core, "back": back_mid})
-	# 圆亮彗星头（始终在玩家/飞行尖端）
+	var trail_lines: Array = []
+	# 底层辉光 → 枪口描边 → 芯色；全部 Line2D，width_curve+gradient 连续渐变
+	trail_lines.append(_make_shot_trail_line(
+		SHOT_TRAIL_THICK + SHOT_GLOW_PAD * 1.6,
+		Color(core_col.r, core_col.g, core_col.b, 1.0),
+		1.0, 0.28, 0.50, 0.08
+	))
+	for oi in n_out:
+		var oc: Color = outline_cols[oi]
+		var pad: float = float(n_out - oi) * SHOT_OUTLINE_PAD
+		trail_lines.append(_make_shot_trail_line(
+			SHOT_TRAIL_THICK + pad * 2.0,
+			Color(oc.r, oc.g, oc.b, 1.0),
+			1.0, 0.32, 0.90, 0.18
+		))
+	trail_lines.append(_make_shot_trail_line(
+		SHOT_TRAIL_THICK,
+		Color(core_col.r, core_col.g, core_col.b, 1.0),
+		1.0, 0.30, 0.98, 0.22
+	))
+	for line in trail_lines:
+		host.add_child(line)
+		line.visible = false
+	# 圆亮彗星头（始终在飞行尖端）
 	var head_glow := _make_shot_orb(
 		SHOT_HEAD_GLOW,
 		Color(mini(core_col.r + 0.35, 1.0), mini(core_col.g + 0.35, 1.0), mini(core_col.b + 0.35, 1.0), 0.55)
@@ -1475,11 +1460,11 @@ func _animate_shot_projectile(
 		"to": to_g,
 		"waypoints": waypoints,
 		"fired": {},
-		"trail_parts": trail_parts,
+		"trail_lines": trail_lines,
 	}
 	_shot_projectile_step(0.0, ctx)
 	var tw := create_tween()
-	# 匀速：初速即满速（v0.2.69），拖尾仍绑宿主本地连续彗星条
+	# 匀速：初速即满速（v0.2.69）；拖尾为连续 Line2D 光带
 	tw.tween_method(_shot_projectile_step.bind(ctx), 0.0, 1.0, maxf(travel_sec, 0.05)).set_trans(Tween.TRANS_LINEAR)
 	await tw.finished
 	var fired: Dictionary = ctx.get("fired", {})
@@ -1496,6 +1481,31 @@ func _animate_shot_projectile(
 		# 飙血改由 enemy_damaged 统一触发（含非子弹掉血）
 	if is_instance_valid(host):
 		host.queue_free()
+
+
+func _make_shot_trail_line(
+	width: float, col: Color,
+	tip_w: float = 1.0, tail_w: float = 0.32,
+	tip_a: float = 0.95, tail_a: float = 0.2
+) -> Line2D:
+	## 单条连续枪线光带：两点线段 + width_curve/gradient，头粗尾细渐隐。
+	var line := Line2D.new()
+	line.width = width
+	line.default_color = Color(1, 1, 1, 1)
+	line.antialiased = true
+	line.begin_cap_mode = Line2D.LINE_CAP_NONE
+	line.end_cap_mode = Line2D.LINE_CAP_ROUND
+	line.joint_mode = Line2D.LINE_JOINT_ROUND
+	var curve := Curve.new()
+	curve.add_point(Vector2(0.0, tip_w))
+	curve.add_point(Vector2(1.0, tail_w))
+	line.width_curve = curve
+	var grad := Gradient.new()
+	grad.set_color(0, Color(col.r, col.g, col.b, tip_a))
+	grad.set_color(1, Color(col.r, col.g, col.b, tail_a))
+	line.gradient = grad
+	line.points = PackedVector2Array([Vector2.ZERO, Vector2(-1.0, 0.0)])
+	return line
 
 
 func _make_shot_orb(diameter: float, col: Color) -> Panel:
@@ -1520,14 +1530,18 @@ func _shot_projectile_step(t: float, ctx: Dictionary) -> void:
 	var from_g: Vector2 = ctx.get("from", Vector2.ZERO)
 	var to_g: Vector2 = ctx.get("to", Vector2.ZERO)
 	host.global_position = from_g.lerp(to_g, t)
-	# 只显示「已经飞过」的拖尾：未飞出的尾巴不画，避免从屏幕左侧穿过玩家
+	# 连续拉长已飞过的光带（无分段显隐，无方块节感）
 	var traveled: float = from_g.distance_to(host.global_position)
-	for item in ctx.get("trail_parts", []):
-		var node: CanvasItem = item.get("node") as CanvasItem
-		if node == null or not is_instance_valid(node):
+	var visible_len: float = minf(traveled, SHOT_TRAIL_LEN)
+	for item in ctx.get("trail_lines", []):
+		var line: Line2D = item as Line2D
+		if line == null or not is_instance_valid(line):
 			continue
-		var back: float = float(item.get("back", 0.0))
-		node.visible = back <= traveled + 6.0
+		if visible_len < 1.0:
+			line.visible = false
+		else:
+			line.visible = true
+			line.points = PackedVector2Array([Vector2.ZERO, Vector2(-visible_len, 0.0)])
 	var waypoints: Array = ctx.get("waypoints", [])
 	var fired: Dictionary = ctx.get("fired", {})
 	var path_len: float = maxf(from_g.distance_to(to_g), 1.0)
