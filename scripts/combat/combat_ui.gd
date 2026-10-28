@@ -59,18 +59,19 @@ const SHOT_TRAVEL_SEC_PER_CELL := 0.032
 const BLOOD_BURST_MIN := 8
 const BLOOD_BURST_MAX := 20
 ## 致死血浆爆开（仍受全局并发上限约束，避免射击卡死）
-const BLOOD_DEATH_BURST_MIN := 20
-const BLOOD_DEATH_BURST_MAX := 40
+const BLOOD_DEATH_BURST_MIN := 32
+const BLOOD_DEATH_BURST_MAX := 56
 ## 同时存活的血滴上限；超出则削减本波生成量
-const BLOOD_ACTIVE_MAX := 72
+## 峰值按「残留命中血 + 致死爆发」留余量（约 20+56），避免死亡爆被削峰
+const BLOOD_ACTIVE_MAX := 96
 const BLOOD_GRAVITY := 1350.0
 const BLOOD_STAIN_FADE_SEC := 2.4
 ## 拖尾历史段数（少段 = 少 ColorRect，缓解击发卡顿）
 const BLOOD_TRAIL_HISTORY := 4
 ## 拖尾头部粗细下限；实际按血滴尺寸匹配，尾部渐细（见 _blood_trail_push）
 const BLOOD_TRAIL_SEG_W_MIN := 4.0
-## 回收池上限，避免长期堆节点
-const BLOOD_POOL_MAX := 280
+## 回收池上限：≥ ACTIVE_MAX*(1+TRAIL_HISTORY)=480，留余量避免冷分配
+const BLOOD_POOL_MAX := 520
 ## 战斗 VFX（飙血/枪线）低于遮罩与奖励/商店等模态，避免盖住选奖
 const Z_BLOOD_STAIN := 12
 const Z_BLOOD_TRAIL := 40
@@ -1596,16 +1597,16 @@ func _spawn_blood_burst(
 	for _i in n:
 		var drop := _blood_acquire_rect()
 		drop.z_index = Z_BLOOD_DROP
-		var size_mul: float = (1.35 + 0.7 * t) if death_plasma else (0.9 + 0.45 * t)
-		var sz: float = randf_range(5.0, 15.0 if death_plasma else 12.0) * size_mul
+		var size_mul: float = (1.5 + 0.85 * t) if death_plasma else (0.9 + 0.45 * t)
+		var sz: float = randf_range(5.0, 17.0 if death_plasma else 12.0) * size_mul
 		drop.size = Vector2(sz, sz * randf_range(0.85, 1.25))
 		var col := Color(randf_range(0.75, 1.0), randf_range(0.05, 0.22), randf_range(0.05, 0.18), 1.0)
 		drop.color = col
 		var start_p: Vector2 = at_g - drop.size * 0.5 + Vector2(randf_range(-6.0, 6.0), randf_range(-4.0, 2.0))
 		drop.global_position = start_p
 		# 伤害越高基准速度越大；死亡血浆再抬一档
-		var speed_lo: float = 200.0 if death_plasma else 170.0
-		var speed_hi: float = 720.0 if death_plasma else 560.0
+		var speed_lo: float = 220.0 if death_plasma else 170.0
+		var speed_hi: float = 820.0 if death_plasma else 560.0
 		var speed_base: float = lerpf(speed_lo, speed_hi, t)
 		var speed: float = speed_base * randf_range(0.42, 1.38)
 		var dir: Vector2
@@ -1626,7 +1627,7 @@ func _spawn_blood_burst(
 		var vx: float = dir.x * speed
 		var vy: float = dir.y * speed
 		# 略抬升，保证抛物线观感（屏幕 Y 向下为正）
-		var lift: float = randf_range(55.0, 220.0 if death_plasma else 200.0) * (0.75 + 0.55 * t)
+		var lift: float = randf_range(55.0, 260.0 if death_plasma else 200.0) * (0.75 + 0.55 * t)
 		vy -= lift
 		var land_y: float = ground_y - drop.size.y
 		var dur: float = _blood_flight_duration(start_p.y, vy, land_y)

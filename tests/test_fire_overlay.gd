@@ -65,7 +65,7 @@ func test_blood_shot_dir_and_caps() -> void:
 	# 喷血朝子弹来源（飞行方向取反），不是沿弹着前进方向
 	assert_true(text.contains("_blood_spray_dir = -shot_delta.normalized()"), "spray toward bullet source")
 	assert_true(text.contains("const BLOOD_BURST_MIN := 8"), "hit burst min raised")
-	assert_true(text.contains("const BLOOD_DEATH_BURST_MAX := 40"), "death plasma max raised")
-	assert_true(text.contains("const BLOOD_ACTIVE_MAX := 72"), "active cap raised carefully")
+	assert_true(text.contains("const BLOOD_DEATH_BURST_MAX := 56"), "death plasma max raised")
+	assert_true(text.contains("const BLOOD_ACTIVE_MAX := 96"), "active cap raised carefully")
 	# 默认不应再把无来源扣血硬编成向右喷
 	assert_false(text.contains("dir = Vector2(1.0, -0.2)"), "no false rightward default spray")
