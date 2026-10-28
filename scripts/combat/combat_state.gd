@@ -1324,7 +1324,7 @@ func fire_next_shot() -> bool:
 			"hits": plan,
 			"thunder_done": false,
 			"resolved_total": 0,
-			"gold": ammo_id == FireResolver.ID_GOLD,
+			"gold": ammo_id == FireResolver.ID_GOLD or ammo_id == FireResolver.ID_SUPER_ROUND,
 			"await_finish": not more_paced,
 		}
 		_emit()
@@ -1334,11 +1334,8 @@ func fire_next_shot() -> bool:
 	_fire_total_damage += dealt_total
 	_remove_dead()
 
-	# 金色：本匣击发计入待追加轮数；整匣打完（或中途清场归袋）后再额外自动装填射击。
-	# 额外轮内的金色不再叠加轮数。
-	if ammo_id == FireResolver.ID_GOLD:
-		_pending_gold_autofires += 1
-		_log("金色弹药：本匣已击发金 ×%d（整匣后再额外轮）。" % _pending_gold_autofires)
+	# 金色/超级回合：本匣击发计入待追加轮；整匣后再额外自动装填射击。额外轮内不再叠加。
+	_queue_extra_autofire_from_shot(ammo_id)
 
 	_emit()
 
@@ -1456,8 +1453,7 @@ func finalize_paced_shot() -> void:
 	var total: int = int(_paced_shot.get("resolved_total", 0))
 	_fire_total_damage += total
 	if bool(_paced_shot.get("gold", false)):
-		_pending_gold_autofires += 1
-		_log("金色弹药：本匣已击发金 ×%d（整匣后再额外轮）。" % _pending_gold_autofires)
+		_queue_extra_autofire_from_shot(int(_paced_shot.get("ammo_id", -1)))
 	var await_finish: bool = bool(_paced_shot.get("await_finish", false))
 	_paced_shot.clear()
 	# pace：仍留尸体给 UI 飚血后再 flush；此处只判断存活
@@ -1651,7 +1647,7 @@ func _finish_fire() -> void:
 	magazine.clear()
 	if _in_gold_extra_round:
 		_in_gold_extra_round = false
-		_log("金色额外轮射击完毕。总伤害 %d。" % _fire_total_damage)
+		_log("额外装填回合射击完毕。总伤害 %d。" % _fire_total_damage)
 		_reset_fire_session()
 		_set_phase(Phase.AWAIT_ACTION)
 		_emit()
@@ -1708,6 +1704,19 @@ func _abort_fire_cleared() -> void:
 	_emit()
 
 
+
+func _queue_extra_autofire_from_shot(ammo_id: int) -> void:
+	## 金色（旧）/超级回合子弹：本匣击发计入待追加额外装填射击轮；额外轮内不再叠加，避免软锁。
+	if _in_gold_extra_round:
+		return
+	if ammo_id == FireResolver.ID_GOLD:
+		_pending_gold_autofires += 1
+		_log("金色弹药：本匣已击发金 ×%d（整匣后再额外轮）。" % _pending_gold_autofires)
+	elif ammo_id == FireResolver.ID_SUPER_ROUND:
+		_pending_gold_autofires += 1
+		_log("超级回合子弹：射击后获得额外装填回合（待追加 ×%d）。" % _pending_gold_autofires)
+
+
 func pending_gold_autofires() -> int:
 	return _pending_gold_autofires
 
@@ -1723,12 +1732,12 @@ func begin_gold_extra_load() -> bool:
 	if _pending_gold_autofires <= 0:
 		return false
 	if alive_enemies().is_empty():
-		_log("金色额外轮：战场已清空，剩余 %d 轮跳过。" % _pending_gold_autofires)
+		_log("额外装填回合：战场已清空，剩余 %d 轮跳过。" % _pending_gold_autofires)
 		_pending_gold_autofires = 0
 		return false
 	_reshuffle_if_needed_for_load()
 	if bag.is_empty():
-		_log("金色额外轮：无弹药可装。")
+		_log("额外装填回合：无弹药可装。")
 		_pending_gold_autofires = 0
 		return false
 	_pending_gold_autofires -= 1
@@ -1739,7 +1748,7 @@ func begin_gold_extra_load() -> bool:
 	_load_raw_ids.clear()
 	_load_resolved_ids.clear()
 	magazine.start_index = CombatConstants.LOAD_SESSION_INITIAL_START
-	_log("金色弹药：额外自动装填（逐步入匣，剩余待追加 %d）。" % _pending_gold_autofires)
+	_log("额外装填回合：额外自动装填（逐步入匣，剩余待追加 %d）。" % _pending_gold_autofires)
 	_set_phase(Phase.AWAIT_LOAD)
 	_emit()
 	return true
@@ -1765,10 +1774,10 @@ func _run_pending_gold_autofires(reason: String) -> void:
 	if _pending_gold_autofires <= 0:
 		return
 	var n: int = _pending_gold_autofires
-	_log("金色弹药：%s，追加 %d 轮额外自动装填射击。" % [reason, n])
+	_log("额外装填回合：%s，追加 %d 轮额外自动装填射击。" % [reason, n])
 	for i in n:
 		if alive_enemies().is_empty():
-			_log("金色额外轮：战场已清空，剩余 %d 轮跳过。" % (n - i))
+			_log("额外装填回合：战场已清空，剩余 %d 轮跳过。" % (n - i))
 			break
 		_auto_load_and_fire_once()
 		_remove_dead()
@@ -1782,7 +1791,7 @@ func _auto_load_and_fire_once() -> bool:
 	_reshuffle_if_needed_for_load()
 	var draw_n: int = mini(CombatConstants.MAGAZINE_SIZE, bag.size())
 	if draw_n <= 0:
-		_log("金色额外轮：无弹药可装。")
+		_log("额外装填回合：无弹药可装。")
 		return false
 	var saved_slots: Array[int] = magazine.slots.duplicate()
 	var saved_start: int = magazine.start_index
@@ -1846,7 +1855,7 @@ func _auto_load_and_fire_once() -> bool:
 		_return_magazine_to_bag()
 	else:
 		magazine.clear()
-	_log("金色额外轮射击完毕。")
+	_log("额外装填回合射击完毕。")
 	# 恢复主匣未击发弹药与射击队列进度
 	magazine.slots = saved_slots
 	magazine.start_index = saved_start

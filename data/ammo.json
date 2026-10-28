@@ -234,6 +234,21 @@
       "ephemeral": true,
       "in_reward_pool": false,
       "blurb": "墓碑衍生物；战后消失"
+    },
+    {
+      "id": 21,
+      "name": "超级回合子弹",
+      "rarity": null,
+      "base_damage": 1,
+      "base_damage_mode": "fixed",
+      "special": "基础伤害1。射击后获得一个额外的装填回合并自动射击（整匣打完后追加；额外轮内的超级回合不再叠加新轮，避免软锁）。发出金黄色的光。",
+      "tags": [
+        "额外回合"
+      ],
+      "enabled_in_combat": true,
+      "ephemeral": false,
+      "in_reward_pool": true,
+      "blurb": "获得额外回合"
     }
   ]
 }

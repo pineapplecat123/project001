@@ -1060,6 +1060,9 @@ func _ammo_colors(ammo_id: int) -> Dictionary:
 			return {"bg": Color(0.42, 0.4, 0.38), "fg": Color(0.95, 0.93, 0.88)}
 		FireResolver.ID_GHOST:
 			return {"bg": Color(0.72, 0.88, 0.95, 0.85), "fg": Color(0.08, 0.18, 0.28)}
+		FireResolver.ID_SUPER_ROUND:
+			# 金黄色光（设计：发出金黄色的光）；比旧金色略亮略暖
+			return {"bg": Color(1.0, 0.86, 0.22), "fg": Color(0.18, 0.1, 0.02)}
 		CombatConstants.INVALID_AMMO_ID:
 			return {"bg": Color(0.28, 0.28, 0.3), "fg": Color(0.95, 0.55, 0.55)}
 		_:
