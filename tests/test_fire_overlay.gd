@@ -85,3 +85,22 @@ func test_shot_head_keeps_ammo_hue_not_black_or_whitewash() -> void:
 		"must not restore pure-white head_hot wash"
 	)
 	assert_true(text.contains("last_shot_muzzle_outline_ids"), "outline still from prefire muzzle ids")
+
+
+func test_shot_bullet_tip_and_outer_glow_follows_outline() -> void:
+	## 弹头形尖头（非圆 orb）；有描边时最外辉光用 outline_cols[0]；无描边仍芯色；芯带仍弹药色。
+	var f := FileAccess.open("res://scripts/combat/combat_ui.gd", FileAccess.READ)
+	assert_not_null(f)
+	var text := f.get_as_text()
+	assert_true(text.contains("func _make_shot_bullet_tip"), "must build bullet-tip polygon")
+	assert_false(text.contains("func _make_shot_orb"), "circular orb head must be removed")
+	var anim_i := text.find("func _animate_shot_projectile")
+	assert_gt(anim_i, 0)
+	var anim_end := text.find("\nfunc ", anim_i + 10)
+	var anim := text.substr(anim_i, anim_end - anim_i)
+	assert_true(anim.contains("glow_col = outline_cols[0]"), "outer glow uses outermost outline when present")
+	assert_true(anim.contains("var glow_col: Color = core_col"), "empty muzzle glow falls back to ammo core")
+	assert_true(anim.contains("_make_shot_bullet_tip("), "projectile head uses bullet tip")
+	assert_true(anim.contains("_shot_head_display_color(glow_col"), "soft outer head glow follows glow_col")
+	assert_true(anim.contains("_shot_head_display_color(core_col, 0.38, 1.0)"), "core tip still ammo-colored")
+	assert_true(anim.contains("Color(core_col.r, core_col.g, core_col.b, 1.0)"), "core trail band still ammo-colored")

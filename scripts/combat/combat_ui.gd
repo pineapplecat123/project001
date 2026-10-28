@@ -45,7 +45,7 @@ const DMG_FLOAT_FONT_MAX := 72
 const SHAKE_MIN_PX := 8.0
 const SHAKE_MAX_PX := 42.0
 const SHAKE_DURATION := 0.28
-## 射击轨迹：圆亮彗星头 + 宿主本地渐隐长尾（连续条，非历史点分段）
+## 射击轨迹：弹头形尖头 + 宿主本地渐隐长尾（连续条，头尾衔接成整体）
 ## 尾长相对 v0.2.55（960）再 ×2；飞行时长 ×2（速度约减半）；开炮瞬间按已飞距离裁切
 const SHOT_TRAIL_LEN := 1920.0
 const SHOT_TRAIL_THICK := 5.8
@@ -1398,7 +1398,7 @@ func _animate_shot_projectile(
 	from_g: Vector2, to_g: Vector2, core_col: Color, outline_cols: Array[Color],
 	waypoints: Array, travel_sec: float
 ) -> void:
-	## 圆亮彗星头 + Line2D 连续光带拖尾（头粗尾细），从玩家飞向目标。
+	## 弹头形尖头 + Line2D 连续光带拖尾（头尾衔接），从玩家飞向目标。
 	## 按已飞距离连续拉长，不再用 ColorRect 分段显隐（避免一节一节方块感）。
 	var delta: Vector2 = to_g - from_g
 	if delta.length_squared() < 0.01:
@@ -1410,11 +1410,16 @@ func _animate_shot_projectile(
 	host.global_position = from_g
 	host.rotation = delta.angle()
 	var n_out: int = outline_cols.size()
+	# 有枪口描边时：最外辉光跟最外层描边色（outline_cols[0]=怒→傲→贪→穿甲之最外）；无描边则仍用弹药芯色
+	var glow_col: Color = core_col
+	if n_out > 0:
+		glow_col = outline_cols[0]
 	var trail_lines: Array = []
 	# 底层辉光 → 枪口描边 → 芯色；全部 Line2D，width_curve+gradient 连续渐变
+	var glow_trail_w: float = SHOT_TRAIL_THICK + SHOT_GLOW_PAD * 1.6
 	trail_lines.append(_make_shot_trail_line(
-		SHOT_TRAIL_THICK + SHOT_GLOW_PAD * 1.6,
-		Color(core_col.r, core_col.g, core_col.b, 1.0),
+		glow_trail_w,
+		Color(glow_col.r, glow_col.g, glow_col.b, 1.0),
 		1.0, 0.28, 0.50, 0.08
 	))
 	for oi in n_out:
@@ -1433,25 +1438,36 @@ func _animate_shot_projectile(
 	for line in trail_lines:
 		host.add_child(line)
 		line.visible = false
-	# 圆亮彗星头（始终在飞行尖端）
-	# 提亮用 Color.lightened：暗弹药（愤怒）够亮可读红，傲慢等仍保色相，不用纯白盖芯
-	var head_glow := _make_shot_orb(
+	# 弹头形尖头（朝 +X=飞行方向）；尾部伸入拖尾与 Line2D 重叠，头尾成整体
+	# 提亮用 Color.lightened：暗弹药（愤怒）够亮可读红，傲慢等仍保色相
+	var head_glow := _make_shot_bullet_tip(
+		SHOT_HEAD_GLOW * 1.2,
 		SHOT_HEAD_GLOW,
-		_shot_head_display_color(core_col, 0.42, 0.55)
+		glow_trail_w,
+		_shot_head_display_color(glow_col, 0.42, 0.55)
 	)
 	host.add_child(head_glow)
 	for oi in n_out:
 		var oc2: Color = outline_cols[oi]
-		var ring_sz: float = SHOT_HEAD_SIZE + float(n_out - oi) * SHOT_OUTLINE_PAD * 2.2
-		var ring := _make_shot_orb(ring_sz, Color(oc2.r, oc2.g, oc2.b, 0.95))
+		var pad2: float = float(n_out - oi) * SHOT_OUTLINE_PAD
+		var tip_len: float = SHOT_HEAD_SIZE + pad2 * 2.2
+		var tip_base: float = SHOT_TRAIL_THICK + pad2 * 2.0
+		var ring := _make_shot_bullet_tip(
+			tip_len * 1.08, tip_len, tip_base,
+			Color(oc2.r, oc2.g, oc2.b, 0.95)
+		)
 		host.add_child(ring)
-	var head_core := _make_shot_orb(
+	var head_core := _make_shot_bullet_tip(
+		SHOT_HEAD_SIZE * 1.1,
 		SHOT_HEAD_SIZE,
+		SHOT_TRAIL_THICK,
 		_shot_head_display_color(core_col, 0.38, 1.0)
 	)
 	host.add_child(head_core)
-	var head_hot := _make_shot_orb(
-		SHOT_HEAD_SIZE * 0.36,
+	var head_hot := _make_shot_bullet_tip(
+		SHOT_HEAD_SIZE * 0.58,
+		SHOT_HEAD_SIZE * 0.40,
+		SHOT_TRAIL_THICK * 0.42,
 		_shot_head_display_color(core_col, 0.55, 0.72)
 	)
 	host.add_child(head_hot)
@@ -1516,18 +1532,26 @@ func _shot_head_display_color(core: Color, lighten_amount: float, alpha: float) 
 	return c
 
 
-func _make_shot_orb(diameter: float, col: Color) -> Panel:
-	## 圆形彗星头/辉光（StyleBox 圆角=半径）。
-	var p := Panel.new()
-	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	p.size = Vector2(diameter, diameter)
-	p.position = Vector2(-diameter * 0.5, -diameter * 0.5)
-	var st := StyleBoxFlat.new()
-	st.bg_color = col
-	st.set_corner_radius_all(int(ceilf(diameter * 0.5)))
-	st.set_border_width_all(0)
-	p.add_theme_stylebox_override("panel", st)
-	return p
+func _make_shot_bullet_tip(length: float, max_w: float, base_w: float, col: Color) -> Polygon2D:
+	## 弹头形尖头：尖朝 +X（宿主已按飞行方向旋转），尾部伸入 -X 与 Line2D 拖尾重叠衔接。
+	var poly := Polygon2D.new()
+	poly.color = col
+	var tip_x: float = length * 0.58
+	var shoulder_x: float = length * 0.14
+	var belly_x: float = length * -0.04
+	var join_x: float = -length * 0.32
+	var hw: float = max_w * 0.5
+	var bw: float = maxf(base_w * 0.5, 1.0)
+	poly.polygon = PackedVector2Array([
+		Vector2(tip_x, 0.0),
+		Vector2(shoulder_x, hw * 0.62),
+		Vector2(belly_x, hw),
+		Vector2(join_x, bw),
+		Vector2(join_x, -bw),
+		Vector2(belly_x, -hw),
+		Vector2(shoulder_x, -hw * 0.62),
+	])
+	return poly
 
 
 
