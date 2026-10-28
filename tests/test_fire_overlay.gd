@@ -48,3 +48,19 @@ func test_modal_z_above_blood_vfx() -> void:
 	var st := sc.get_as_text()
 	assert_true(st.contains("z_index = 80"), "Dimmer raised in scene")
 	assert_true(st.contains("z_index = 90"), "Reward/Dev raised in scene")
+
+
+func test_blood_shot_dir_and_caps() -> void:
+	## 射击卡顿防护 + 方向规则 + 致死血浆标记（源码契约）。
+	var f := FileAccess.open("res://scripts/combat/combat_ui.gd", FileAccess.READ)
+	assert_not_null(f)
+	var text := f.get_as_text()
+	assert_true(text.contains("const BLOOD_ACTIVE_MAX"), "must cap concurrent blood drops")
+	assert_true(text.contains("func _blood_acquire_rect"), "must pool blood ColorRects")
+	assert_true(text.contains("func _blood_release_rect"), "must release pooled rects")
+	assert_true(text.contains("var _blood_shot_dir_active"), "must gate shot-biased spray")
+	assert_true(text.contains("death_plasma"), "must support death plasma burst")
+	assert_true(text.contains("Vector2.from_angle"), "omni spray uses full circle")
+	assert_true(text.contains("_enemy_corpse_at_cell"), "death plasma keyed off corpse")
+	# 默认不应再把无来源扣血硬编成向右喷
+	assert_false(text.contains("dir = Vector2(1.0, -0.2)"), "no false rightward default spray")

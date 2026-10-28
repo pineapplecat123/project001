@@ -51,18 +51,26 @@ const SHOT_TRAIL_LEN := 1920.0
 const SHOT_TRAIL_THICK := 5.8
 const SHOT_OUTLINE_PAD := 2.6
 const SHOT_GLOW_PAD := 7.0
-const SHOT_COMET_SEGS := 44
+const SHOT_COMET_SEGS := 28
 const SHOT_HEAD_SIZE := 18.0
 const SHOT_HEAD_GLOW := 28.0
 const SHOT_TRAVEL_SEC := 0.14
 const SHOT_TRAVEL_SEC_PER_CELL := 0.032
-const BLOOD_BURST_MIN := 8
-const BLOOD_BURST_MAX := 40
+const BLOOD_BURST_MIN := 5
+const BLOOD_BURST_MAX := 14
+## 致死血浆爆开（仍受全局并发上限约束，避免射击卡死）
+const BLOOD_DEATH_BURST_MIN := 12
+const BLOOD_DEATH_BURST_MAX := 24
+## 同时存活的血滴上限；超出则削减本波生成量
+const BLOOD_ACTIVE_MAX := 48
 const BLOOD_GRAVITY := 1350.0
 const BLOOD_STAIN_FADE_SEC := 2.4
-const BLOOD_TRAIL_HISTORY := 8
+## 拖尾历史段数（少段 = 少 ColorRect，缓解击发卡顿）
+const BLOOD_TRAIL_HISTORY := 4
 ## 拖尾头部粗细下限；实际按血滴尺寸匹配，尾部渐细（见 _blood_trail_push）
 const BLOOD_TRAIL_SEG_W_MIN := 4.0
+## 回收池上限，避免长期堆节点
+const BLOOD_POOL_MAX := 160
 ## 战斗 VFX（飙血/枪线）低于遮罩与奖励/商店等模态，避免盖住选奖
 const Z_BLOOD_STAIN := 12
 const Z_BLOOD_TRAIL := 40
@@ -141,8 +149,14 @@ var _cell_shake_tweens: Dictionary = {}
 ## 开火结算时暂存飘字/抖动，等射线飞到再播
 var _defer_hit_vfx: bool = false
 var _pending_hit_vfx: Array = []
-## 最近一次枪线飞行方向（单位向量）；飙血沿此轴喷溅并带不规则偏角
-var _blood_spray_dir: Vector2 = Vector2.RIGHT
+## 本发枪线飞行方向（单位向量）；仅在 _blood_shot_dir_active 时用于偏轴喷溅
+var _blood_spray_dir: Vector2 = Vector2.ZERO
+## 枪线飞行/命中结算窗口：有子弹来源才偏轴喷；否则四面八方
+var _blood_shot_dir_active: bool = false
+## 当前未落地血滴数（含死亡血浆）
+var _blood_active_drops: int = 0
+## ColorRect 回收池（血滴/拖尾段）
+var _blood_pool: Array = []
 var _reward_open: bool = false
 ## 胜利后延迟弹出奖励：token 用于取消过期 await
 var _reward_delaying: bool = false
@@ -1354,6 +1368,7 @@ func _play_shot_beam_and_impact() -> void:
 		_blood_spray_dir = shot_delta.normalized()
 	else:
 		_blood_spray_dir = Vector2.RIGHT
+	_blood_shot_dir_active = true
 	var ammo_id: int = int(state.last_shot_ammo_id)
 	var core_col: Color = _ammo_colors(ammo_id).get("bg", Color(0.95, 0.95, 0.9))
 	var outline_cols: Array[Color] = []
@@ -1368,6 +1383,8 @@ func _play_shot_beam_and_impact() -> void:
 		waypoints.append({"g": g, "amount": amt, "cell": c, "hit_index": i})
 	var travel: float = _paced(SHOT_TRAVEL_SEC + SHOT_TRAVEL_SEC_PER_CELL * float(maxi(hit_cells.size() - 1, 0)))
 	await _animate_shot_projectile(from_g, to_g, core_col, outline_cols, waypoints, travel)
+	_blood_shot_dir_active = false
+	_blood_spray_dir = Vector2.ZERO
 
 
 func _animate_shot_projectile(
@@ -1394,14 +1411,16 @@ func _animate_shot_projectile(
 		var thick: float = lerpf(SHOT_TRAIL_THICK * 0.35, SHOT_TRAIL_THICK, pow(u, 0.85))
 		var x0: float = -SHOT_TRAIL_LEN + float(si) * seg_w
 		var back_mid: float = -(x0 + seg_w * 0.5)  # 该段距彗星头的距离
-		var glow := ColorRect.new()
-		glow.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		glow.visible = false
-		glow.color = Color(core_col.r, core_col.g, core_col.b, alpha * 0.55)
-		glow.position = Vector2(x0, -(thick * 0.5 + SHOT_GLOW_PAD * lerpf(0.35, 1.0, u)))
-		glow.size = Vector2(seg_w + 1.0, thick + SHOT_GLOW_PAD * lerpf(0.7, 1.8, u))
-		host.add_child(glow)
-		trail_parts.append({"node": glow, "back": back_mid})
+		# 隔段辉光：减半枪线节点，缓解击发瞬时卡顿（尾长不变）
+		if si % 2 == 0 or si >= SHOT_COMET_SEGS - 2:
+			var glow := ColorRect.new()
+			glow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			glow.visible = false
+			glow.color = Color(core_col.r, core_col.g, core_col.b, alpha * 0.55)
+			glow.position = Vector2(x0, -(thick * 0.5 + SHOT_GLOW_PAD * lerpf(0.35, 1.0, u)))
+			glow.size = Vector2(seg_w + 1.0, thick + SHOT_GLOW_PAD * lerpf(0.7, 1.8, u))
+			host.add_child(glow)
+			trail_parts.append({"node": glow, "back": back_mid})
 		for oi in n_out:
 			var pad: float = float(n_out - oi) * SHOT_OUTLINE_PAD * lerpf(0.45, 1.0, u)
 			var oc: Color = outline_cols[oi]
@@ -1520,61 +1539,105 @@ func _shot_projectile_step(t: float, ctx: Dictionary) -> void:
 			# 飙血改由 enemy_damaged 统一触发
 
 
-func _spawn_blood_burst(at_g: Vector2, amount: int, spray_dir: Vector2 = Vector2.ZERO) -> void:
+func _blood_acquire_rect() -> ColorRect:
+	## 从池取 ColorRect；池空则新建。射击热路径避免反复 add_child/queue_free。
+	var drop: ColorRect = null
+	while not _blood_pool.is_empty():
+		var cand: ColorRect = _blood_pool.pop_back() as ColorRect
+		if cand != null and is_instance_valid(cand):
+			drop = cand
+			break
+	if drop == null:
+		drop = ColorRect.new()
+		drop.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		add_child(drop)
+	drop.visible = true
+	drop.rotation = 0.0
+	drop.modulate = Color.WHITE
+	drop.pivot_offset = Vector2.ZERO
+	return drop
+
+
+func _blood_release_rect(node: ColorRect) -> void:
+	if node == null or not is_instance_valid(node):
+		return
+	node.visible = false
+	node.rotation = 0.0
+	node.size = Vector2.ZERO
+	if _blood_pool.size() >= BLOOD_POOL_MAX:
+		node.queue_free()
+		return
+	_blood_pool.append(node)
+
+
+func _spawn_blood_burst(
+	at_g: Vector2, amount: int, spray_dir: Vector2 = Vector2.ZERO, death_plasma: bool = false
+) -> void:
 	## 掉血飙血：抛物线血滴（头粗尾细实心拖尾）下落；落地留血迹。
-	## 喷射沿子弹射入方向偏轴散开，角度不规则、速度有差别；伤害越高喷得越远。
+	## spray_dir≈0 → 无子弹来源，四面八方喷；否则沿射入方向偏轴散开。
+	## death_plasma：致死血浆爆开（更多/更大，仍受并发上限）。
 	if amount <= 0:
 		return
 	var t: float = clampf(float(amount) / 12.0, 0.0, 1.0)
-	var n: int = int(round(lerpf(float(BLOOD_BURST_MIN), float(BLOOD_BURST_MAX), t)))
+	var n_min: int = BLOOD_DEATH_BURST_MIN if death_plasma else BLOOD_BURST_MIN
+	var n_max: int = BLOOD_DEATH_BURST_MAX if death_plasma else BLOOD_BURST_MAX
+	var n: int = int(round(lerpf(float(n_min), float(n_max), t)))
+	if death_plasma:
+		n = maxi(n, n_min)
+	# 全局并发上限：射击连命中时削峰，避免一帧建几百节点卡死
+	var room: int = BLOOD_ACTIVE_MAX - _blood_active_drops
+	if room <= 0:
+		return
+	n = mini(n, room)
 	var ground_y: float = _board_ground_global_y()
-	var base_dir: Vector2 = spray_dir
-	if base_dir.length_squared() < 0.01:
-		base_dir = _blood_spray_dir
-	if base_dir.length_squared() < 0.01:
-		base_dir = Vector2(1.0, -0.2)
-	base_dir = base_dir.normalized()
+	var omni: bool = spray_dir.length_squared() < 0.01
+	var base_dir: Vector2 = spray_dir.normalized() if not omni else Vector2.RIGHT
 	for _i in n:
-		var drop := ColorRect.new()
-		drop.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var drop := _blood_acquire_rect()
 		drop.z_index = Z_BLOOD_DROP
-		var sz: float = randf_range(4.5, 11.5) * (0.85 + 0.4 * t)
+		var size_mul: float = (1.15 + 0.55 * t) if death_plasma else (0.85 + 0.4 * t)
+		var sz: float = randf_range(4.5, 12.5 if death_plasma else 11.5) * size_mul
 		drop.size = Vector2(sz, sz * randf_range(0.85, 1.25))
 		var col := Color(randf_range(0.75, 1.0), randf_range(0.05, 0.22), randf_range(0.05, 0.18), 1.0)
 		drop.color = col
-		add_child(drop)
 		var start_p: Vector2 = at_g - drop.size * 0.5 + Vector2(randf_range(-6.0, 6.0), randf_range(-4.0, 2.0))
 		drop.global_position = start_p
-		# 伤害越高基准速度越大（喷得更远）；单滴速度再拉开差别
-		var speed_base: float = lerpf(170.0, 560.0, t)
+		# 伤害越高基准速度越大；死亡血浆再抬一档
+		var speed_lo: float = 200.0 if death_plasma else 170.0
+		var speed_hi: float = 720.0 if death_plasma else 560.0
+		var speed_base: float = lerpf(speed_lo, speed_hi, t)
 		var speed: float = speed_base * randf_range(0.42, 1.38)
-		# 不规则偏角：多数落在射入轴附近，少数大幅散开（非均匀锥）
-		var spread_deg: float
-		var roll: float = randf()
-		if roll < 0.62:
-			spread_deg = randf_range(-38.0, 38.0) * randf_range(0.35, 1.0)
-		elif roll < 0.88:
-			spread_deg = randf_range(-78.0, 78.0)
+		var dir: Vector2
+		if omni:
+			# 无射击来源 / 死亡血浆：四面八方
+			dir = Vector2.from_angle(randf() * TAU)
 		else:
-			spread_deg = randf_range(-125.0, 125.0)
-		var dir: Vector2 = base_dir.rotated(deg_to_rad(spread_deg))
+			# 不规则偏角：多数落在射入轴附近，少数大幅散开
+			var spread_deg: float
+			var roll: float = randf()
+			if roll < 0.62:
+				spread_deg = randf_range(-38.0, 38.0) * randf_range(0.35, 1.0)
+			elif roll < 0.88:
+				spread_deg = randf_range(-78.0, 78.0)
+			else:
+				spread_deg = randf_range(-125.0, 125.0)
+			dir = base_dir.rotated(deg_to_rad(spread_deg))
 		var vx: float = dir.x * speed
 		var vy: float = dir.y * speed
 		# 略抬升，保证抛物线观感（屏幕 Y 向下为正）
-		vy -= randf_range(55.0, 200.0) * (0.75 + 0.55 * t)
+		var lift: float = randf_range(55.0, 220.0 if death_plasma else 200.0) * (0.75 + 0.55 * t)
+		vy -= lift
 		var land_y: float = ground_y - drop.size.y
 		var dur: float = _blood_flight_duration(start_p.y, vy, land_y)
-		# 拖尾头部粗细与血滴匹配；尾部在推轨迹时渐细
 		var trail_w: float = maxf((drop.size.x + drop.size.y) * 0.5, BLOOD_TRAIL_SEG_W_MIN)
 		var trail_nodes: Array = []
 		for _ti in BLOOD_TRAIL_HISTORY:
-			var seg := ColorRect.new()
-			seg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			var seg := _blood_acquire_rect()
 			seg.z_index = Z_BLOOD_TRAIL
 			seg.visible = false
 			seg.color = Color(col.r, col.g, col.b, 1.0)
-			add_child(seg)
 			trail_nodes.append(seg)
+		_blood_active_drops += 1
 		var bctx := {
 			"drop": drop,
 			"start": start_p,
@@ -1647,24 +1710,23 @@ func _blood_drop_step(elapsed: float, bctx: Dictionary) -> void:
 
 
 func _blood_drop_land(bctx: Dictionary) -> void:
-	## 血滴落地：留下扁平血迹并移除飞溅滴与飞行拖尾。
+	## 血滴落地：留下扁平血迹并回收飞溅滴与飞行拖尾。
 	if bool(bctx.get("landed", false)):
 		return
 	bctx["landed"] = true
+	_blood_active_drops = maxi(0, _blood_active_drops - 1)
 	var drop: ColorRect = bctx.get("drop") as ColorRect
 	var pos := Vector2.ZERO
 	var base_col := Color(0.72, 0.08, 0.1, 1.0)
 	if drop != null and is_instance_valid(drop):
 		pos = drop.global_position
 		base_col = drop.color
-		drop.queue_free()
+		_blood_release_rect(drop)
 	else:
 		var start_p: Vector2 = bctx.get("start", Vector2.ZERO)
 		pos = Vector2(start_p.x, float(bctx.get("land_y", start_p.y)))
 	for node in bctx.get("trail_nodes", []):
-		var seg: ColorRect = node as ColorRect
-		if seg != null and is_instance_valid(seg):
-			seg.queue_free()
+		_blood_release_rect(node as ColorRect)
 	bctx["trail_nodes"] = []
 	bctx["history"] = []
 	_spawn_blood_stain(pos, base_col, float(bctx.get("amount_t", 0.5)))
@@ -1735,7 +1797,6 @@ func _spawn_blood_stain(at_g: Vector2, src_col: Color, amount_t: float) -> void:
 	var tw := create_tween()
 	tw.tween_property(stain, "modulate:a", 0.0, fade).set_delay(fade * 0.15)
 	tw.tween_callback(stain.queue_free)
-
 
 
 ## 本发仓黄色闪光 + 正上红圈脉冲（无白色蒙版）。闪光在盘上仓格，转盘前必须清掉。
@@ -1992,30 +2053,42 @@ func _on_enemy_damaged(cell: int, amount: int, kind: String = "") -> void:
 		_pending_hit_vfx.append({"cell": cell, "amount": amount, "kind": kind})
 		return
 	_spawn_damage_float(cell, amount, kind)
-	_spawn_blood_at_cell(cell, amount)
+	# 致死：血浆爆开（怪仍在场）；未死：普通飙血
+	if _enemy_corpse_at_cell(cell):
+		_spawn_blood_at_cell(cell, amount, true)
+	else:
+		_spawn_blood_at_cell(cell, amount, false)
 
 
 func _on_player_damaged(amount: int, kind: String = "") -> void:
 	## 抖玩家单位块（格 0）+ 飘字；凡实际掉血都飙血（含愤怒自伤等）。
 	_spawn_damage_float(CombatConstants.PLAYER_CELL, amount, kind)
-	_spawn_blood_at_cell(CombatConstants.PLAYER_CELL, amount)
+	_spawn_blood_at_cell(CombatConstants.PLAYER_CELL, amount, false)
 
 
-func _spawn_blood_at_cell(cell: int, amount: int) -> void:
+func _enemy_corpse_at_cell(cell: int) -> bool:
+	## 该格是否已有 hp<=0 尸体（尚未 flush）；用于致死血浆。
+	if state == null:
+		return false
+	for e in state.enemies:
+		if e != null and int(e.cell) == cell and not e.is_alive():
+			return true
+	return false
+
+
+func _spawn_blood_at_cell(cell: int, amount: int, death_plasma: bool = false) -> void:
 	## 统一飙血入口：任意实际扣血（子弹/DoT/惩罚）都走这里。
+	## 有子弹射入窗口 → 偏子弹方向；否则（流血/燃烧/自伤等）四面八方。
+	## 致死血浆强制四面八方爆开。
 	if amount <= 0:
 		return
 	var at_g: Vector2 = _cell_unit_global_center(cell)
 	if at_g == Vector2.ZERO:
 		return
-	var dir: Vector2 = _blood_spray_dir
-	if dir.length_squared() < 0.01:
-		# 无近期枪线时：敌人格默认沿棋盘向右（子弹射入侧），玩家偏上
-		if cell == CombatConstants.PLAYER_CELL:
-			dir = Vector2(-0.2, -1.0)
-		else:
-			dir = Vector2(1.0, -0.2)
-	_spawn_blood_burst(at_g, amount, dir)
+	var dir := Vector2.ZERO
+	if (not death_plasma) and _blood_shot_dir_active and _blood_spray_dir.length_squared() > 0.01:
+		dir = _blood_spray_dir
+	_spawn_blood_burst(at_g, amount, dir, death_plasma)
 
 
 func _on_gold_gained(cell: int, amount: int) -> void:
